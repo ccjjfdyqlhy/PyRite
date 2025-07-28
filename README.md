@@ -1,3 +1,4 @@
+![cover](https://github.com/ccjjfdyqlhy/PyRite/blob/main/cover.png)
 # PyRite: 一个简洁到神奇的编程语言。
 
 缺点：目前只支持简体中文……
