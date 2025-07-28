@@ -247,13 +247,9 @@ endtry
     compile(route="C:/Users/Admin/Desktop/my_game.src", args="-lwinmm")
     ```
 
-## 📂 项目结构
+## 🤝 贡献
 
-```
-PyRite/
-├── compilers/              # 存放用于 compile() 功能的 C++ 编译器 (如 MinGW)
-├── PyRite.cpp              # 解释器、解析器和所有核心逻辑
-├── BigNumber.hpp           # 高精度整数库头文件
-├── template.cpp            # 用于 compile() 功能的 C++ 模板
-└── README.md               # 本文件
-```
+欢迎对 PyRite 项目做出贡献！你可以通过以下方式参与：
+*   报告 Bug 或提出新功能建议。
+*   **由于代码标准和早期开发阶段的原因，暂时不接受有关代码修改的PR。**
+*   撰写文档和示例。
