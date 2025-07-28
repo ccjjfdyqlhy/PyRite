@@ -73,7 +73,7 @@ PyRite 解释器支持两种操作模式：
 
 ### 1. 数据类型
 
-*   `dec`: 十进制数（高精度整数）。
+*   `dec`: 十进制数（高精度整数或小数）。
 *   `str`: 字符串。
 *   `bin`: 二进制数据（以 `0x` 开头的十六进制字面量）。
 *   `list`: 动态数组/列表。
@@ -88,7 +88,7 @@ PyRite 解释器支持两种操作模式：
 
 ```src
 # 变量声明与赋值 #
-dec my_number = 123
+dec my_number = 123.456
 str greeting = "Hello"
 bin data = 0xdeadbeef
 list items = [1, "two", 3]
