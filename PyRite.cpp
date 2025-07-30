@@ -20,7 +20,9 @@
 #include "BigNumber.hpp"
 
 // --- 全局 DEBUG 开关 ---
-constexpr bool DEBUG = true;
+// 小心，不要用于发布版本
+// 开启此选项可能会因为打印大量调试信息而降低 I/O 速度。
+constexpr bool DEBUG = false;
 
 // --- 前向声明 ---
 struct Value; struct Function; class Interpreter; class Environment; class NumberValue; class BinaryValue; class StringValue; class ListValue; class NativeFnValue; class ExceptionValue;
@@ -335,30 +337,30 @@ class Environment : public std::enable_shared_from_this<Environment> {
 public:
     Environment(std::shared_ptr<Environment> enc = nullptr) : enclosing(enc) {}
     void define(const std::string& name, ValuePtr value) {
-        if (DEBUG) std::cout << "[DEBUG:Env] Defining '" << name << "' as " << value->repr() << " in env " << this << std::endl;
+        if (DEBUG) std::cout << "[调试:环境] 在环境 " << this << " 中定义 '" << name << "' 为 " << value->repr() << std::endl;
         values[name] = value;
     }
     void assign(const std::string& name, ValuePtr value) {
         if (values.count(name)) {
-            if (DEBUG) std::cout << "[DEBUG:Env] Assigning '" << name << "' = " << value->repr() << " in env " << this << std::endl;
+            if (DEBUG) std::cout << "[调试:环境] 在环境 " << this << " 中给 '" << name << "' 赋值 = " << value->repr() << std::endl;
             values[name] = value;
             return;
         }
         if (enclosing) {
-            if (DEBUG) std::cout << "[DEBUG:Env] Assign failed in " << this << ", trying enclosing env " << enclosing.get() << std::endl;
+            if (DEBUG) std::cout << "[调试:环境] 在 " << this << " 中赋值失败，尝试外层环境 " << enclosing.get() << std::endl;
             enclosing->assign(name, value);
             return;
         }
         throw RuntimeError(0, "未定义的变量 '" + name + "'。");
     }
     ValuePtr get(const std::string& name) {
-        if (DEBUG) std::cout << "[DEBUG:Env] Getting '" << name << "' from env " << this << std::endl;
+        if (DEBUG) std::cout << "[调试:环境] 从环境 " << this << " 中获取 '" << name << "'" << std::endl;
         if (values.count(name)) {
-            if (DEBUG) std::cout << "[DEBUG:Env]   Found '" << name << "' = " << values.at(name)->repr() << std::endl;
+            if (DEBUG) std::cout << "[调试:环境]   找到 '" << name << "' = " << values.at(name)->repr() << std::endl;
             return values[name];
         }
         if (enclosing) {
-            if (DEBUG) std::cout << "[DEBUG:Env]   Get failed in " << this << ", trying enclosing env " << enclosing.get() << std::endl;
+            if (DEBUG) std::cout << "[调试:环境]   在 " << this << " 中获取失败，尝试外层环境 " << enclosing.get() << std::endl;
             return enclosing->get(name);
         }
         throw RuntimeError(0, "未定义的变量 '" + name + "'。");
@@ -399,12 +401,12 @@ public: // Add public specifier
     std::shared_ptr<Environment> instance_env; // Holds instance fields
     Instance(ClassPtr k) : klass(k) {
         // Create a new environment for this instance, enclosed in the class's closure
-        if (DEBUG) std::cout << "[DEBUG:Instance] Creating instance of '" << k->name << "'. Creating new env enclosed in " << k->closure.get() << std::endl;
+        if (DEBUG) std::cout << "[调试:实例] 正在创建 '" << k->name << "' 的实例。创建新环境，其外层为 " << k->closure.get() << std::endl;
         instance_env = std::make_shared<Environment>(klass->closure);
         // Initialize fields with their default values
         for (const auto& field_def : klass->fields) {
             ValuePtr default_val = field_def.default_value ? field_def.default_value->clone() : std::make_shared<NullValue>();
-             if (DEBUG) std::cout << "[DEBUG:Instance]   Initializing field '" << field_def.name << "' with default value " << default_val->repr() << std::endl;
+             if (DEBUG) std::cout << "[调试:实例]   正在用默认值 " << default_val->repr() << " 初始化字段 '" << field_def.name << "'" << std::endl;
             instance_env->define(field_def.name, default_val);
         }
     }
@@ -420,17 +422,17 @@ public: // Add public specifier
     }
     // Get a field or method
     ValuePtr get(const std::string& name) {
-        if (DEBUG) std::cout << "[DEBUG:Instance] Getting property '" << name << "' from instance of '" << klass->name << "'." << std::endl;
+        if (DEBUG) std::cout << "[调试:实例] 正在从 '" << klass->name << "' 的实例中获取属性 '" << name << "'。" << std::endl;
         // 1. Check instance fields
         try {
-            if (DEBUG) std::cout << "[DEBUG:Instance]   Checking instance fields..." << std::endl;
+            if (DEBUG) std::cout << "[调试:实例]   正在检查实例字段..." << std::endl;
             return instance_env->get(name);
         } catch (const RuntimeError&) {
             // 2. Check class methods
-            if (DEBUG) std::cout << "[DEBUG:Instance]   Property '" << name << "' not in fields. Checking class methods..." << std::endl;
+            if (DEBUG) std::cout << "[调试:实例]   属性 '" << name << "' 不在字段中。正在检查类方法..." << std::endl;
             auto it = klass->methods.find(name);
             if (it != klass->methods.end()) {
-                if (DEBUG) std::cout << "[DEBUG:Instance]   Found method '" << name << "'. Creating bound method." << std::endl;
+                if (DEBUG) std::cout << "[调试:实例]   找到方法 '" << name << "'。正在创建绑定方法。" << std::endl;
                 // Found a method. Return a new BoundMethodValue which pairs the instance ('this')
                 // with the method's function data. The interpreter will handle calling it.
                 return std::make_shared<BoundMethodValue>(this->shared_from_this(), it->second);
@@ -440,14 +442,14 @@ public: // Add public specifier
     }
     // Set a field
     void set(const std::string& name, ValuePtr value) {
-        if (DEBUG) std::cout << "[DEBUG:Instance] Setting property '" << name << "' to " << value->repr() << " on instance of '" << klass->name << "'." << std::endl;
+        if (DEBUG) std::cout << "[调试:实例] 正在为 '" << klass->name << "' 的实例设置属性 '" << name << "' 为 " << value->repr() << "。" << std::endl;
         // Check if the field is defined in the class
         bool field_found = false;
         for (const auto& field_def : klass->fields) {
             if (field_def.name == name) {
                 field_found = true;
                 // Type check
-                if (DEBUG) std::cout << "[DEBUG:Instance]   Field '" << name << "' found. Type checking... Expected: " << token_type_to_string(field_def.type_keyword) << std::endl;
+                if (DEBUG) std::cout << "[调试:实例]   找到字段 '" << name << "'。类型检查中... 期望: " << token_type_to_string(field_def.type_keyword) << std::endl;
                 if (!is_type_compatible(field_def.type_keyword, value)) { // 使用辅助函数
                      std::stringstream ss;
                      ss << "字段 '" << name << "' 类型不匹配。期望类型是 '" << token_type_to_string(field_def.type_keyword) // 使用辅助函数
@@ -466,7 +468,7 @@ public: // Add public specifier
         if (!field_found) {
             throw std::runtime_error("Cannot set undefined field '" + name + "'.");
         }
-        if (DEBUG) std::cout << "[DEBUG:Instance]   Type check passed. Setting field value." << std::endl;
+        if (DEBUG) std::cout << "[调试:实例]   类型检查通过。正在设置字段值。" << std::endl;
         instance_env->define(name, value); // This will overwrite if it exists
     }
 };
@@ -596,7 +598,7 @@ class Parser {
 public:
     Parser(const std::string& source) : tokenizer(source), had_error(false) {}
     std::vector<AstNodePtr> parse() { 
-        if (DEBUG) std::cout << "[DEBUG:Parser] Starting parse..." << std::endl;
+        if (DEBUG) std::cout << "[调试:解析器] 开始解析..." << std::endl;
         std::vector<AstNodePtr> statements; 
         current_token = tokenizer.next_token(); 
         while (current_token.type != TokenType::END_OF_FILE && current_token.type != TokenType::HALT && current_token.type != TokenType::RUN) { 
@@ -619,7 +621,7 @@ private:
     bool match(const std::vector<TokenType>& types) { for (TokenType type : types) { if (check(type)) { advance(); return true; } } return false; }
     void synchronize() { advance(); while(current_token.type != TokenType::END_OF_FILE) { switch(current_token.type) { case TokenType::DEC: case TokenType::STR: case TokenType::IF: case TokenType::WHILE: case TokenType::DEF: case TokenType::INS: case TokenType::SAY: case TokenType::RETURN: case TokenType::TRY: return; default: advance(); } } }
     AstNodePtr declaration() { 
-        if (DEBUG) std::cout << "[DEBUG:Parser] Parsing declaration (current token: " << current_token.lexeme << ")..." << std::endl;
+        if (DEBUG) std::cout << "[调试:解析器] 正在解析声明 (当前词法单元: " << current_token.lexeme << ")..." << std::endl;
         if (match({TokenType::DEC, TokenType::STR, TokenType::BIN, TokenType::LIST})) return var_declaration(); 
         if (match({TokenType::DEF})) return function_definition("function"); 
         if (match({TokenType::INS})) return class_definition(); 
@@ -627,7 +629,7 @@ private:
     }
     // 4. 实现 parse_parameter 方法
     ParameterDefinition parse_parameter() {
-        if (DEBUG) std::cout << "[DEBUG:Parser] Parsing parameter..." << std::endl;
+        if (DEBUG) std::cout << "[调试:解析器] 正在解析参数..." << std::endl;
         Token keyword = current_token;
         if (!match({TokenType::DEC, TokenType::STR, TokenType::BIN, TokenType::LIST})) {
             throw std::runtime_error("函数参数需要类型关键字 (dec, str, bin, list)。");
@@ -636,7 +638,7 @@ private:
         std::string param_name = previous_token.lexeme;
         ValuePtr default_value = nullptr;
         if (match({TokenType::EQUAL})) {
-            if (DEBUG) std::cout << "[DEBUG:Parser]   Parsing default value for '" << param_name << "'..." << std::endl;
+            if (DEBUG) std::cout << "[调试:解析器]   正在为 '" << param_name << "' 解析默认值..." << std::endl;
             // Evaluate default value expression. For simplicity, we'll only allow literals here.
             // A more robust implementation would evaluate the expression in the global scope.
             if (check(TokenType::NUMBER)) {
@@ -664,14 +666,14 @@ private:
             }
         }
         // 5. 使用正确的构造函数创建 ParameterDefinition
-        if (DEBUG) std::cout << "[DEBUG:Parser]   Parsed parameter: " << param_name << (default_value ? " with default" : "") << std::endl;
+        if (DEBUG) std::cout << "[调试:解析器]   已解析参数: " << param_name << (default_value ? " (带默认值)" : "") << std::endl;
         return ParameterDefinition(keyword.type, param_name, default_value);
     }
     AstNodePtr var_declaration() { 
-        if (DEBUG) std::cout << "[DEBUG:Parser] Parsing variable declaration..." << std::endl;
+        if (DEBUG) std::cout << "[调试:解析器] 正在解析变量声明..." << std::endl;
         Token keyword = previous_token; consume(TokenType::IDENTIFIER, "需要变量名。"); std::string name = previous_token.lexeme; AstNodePtr initializer = nullptr; if (match({TokenType::EQUAL})) { initializer = expression(); } return std::make_shared<VarDeclarationNode>(keyword.line, keyword, name, initializer); }
     AstNodePtr function_definition(const std::string& kind) {
-        if (DEBUG) std::cout << "[DEBUG:Parser] Parsing " << kind << " definition..." << std::endl;
+        if (DEBUG) std::cout << "[调试:解析器] 正在解析" << (kind == "function" ? "函数" : "方法") << "定义..." << std::endl;
         int line = previous_token.line;
         consume(TokenType::IDENTIFIER, "需要 " + kind + " 名称。");
         std::string name = previous_token.lexeme;
@@ -690,12 +692,12 @@ private:
             body.push_back(declaration());
         }
         consume(TokenType::ENDDEF, "函数体后需要 'enddef'。");
-        if (DEBUG) std::cout << "[DEBUG:Parser]   Finished parsing " << kind << " '" << name << "'." << std::endl;
+        if (DEBUG) std::cout << "[调试:解析器]   完成解析" << (kind == "function" ? "函数" : "方法") << " '" << name << "'。" << std::endl;
         return std::make_shared<FunctionDefNode>(line, name, params, body);
     }
     // --- New Parser method for Class Definition ---
     AstNodePtr class_definition() {
-        if (DEBUG) std::cout << "[DEBUG:Parser] Parsing class definition..." << std::endl;
+        if (DEBUG) std::cout << "[调试:解析器] 正在解析类定义..." << std::endl;
         int line = previous_token.line;
         consume(TokenType::IDENTIFIER, "需要类名。");
         std::string name = previous_token.lexeme;
@@ -719,11 +721,11 @@ private:
             }
         }
         consume(TokenType::ENDINS, "类定义后需要 'endins'。");
-        if (DEBUG) std::cout << "[DEBUG:Parser]   Finished parsing class '" << name << "'." << std::endl;
+        if (DEBUG) std::cout << "[调试:解析器]   完成解析类 '" << name << "'。" << std::endl;
         return std::make_shared<ClassDefNode>(line, name, fields, methods);
     }
     // --- End of new Parser method ---
-    AstNodePtr statement() { if (DEBUG) std::cout << "[DEBUG:Parser] Parsing statement (current token: " << current_token.lexeme << ")..." << std::endl; if (match({TokenType::IF})) return if_statement(); if (match({TokenType::WHILE})) return while_statement(); if (match({TokenType::AWAIT})) return await_statement(); if (match({TokenType::TRY})) return try_statement(); if (match({TokenType::RAISE})) return raise_statement(); if (match({TokenType::SAY})) return say_statement(); if (match({TokenType::RETURN})) return return_statement(); if (check(TokenType::ELSE) || check(TokenType::ENDIF) || check(TokenType::FINALLY) || check(TokenType::ENDWHILE) || check(TokenType::ENDDEF) || check(TokenType::ENDAWAIT) || check(TokenType::CATCH) || check(TokenType::ENDTRY) || check(TokenType::ENDINS)) { throw std::runtime_error("关键字 '" + current_token.lexeme + "' 位置错误。"); } return expression_statement(); }
+    AstNodePtr statement() { if (DEBUG) std::cout << "[调试:解析器] 正在解析语句 (当前词法单元: " << current_token.lexeme << ")..." << std::endl; if (match({TokenType::IF})) return if_statement(); if (match({TokenType::WHILE})) return while_statement(); if (match({TokenType::AWAIT})) return await_statement(); if (match({TokenType::TRY})) return try_statement(); if (match({TokenType::RAISE})) return raise_statement(); if (match({TokenType::SAY})) return say_statement(); if (match({TokenType::RETURN})) return return_statement(); if (check(TokenType::ELSE) || check(TokenType::ENDIF) || check(TokenType::FINALLY) || check(TokenType::ENDWHILE) || check(TokenType::ENDDEF) || check(TokenType::ENDAWAIT) || check(TokenType::CATCH) || check(TokenType::ENDTRY) || check(TokenType::ENDINS)) { throw std::runtime_error("关键字 '" + current_token.lexeme + "' 位置错误。"); } return expression_statement(); }
     AstNodePtr if_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::THEN, "if 条件后需要 'then'。"); std::vector<AstNodePtr> then_branch; while(!check(TokenType::ELSE) && !check(TokenType::ENDIF) && !check(TokenType::END_OF_FILE)) { then_branch.push_back(declaration()); } std::vector<AstNodePtr> else_branch; if (match({TokenType::ELSE})) { while(!check(TokenType::ENDIF) && !check(TokenType::END_OF_FILE)) { else_branch.push_back(declaration()); } } consume(TokenType::ENDIF, "if 语句后需要 'endif'。"); return std::make_shared<IfStatementNode>(line, condition, then_branch, else_branch); }
     AstNodePtr while_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::DO, "while 条件后需要 'do'。"); std::vector<AstNodePtr> do_branch; while(!check(TokenType::FINALLY) && !check(TokenType::ENDWHILE) && !check(TokenType::END_OF_FILE)) { do_branch.push_back(declaration()); } std::vector<AstNodePtr> finally_branch; if (match({TokenType::FINALLY})) { while(!check(TokenType::ENDWHILE) && !check(TokenType::END_OF_FILE)) { finally_branch.push_back(declaration()); } } consume(TokenType::ENDWHILE, "while 循环后需要 'endwhile'。"); return std::make_shared<WhileStatementNode>(line, condition, do_branch, finally_branch); }
     AstNodePtr await_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::THEN, "await 条件后需要 'then'。"); std::vector<AstNodePtr> then_branch; while (!check(TokenType::ENDAWAIT) && !check(TokenType::END_OF_FILE)) { then_branch.push_back(declaration()); } consume(TokenType::ENDAWAIT, "await 语句后需要 'endawait'。"); return std::make_shared<AwaitStatementNode>(line, condition, then_branch); }
@@ -740,7 +742,7 @@ private:
     AstNodePtr assignment() {
         AstNodePtr expr = equality();
         if (match({TokenType::EQUAL})) {
-            if (DEBUG) std::cout << "[DEBUG:Parser] Parsing assignment expression..." << std::endl;
+            if (DEBUG) std::cout << "[调试:解析器] 正在解析赋值表达式..." << std::endl;
             int line = previous_token.line;
             AstNodePtr value = assignment(); // Right-associative
             // Check if the left-hand side is a valid assignment target
@@ -761,13 +763,13 @@ private:
         AstNodePtr expr = primary();
         while (true) {
             if (match({TokenType::LPAREN})) {
-                if (DEBUG) std::cout << "[DEBUG:Parser] Parsing function call..." << std::endl;
+                if (DEBUG) std::cout << "[调试:解析器] 正在解析函数调用..." << std::endl;
                 expr = finish_call(expr);
             } else if (match({TokenType::LBRACKET})) {
-                if (DEBUG) std::cout << "[DEBUG:Parser] Parsing subscript access..." << std::endl;
+                if (DEBUG) std::cout << "[调试:解析器] 正在解析下标访问..." << std::endl;
                 expr = finish_subscript(expr);
             } else if (match({TokenType::DOT})) { // Handle property/method access
-                if (DEBUG) std::cout << "[DEBUG:Parser] Parsing property/method access..." << std::endl;
+                if (DEBUG) std::cout << "[调试:解析器] 正在解析属性/方法访问..." << std::endl;
                 consume(TokenType::IDENTIFIER, "需要属性或方法名。");
                 std::string name = previous_token.lexeme;
                 expr = std::make_shared<GetNode>(previous_token.line, expr, name); // Create GetNode
@@ -788,30 +790,30 @@ public:
     Interpreter(); // Constructor defined after helper methods
     std::string base_path;
     void interpret(const std::vector<AstNodePtr>& statements) {
-        if (DEBUG) std::cout << "[DEBUG:Interpreter] Starting interpretation of " << statements.size() << " statements." << std::endl;
+        if (DEBUG) std::cout << "[调试:解释器] 开始解释 " << statements.size() << " 条语句。" << std::endl;
         try { 
             int i = 0;
             for (const auto& stmt : statements) { 
-                if (DEBUG) std::cout << "[DEBUG:Interpreter] === Executing top-level statement " << i++ << " (line " << stmt->line << ") ===" << std::endl;
+                if (DEBUG) std::cout << "[调试:解释器] === 正在执行顶层语句 " << i++ << " (行 " << stmt->line << ") ===" << std::endl;
                 check_timeout(stmt->line); 
                 execute(stmt); 
             } 
         }
         catch (const PyRiteRaiseException& ex) { std::cerr << "[未捕获的异常] " << ex.value->repr() << std::endl; print_stack_trace(); }
         catch (const RuntimeError& error) { std::cerr << "[运行时错误] 行 " << error.line << ": " << error.what() << std::endl; print_stack_trace(); }
-        if (DEBUG) std::cout << "[DEBUG:Interpreter] Interpretation finished." << std::endl;
+        if (DEBUG) std::cout << "[调试:解释器] 解释执行完毕。" << std::endl;
     }
     void execute(const AstNodePtr& stmt) { 
-        if (DEBUG) std::cout << "[DEBUG:Interpreter] Executing statement of type " << typeid(*stmt).name() << std::endl;
+        if (DEBUG) std::cout << "[调试:解释器] 正在执行类型为 " << typeid(*stmt).name() << " 的语句" << std::endl;
         stmt->accept(*this); 
     }
     ValuePtr evaluate(const AstNodePtr& expr) {
-        if (DEBUG) std::cout << "[DEBUG:Interpreter] Evaluating expression of type " << typeid(*expr).name() << std::endl;
+        if (DEBUG) std::cout << "[调试:解释器] 正在求值类型为 " << typeid(*expr).name() << " 的表达式" << std::endl;
         return expr->accept(*this); 
     }
     void execute_block(const std::vector<AstNodePtr>& statements, std::shared_ptr<Environment> block_env) {
         std::shared_ptr<Environment> previous = this->environment;
-        if (DEBUG) std::cout << "[DEBUG:Interpreter] ---> Entering new execution block/scope. Env: " << block_env.get() << " Previous: " << previous.get() << std::endl;
+        if (DEBUG) std::cout << "[调试:解释器] ---> 进入新的执行块/作用域。环境: " << block_env.get() << " 上一个: " << previous.get() << std::endl;
         try { 
             this->environment = block_env; 
             for(const auto& stmt : statements) { 
@@ -820,11 +822,11 @@ public:
             } 
         } catch (...) { 
             this->environment = previous; 
-            if (DEBUG) std::cout << "[DEBUG:Interpreter] <--- Exiting execution block/scope due to exception. Restoring env to " << previous.get() << std::endl;
+            if (DEBUG) std::cout << "[调试:解释器] <--- 因异常退出执行块/作用域。恢复环境至 " << previous.get() << std::endl;
             throw; 
         }
         this->environment = previous;
-        if (DEBUG) std::cout << "[DEBUG:Interpreter] <--- Exiting execution block/scope. Restoring env to " << previous.get() << std::endl;
+        if (DEBUG) std::cout << "[调试:解释器] <--- 退出执行块/作用域。恢复环境至 " << previous.get() << std::endl;
     }
     // 超时检查相关
     void check_timeout(int line) {
@@ -872,26 +874,26 @@ std::string token_type_to_string(TokenType type) {
 
 // --- AST 节点 accept 方法的实现 ---
 ValuePtr LiteralNode::accept(Interpreter& visitor) { 
-    if (DEBUG) std::cout << "[DEBUG:Exec] Evaluating LiteralNode. Value: " << value->repr() << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在求值 LiteralNode。值: " << value->repr() << std::endl;
     return value; 
 }
 ValuePtr ListLiteralNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[DEBUG:Exec] Evaluating ListLiteralNode with " << elements.size() << " elements." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在求值 ListLiteralNode，包含 " << elements.size() << " 个元素。" << std::endl;
     std::vector<ValuePtr> evaluated_elements; for (const auto& elem : elements) { evaluated_elements.push_back(visitor.evaluate(elem)); } return std::make_shared<ListValue>(evaluated_elements); }
 ValuePtr VariableNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[DEBUG:Exec] Evaluating VariableNode '" << name << "'." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在求值 VariableNode '" << name << "'。" << std::endl;
     try { return visitor.environment->get(name); } catch(RuntimeError& e) { throw RuntimeError(line, e.what()); }
 }
 ValuePtr AssignmentNode::accept(Interpreter& visitor) {
     auto val = visitor.evaluate(value);
-    if (DEBUG) std::cout << "[DEBUG:Exec] Executing AssignmentNode. Value to assign: " << val->repr() << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在执行 AssignmentNode。要赋的值: " << val->repr() << std::endl;
 
     if (auto var_node = dynamic_cast<VariableNode*>(target.get())) {
-        if (DEBUG) std::cout << "[DEBUG:Exec]   Assignment target is VariableNode: '" << var_node->name << "'." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]   赋值目标是 VariableNode: '" << var_node->name << "'。" << std::endl;
         try { visitor.environment->assign(var_node->name, val); }
         catch (RuntimeError& e) { throw RuntimeError(line, e.what()); }
     } else if (auto sub_node = dynamic_cast<SubscriptNode*>(target.get())) {
-        if (DEBUG) std::cout << "[DEBUG:Exec]   Assignment target is SubscriptNode." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]   赋值目标是 SubscriptNode。" << std::endl;
         try {
             auto object = visitor.evaluate(sub_node->object);
             auto index = visitor.evaluate(sub_node->index);
@@ -900,7 +902,7 @@ ValuePtr AssignmentNode::accept(Interpreter& visitor) {
             throw RuntimeError(line, e.what());
         }
     } else if (auto get_node = dynamic_cast<GetNode*>(target.get())) {
-         if (DEBUG) std::cout << "[DEBUG:Exec]   Assignment target is GetNode: property '" << get_node->name << "'." << std::endl;
+         if (DEBUG) std::cout << "[调试:执行]   赋值目标是 GetNode: 属性 '" << get_node->name << "'。" << std::endl;
          // This handles `instance.property = value`
          try {
              auto object = visitor.evaluate(get_node->object);
@@ -920,13 +922,13 @@ ValuePtr AssignmentNode::accept(Interpreter& visitor) {
 ValuePtr VarDeclarationNode::accept(Interpreter& visitor) {
     ValuePtr val = std::make_shared<NullValue>();
     if (initializer) { 
-        if (DEBUG) std::cout << "[DEBUG:Exec] Executing VarDeclarationNode for '" << name << "' with initializer." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行] 正在为 '" << name << "' 执行带初始化器的 VarDeclarationNode。" << std::endl;
         val = visitor.evaluate(initializer); 
     } else {
-        if (DEBUG) std::cout << "[DEBUG:Exec] Executing VarDeclarationNode for '" << name << "' without initializer." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行] 正在为 '" << name << "' 执行不带初始化器的 VarDeclarationNode。" << std::endl;
     }
 
-    if (DEBUG) std::cout << "[DEBUG:Exec]   Declared type: " << keyword.lexeme << ". Initial value: " << val->repr() << std::endl;
+    if (DEBUG) std::cout << "[调试:执行]   声明类型: " << keyword.lexeme << "。初始值: " << val->repr() << std::endl;
 
     if (keyword.type == TokenType::DEC) {
         if (auto s_val = dynamic_cast<StringValue*>(val.get())) { try { val = std::make_shared<NumberValue>(BigNumber(s_val->value)); } catch (const std::invalid_argument&) { throw RuntimeError(line, "无法将字符串 '" + s_val->value + "' 转换为数字。"); } }
@@ -941,15 +943,15 @@ ValuePtr VarDeclarationNode::accept(Interpreter& visitor) {
         if (!dynamic_cast<ListValue*>(val.get()) && !dynamic_cast<NullValue*>(val.get())) { throw RuntimeError(line, "只能用列表初始化列表变量。"); }
         if (dynamic_cast<NullValue*>(val.get())) { val = std::make_shared<ListValue>(std::vector<ValuePtr>{}); }
     }
-    if (DEBUG) std::cout << "[DEBUG:Exec]   Final value after type coercion: " << val->repr() << std::endl;
+    if (DEBUG) std::cout << "[调试:执行]   类型强制转换后的最终值: " << val->repr() << std::endl;
     visitor.environment->define(name, val);
     return std::make_shared<NullValue>();
 }
 ValuePtr BinaryOpNode::accept(Interpreter& visitor) { 
-    if (DEBUG) std::cout << "[DEBUG:Exec] Evaluating BinaryOpNode (op: " << op.lexeme << ")." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在求值 BinaryOpNode (操作符: " << op.lexeme << ")。" << std::endl;
     auto left_val = visitor.evaluate(left); 
     auto right_val = visitor.evaluate(right); 
-    if (DEBUG) std::cout << "[DEBUG:Exec]   Left: " << left_val->repr() << ", Right: " << right_val->repr() << std::endl;
+    if (DEBUG) std::cout << "[调试:执行]   左操作数: " << left_val->repr() << ", 右操作数: " << right_val->repr() << std::endl;
     try {
         switch(op.type) {
             case TokenType::PLUS: return left_val->add(*right_val); case TokenType::MINUS: return left_val->subtract(*right_val);
@@ -967,11 +969,11 @@ ValuePtr BinaryOpNode::accept(Interpreter& visitor) {
     return std::make_shared<NullValue>();
 }
 ValuePtr SubscriptNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[DEBUG:Exec] Evaluating SubscriptNode." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在求值 SubscriptNode。" << std::endl;
     try {
         auto object = visitor.evaluate(this->object);
         auto index = visitor.evaluate(this->index);
-        if (DEBUG) std::cout << "[DEBUG:Exec]   Object: " << object->repr() << ", Index: " << index->repr() << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]   对象: " << object->repr() << ", 索引: " << index->repr() << std::endl;
         return object->getSubscript(*index);
     } catch (const std::runtime_error& e) {
         throw RuntimeError(line, e.what());
@@ -979,14 +981,14 @@ ValuePtr SubscriptNode::accept(Interpreter& visitor) {
 }
 // --- New AST Node accept methods for Classes ---
 ValuePtr ClassDefNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[DEBUG:Exec] Executing ClassDefNode for class '" << name << "'." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在为类 '" << name << "' 执行 ClassDefNode。" << std::endl;
     // Parse methods from AST nodes into Function objects
     std::map<std::string, std::shared_ptr<Function>> methods_map;
     for (const auto& method_ast : methods) {
         // The parser ensures these are FunctionDefNode
         auto func_def_node = std::dynamic_pointer_cast<FunctionDefNode>(method_ast);
         if (func_def_node) {
-            if (DEBUG) std::cout << "[DEBUG:Exec]   Processing method '" << func_def_node->name << "'." << std::endl;
+            if (DEBUG) std::cout << "[调试:执行]   正在处理方法 '" << func_def_node->name << "'。" << std::endl;
             // Create the Function object for the method
             auto method_func = std::make_shared<Function>(
                 func_def_node->name,
@@ -1004,9 +1006,9 @@ ValuePtr ClassDefNode::accept(Interpreter& visitor) {
     return std::make_shared<NullValue>();
 }
 ValuePtr GetNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[DEBUG:Exec] Evaluating GetNode for property '" << name << "'." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在为属性 '" << name << "' 求值 GetNode。" << std::endl;
     auto object_val = visitor.evaluate(object);
-    if (DEBUG) std::cout << "[DEBUG:Exec]   Object evaluated to: " << object_val->repr() << std::endl;
+    if (DEBUG) std::cout << "[调试:执行]   对象求值为: " << object_val->repr() << std::endl;
     if (auto instance = std::dynamic_pointer_cast<Instance>(object_val)) {
         try {
             // Call the simplified get() method without the interpreter reference
@@ -1025,62 +1027,62 @@ ValuePtr SetNode::accept(Interpreter& visitor) {
 // --- End of new AST Node accept methods ---
 ValuePtr IfStatementNode::accept(Interpreter& visitor) { 
     visitor.check_timeout(line);
-    if (DEBUG) std::cout << "[DEBUG:Exec] Executing IfStatementNode. Evaluating condition..." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在执行 IfStatementNode。求值条件中..." << std::endl;
     auto condition_val = visitor.evaluate(condition);
-    if (DEBUG) std::cout << "[DEBUG:Exec]   Condition is " << (condition_val->isTruthy() ? "truthy" : "falsy") << " (" << condition_val->repr() << ")." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行]   条件为 " << (condition_val->isTruthy() ? "真" : "假") << " (" << condition_val->repr() << ")." << std::endl;
 
     if (condition_val->isTruthy()) { 
-        if (DEBUG) std::cout << "[DEBUG:Exec]   Executing 'then' branch." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]   正在执行 'then' 分支。" << std::endl;
         visitor.execute_block(then_branch, std::make_shared<Environment>(visitor.environment)); 
     } else if (!else_branch.empty()) { 
-        if (DEBUG) std::cout << "[DEBUG:Exec]   Executing 'else' branch." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]   正在执行 'else' 分支。" << std::endl;
         visitor.execute_block(else_branch, std::make_shared<Environment>(visitor.environment)); 
     } 
     return std::make_shared<NullValue>(); 
 }
 ValuePtr WhileStatementNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[DEBUG:Exec] Executing WhileStatementNode." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在执行 WhileStatementNode。" << std::endl;
     while(true) {
         auto condition_val = visitor.evaluate(condition);
-        if (DEBUG) std::cout << "[DEBUG:Exec]   While loop condition is " << (condition_val->isTruthy() ? "truthy" : "falsy") << " (" << condition_val->repr() << ")." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]   While 循环条件为 " << (condition_val->isTruthy() ? "真" : "假") << " (" << condition_val->repr() << ")." << std::endl;
         if (!condition_val->isTruthy()) break;
 
         visitor.check_timeout(line); 
         visitor.execute_block(do_branch, std::make_shared<Environment>(visitor.environment)); 
     } 
     if (!finally_branch.empty()) {
-        if (DEBUG) std::cout << "[DEBUG:Exec]   Executing 'finally' branch of while loop." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]   正在执行 while 循环的 'finally' 分支。" << std::endl;
         visitor.execute_block(finally_branch, std::make_shared<Environment>(visitor.environment)); 
     } 
     return std::make_shared<NullValue>(); 
 }
 ValuePtr AwaitStatementNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[DEBUG:Exec] Executing AwaitStatementNode. Waiting for condition..." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在执行 AwaitStatementNode。等待条件满足..." << std::endl;
     while(!visitor.evaluate(condition)->isTruthy()) {
         visitor.check_timeout(line);
         std::this_thread::sleep_for(std::chrono::milliseconds(20)); // Prevent busy-waiting
     }
-    if (DEBUG) std::cout << "[DEBUG:Exec]   Await condition met. Executing 'then' branch." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行]   Await 条件已满足。正在执行 'then' 分支。" << std::endl;
     visitor.execute_block(then_branch, std::make_shared<Environment>(visitor.environment));
     return std::make_shared<NullValue>();
 }
 ValuePtr SayNode::accept(Interpreter& visitor) { 
-    if (DEBUG) std::cout << "[DEBUG:Exec] Executing SayNode." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在执行 SayNode。" << std::endl;
     auto val = visitor.evaluate(expression); 
-    if (DEBUG) std::cout << "[DEBUG:Exec]   Value to say: " << val->repr() << std::endl;
+    if (DEBUG) std::cout << "[调试:执行]   要 say 的值: " << val->repr() << std::endl;
     std::cout << val->toString() << std::endl; 
     return std::make_shared<NullValue>(); 
 }
 ValuePtr InpNode::accept(Interpreter& visitor) { auto prompt = visitor.evaluate(expression); std::cout << prompt->toString(); std::string input; std::getline(std::cin, input); return std::make_shared<StringValue>(input); }
 ValuePtr FunctionDefNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[DEBUG:Exec] Executing FunctionDefNode for '" << name << "'." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在为 '" << name << "' 执行 FunctionDefNode。" << std::endl;
     auto function = std::make_shared<Function>(name, params, body, visitor.environment); 
     visitor.environment->define(name, std::make_shared<FunctionValue>(function)); 
     return std::make_shared<NullValue>(); 
 }
 ValuePtr CallNode::accept(Interpreter& visitor) {
     visitor.check_timeout(line);
-    if (DEBUG) std::cout << "[DEBUG:Exec] Executing CallNode (line " << line << "). Evaluating callee..." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在执行 CallNode (行 " << line << ")。求值被调用者中..." << std::endl;
 
     if (auto callee_var = dynamic_cast<VariableNode*>(callee.get())) {
         if (callee_var->name == "swap") {
@@ -1123,23 +1125,23 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
     }
 
     auto callee_val = visitor.evaluate(callee);
-    if (DEBUG) std::cout << "[DEBUG:Exec]   Callee evaluated to: " << callee_val->repr() << std::endl;
+    if (DEBUG) std::cout << "[调试:执行]   被调用者求值为: " << callee_val->repr() << std::endl;
 
     std::vector<ValuePtr> arg_values;
-    if (DEBUG) std::cout << "[DEBUG:Exec]   Evaluating " << arguments.size() << " arguments..." << std::endl; 
+    if (DEBUG) std::cout << "[调试:执行]   正在求值 " << arguments.size() << " 个参数..." << std::endl; 
     for(const auto& arg_expr : arguments) { 
         arg_values.push_back(visitor.evaluate(arg_expr)); 
     }
 
     // 1. 处理原生函数
     if (auto native_fn = dynamic_cast<NativeFnValue*>(callee_val.get())) {
-        if (DEBUG) std::cout << "[DEBUG:Exec]   Calling NATIVE function '" << native_fn->name << "'." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]   正在调用原生函数 '" << native_fn->name << "'。" << std::endl;
         visitor.call_stack.push_back({native_fn->name, line});
         try {
             ValuePtr result = native_fn->call(arg_values);
             visitor.call_stack.pop_back();
             return result;
-        } catch(const std::runtime_error& e) {
+        } catch(const std::exception& e) { // 捕获更通用的异常类型
             visitor.call_stack.pop_back();
             throw RuntimeError(line, e.what());
         }
@@ -1148,11 +1150,11 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
     // 2. 处理绑定的实例方法
     if (auto bound_method = dynamic_cast<BoundMethodValue*>(callee_val.get())) {
         auto function = bound_method->method;
-        if (DEBUG) std::cout << "[DEBUG:Exec]   Calling BOUND METHOD '" << function->name << "' on instance " << bound_method->instance->repr() << "." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]   正在对实例 " << bound_method->instance->repr() << " 调用绑定方法 '" << function->name << "'。" << std::endl;
         auto call_env = std::make_shared<Environment>(function->closure);
         
         // 关键步骤: 在方法环境中定义 'this'
-        if (DEBUG) std::cout << "[DEBUG:Exec]     Defining 'this' in method scope." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]     在方法作用域中定义 'this'。" << std::endl;
         call_env->define("this", bound_method->instance);
 
         // --- 参数绑定与类型检查 ---
@@ -1160,7 +1162,7 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
         size_t num_provided_args = arg_values.size();
         size_t num_required_params = 0;
         for (const auto& p : param_defs) { if (!p.has_default) num_required_params++; }
-        if (DEBUG) std::cout << "[DEBUG:Exec]     Binding " << num_provided_args << " arguments to " << param_defs.size() << " parameters (" << num_required_params << " required)." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]     正在绑定 " << num_provided_args << " 个实参到 " << param_defs.size() << " 个形参 (" << num_required_params << " 个是必需的)。" << std::endl;
 
         if (num_provided_args < num_required_params) {
             std::stringstream ss;
@@ -1180,7 +1182,7 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
             } else {
                 current_arg_value = param_defs[i].default_value->clone();
             }
-            if (DEBUG) std::cout << "[DEBUG:Exec]       Binding param '" << param_defs[i].name << "' to arg " << current_arg_value->repr() << std::endl;
+            if (DEBUG) std::cout << "[调试:执行]       正在绑定形参 '" << param_defs[i].name << "' 到实参 " << current_arg_value->repr() << std::endl;
             if (!is_type_compatible(param_defs[i].type_keyword, current_arg_value)) {
                  std::stringstream ss;
                  ss << "方法 '" << function->name << "' 的第 " << (i+1) << " 个参数 '" << param_defs[i].name
@@ -1198,7 +1200,7 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
         }
         // --- 参数绑定结束 ---
 
-        if (DEBUG) std::cout << "[DEBUG:Exec]     Pushing '" << function->name << "' to call stack." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]     正在将 '" << function->name << "' 推入调用栈。" << std::endl;
         visitor.call_stack.push_back({function->name, line});
         ValuePtr return_val = std::make_shared<NullValue>();
         try {
@@ -1207,14 +1209,14 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
             return_val = rv.value;
         }
         visitor.call_stack.pop_back();
-        if (DEBUG) std::cout << "[DEBUG:Exec]     Popping '" << function->name << "' from call stack. Return value: " << return_val->repr() << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]     正在从调用栈中弹出 '" << function->name << "'。返回值: " << return_val->repr() << std::endl;
         return return_val;
     }
 
     // 3. 处理普通函数
     if (auto func_val = dynamic_cast<FunctionValue*>(callee_val.get())) {
         auto function = func_val->value;
-        if (DEBUG) std::cout << "[DEBUG:Exec]   Calling USER function '" << function->name << "'." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]   正在调用用户函数 '" << function->name << "'。" << std::endl;
         auto call_env = std::make_shared<Environment>(function->closure);
 
         // --- 参数绑定与类型检查 (与方法逻辑相同, 但没有'this') ---
@@ -1222,7 +1224,7 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
         size_t num_provided_args = arg_values.size();
         size_t num_required_params = 0;
         for (const auto& p : param_defs) { if (!p.has_default) num_required_params++; }
-        if (DEBUG) std::cout << "[DEBUG:Exec]     Binding " << num_provided_args << " arguments to " << param_defs.size() << " parameters (" << num_required_params << " required)." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]     正在绑定 " << num_provided_args << " 个实参到 " << param_defs.size() << " 个形参 (" << num_required_params << " 个是必需的)。" << std::endl;
         
         if (num_provided_args < num_required_params) {
             std::stringstream ss;
@@ -1242,7 +1244,7 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
             } else {
                 current_arg_value = param_defs[i].default_value->clone();
             }
-            if (DEBUG) std::cout << "[DEBUG:Exec]       Binding param '" << param_defs[i].name << "' to arg " << current_arg_value->repr() << std::endl;
+            if (DEBUG) std::cout << "[调试:执行]       正在绑定形参 '" << param_defs[i].name << "' 到实参 " << current_arg_value->repr() << std::endl;
             if (!is_type_compatible(param_defs[i].type_keyword, current_arg_value)) {
                  std::stringstream ss;
                  ss << "函数 '" << function->name << "' 的第 " << (i+1) << " 个参数 '" << param_defs[i].name
@@ -1260,7 +1262,7 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
         }
         // --- 参数绑定结束 ---
 
-        if (DEBUG) std::cout << "[DEBUG:Exec]     Pushing '" << function->name << "' to call stack." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]     正在将 '" << function->name << "' 推入调用栈。" << std::endl;
         visitor.call_stack.push_back({function->name, line});
         ValuePtr return_val = std::make_shared<NullValue>();
         try { 
@@ -1269,7 +1271,7 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
             return_val = rv.value; 
         }
         visitor.call_stack.pop_back();
-        if (DEBUG) std::cout << "[DEBUG:Exec]     Popping '" << function->name << "' from call stack. Return value: " << return_val->repr() << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]     正在从调用栈中弹出 '" << function->name << "'。返回值: " << return_val->repr() << std::endl;
         return return_val;
     }
 
@@ -1280,49 +1282,49 @@ ValuePtr ReturnNode::accept(Interpreter& visitor) {
     if (value) { 
         val = visitor.evaluate(value); 
     } 
-    if (DEBUG) std::cout << "[DEBUG:Exec] Executing ReturnNode. Throwing ReturnValueException with value: " << val->repr() << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在执行 ReturnNode。正在抛出带值 " << val->repr() << " 的 ReturnValueException。" << std::endl;
     throw ReturnValueException(val); 
 }
 ValuePtr RaiseNode::accept(Interpreter& visitor) {
     auto value_to_raise = visitor.evaluate(expression);
-    if (DEBUG) std::cout << "[DEBUG:Exec] Executing RaiseNode. Throwing PyRiteRaiseException with payload: " << value_to_raise->repr() << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在执行 RaiseNode。正在抛出带负载 " << value_to_raise->repr() << " 的 PyRiteRaiseException。" << std::endl;
     throw PyRiteRaiseException(value_to_raise); 
 }
 ValuePtr TryCatchNode::accept(Interpreter& visitor) {
     std::unique_ptr<std::exception_ptr> captured_exception = nullptr;
     try {
         try {
-            if (DEBUG) std::cout << "[DEBUG:Exec] Executing TryCatchNode. Entering 'try' block." << std::endl;
+            if (DEBUG) std::cout << "[调试:执行] 正在执行 TryCatchNode。进入 'try' 块。" << std::endl;
             visitor.execute_block(try_branch, std::make_shared<Environment>(visitor.environment));
         } catch (const PyRiteRaiseException& ex) {
-            if (DEBUG) std::cout << "[DEBUG:Exec]   Caught PyRiteRaiseException in 'try' block. Payload: " << ex.value->repr() << ". Executing 'catch' block." << std::endl;
+            if (DEBUG) std::cout << "[调试:执行]   在 'try' 块中捕获到 PyRiteRaiseException。负载: " << ex.value->repr() << "。正在执行 'catch' 块。" << std::endl;
             auto catch_env = std::make_shared<Environment>(visitor.environment);
             catch_env->define(exception_var, ex.value);
             visitor.execute_block(catch_branch, catch_env);
         } catch (const RuntimeError& ex) {
-            if (DEBUG) std::cout << "[DEBUG:Exec]   Caught RuntimeError in 'try' block: " << ex.what() << ". Executing 'catch' block." << std::endl;
+            if (DEBUG) std::cout << "[调试:执行]   在 'try' 块中捕获到 RuntimeError: " << ex.what() << "。正在执行 'catch' 块。" << std::endl;
             auto exception_obj = std::make_shared<ExceptionValue>(std::make_shared<StringValue>(ex.what()));
             auto catch_env = std::make_shared<Environment>(visitor.environment);
             catch_env->define(exception_var, exception_obj);
             visitor.execute_block(catch_branch, catch_env);
         }
     } catch (...) {
-        if (DEBUG) std::cout << "[DEBUG:Exec]   Caught an unexpected exception in 'catch' block. It will be re-thrown after 'finally'." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]   在 'catch' 块中捕获到意外异常。它将在 'finally' 之后被重新抛出。" << std::endl;
         captured_exception.reset(new std::exception_ptr(std::current_exception()));
     }
     if (!finally_branch.empty()) {
-        if (DEBUG) std::cout << "[DEBUG:Exec]   Executing 'finally' block." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]   正在执行 'finally' 块。" << std::endl;
         visitor.execute_block(finally_branch, std::make_shared<Environment>(visitor.environment));
     }
     if (captured_exception) {
-        if (DEBUG) std::cout << "[DEBUG:Exec]   Re-throwing exception from 'catch' block." << std::endl;
+        if (DEBUG) std::cout << "[调试:执行]   正在从 'catch' 块中重新抛出异常。" << std::endl;
         std::rethrow_exception(*captured_exception);
     }
-    if (DEBUG) std::cout << "[DEBUG:Exec]   Finished TryCatchNode execution." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行]   TryCatchNode 执行完毕。" << std::endl;
     return std::make_shared<NullValue>();
 }
 ValuePtr ExpressionStatementNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[DEBUG:Exec] Executing ExpressionStatementNode." << std::endl;
+    if (DEBUG) std::cout << "[调试:执行] 正在执行 ExpressionStatementNode。" << std::endl;
     visitor.evaluate(expression);
     return std::make_shared<NullValue>(); // 表达式语句本身不返回值
 }
@@ -1574,7 +1576,7 @@ void run_repl(Interpreter& interpreter) {
     interpreter.repl_buffer.clear();
     int line_number = 1;
     std::vector<std::string> env_stack = {"void"};
-    std::cout << "PyRite 解释器 0.17.0 (tags/v0.17.0, compilers/TDM-GCC 4.9.2 64-bit Release)"
+    std::cout << "PyRite 解释器 0.18.0 (tags/v0.18.0, compilers/TDM-GCC 4.9.2 64-bit Release)"
               << (DEBUG ? " [DEBUG]" : "") << ".\n";
     std::cout << "输入 'run()' 执行缓冲代码, 'compile()' 编译代码, 'halt()' 退出, 'about()' 查看版本信息.\n";
     std::cout << std::endl;
@@ -1596,9 +1598,9 @@ void run_repl(Interpreter& interpreter) {
         if (trimmed_line == "halt()") break;
         if (trimmed_line == "about()") {
             std::cout << "----------------------------------------\n"
-                      << " PyRite Language Interpreter v0.17.0" << (DEBUG ? " [DEBUG]" : "") << "\n"
-                      << " (c) 2024-2025. DarkstarXD. All rights reserved.\n"
-                      << " A simple, dynamic programming language interpreter based on C++11.\n"
+                      << " PyRite Language Interpreter v0.18.0" << (DEBUG ? " [DEBUG]" : "") << "\n"
+                      << " (c) 2024-2025. DarkstarXD. 保留所有权利.\n"
+                      << " 一个简单到神奇的编程语言?!\n"
                       << "----------------------------------------\n";
             continue;
         }
