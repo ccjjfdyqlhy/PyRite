@@ -1,0 +1,61 @@
+list test_list = [10, "apple", 0x42, ["nested", "list"]]
+say("Original list: " + test_list)
+say("Element at index 1: " + test_list[1])
+say("Element at index -1: " + test_list[-1])
+say("Nested element test_list[3][0]: " + test_list[3][0])
+
+say("Modifying list... setting index 1 to 'banana'")
+test_list[1] = "banana"
+say("Modified list: " + test_list)
+
+bin hex_val = 0xFF
+dec from_bin = hex_val
+say("Binary 0xFF converted to decimal: " + from_bin)
+
+say("Binary 0xFF + 5 = " + (hex_val + 5))
+say("String 'Result: ' + 123 = " + ("Result: " + 123))
+
+dec a = 100
+dec b = 8
+say("a = 100, b = 8")
+say("a + b = " + (a + b))
+say("a - b = " + (a - b))
+say("a * b = " + (a * b))
+say("a / b = " + (a / b))
+say("Complex expr: (a / b) * 2 - 2.5 = " + ((a / b) * 2 - 2.5))
+
+say("String concatenation: " + ("First part" + ", " + "second part."))
+list list_a = [1, 2]
+list list_b = [3, 4]
+say("List concatenation ([1,2] + [3,4]): " + (list_a + list_b))
+say("List repetition ([1,2] * 3): " + (list_a * 3))
+
+say("Comparison operators:")
+say("a > b (100 > 8) is " + (a > b))
+say("a < b (100 < 8) is " + (a < b))
+say("a == 100 is " + (a == 100))
+# say("my_binary == 0x1A2B3C is " + (my_binary == 0x1A2B3C)) #
+say("[1,2] == [1,2] is " + (list_a == [1, 2]))
+say("[1,2] != [3,4] is " + (list_a != list_b))
+
+def factorial(dec n) do
+  if (n <= 1) then
+    return 1
+  endif
+  return n * factorial(n - 1)
+enddef
+
+say("Factorial of 20 is: " + factorial(20))
+
+def make_adder(dec x) do 
+  def adder(dec y) do
+    return x + y
+  enddef
+  return adder
+enddef
+
+dec add_ten = make_adder(10)
+dec add_five = make_adder(5)
+
+say("Closure test (add_ten(5)): " + add_ten(5))
+say("Closure test (add_five(5)): " + add_five(5))

@@ -1,0 +1,110 @@
+# Test script for PyRite's class/instance features #
+
+say("--- 1. 定义一个简单的 'Point' 类 ---")
+ins Point (dec x = 0, dec y = 0) contains
+    # 方法：移动点的位置 #
+    def move (dec dx, dec dy) do
+        this.x = this.x + dx
+        this.y = this.y + dy
+    enddef
+
+    # 方法：计算到原点(0,0)的距离 #
+    # 使用平方和的平方根：rt(x^2 + y^2) #
+    def distance_from_origin () do
+        dec dist_sq = this.x^2 + this.y^2
+        return rt(dist_sq)
+    enddef
+
+    # 方法：返回一个描述点坐标的字符串 #
+    def describe () do
+        str sx = this.x
+        str sy = this.y
+        return "Point at (" + sx + ", " + sy + ")"
+    enddef
+endins
+
+say("--- 2. 创建 'Point' 类的实例 ---")
+dec p1 = new(Point)
+dec p2 = new(Point)
+
+say("p1 的初始状态: " + p1.describe()) # 应该输出: Point at (0, 0) #
+say("p2 的初始状态: " + p2.describe()) # 应该输出: Point at (0, 0) #
+say("")
+
+say("--- 3. 测试字段赋值和访问 ---")
+p1.x = 10
+p1.y = 20
+p2.x = -3
+p2.y = 4
+
+say("p1 修改后: " + p1.describe()) # 应该输出: Point at (10, 20) #
+say("p2 修改后: " + p2.describe()) # 应该输出: Point at (-3, 4) #
+say("p1 和 p2 的状态是独立的。")
+say("")
+
+say("--- 4. 测试方法调用和 'this' 关键字 ---")
+say("p1 移动前到原点的距离: " + p1.distance_from_origin()) # 应该约等于 22.36 #
+p1.move(5, -10)
+say("p1 调用 move(5, -10) 后: " + p1.describe()) # 应该输出: Point at (15, 10) #
+say("p1 移动后到原点的距离: " + p1.distance_from_origin()) # 应该约等于 18.02 #
+say("")
+
+say("p2 到原点的距离: " + p2.distance_from_origin()) # 应该等于 5 (勾股数 3,4,5) #
+say("")
+
+say("--- 5. 测试类型检查 (字段赋值) ---")
+say("尝试将一个字符串赋给 p1.x (dec 类型)...")
+try
+    p1.x = "hello"
+    say("测试失败：类型检查没有生效！")
+catch e
+    say("测试成功：捕获到预期的错误: " + e)
+endtry
+say("p1.x 的值应该未被改变: " + p1.x) # 应该还是 15 #
+say("")
+
+say("--- 6. 测试类型检查 (方法参数) ---")
+say("尝试用字符串参数调用 p1.move()...")
+try
+    p1.move("a", "b")
+    say("测试失败：方法参数的类型检查没有生效！")
+catch e
+    say("测试成功：捕获到预期的错误: " + e)
+endtry
+say("p1 的位置应该未被改变: " + p1.describe()) # 应该还是 Point at (15, 10) #
+say("")
+
+say("--- 7. 创建一个更复杂的类 'Account' ---")
+ins Account (str owner_name, dec balance = 100) contains
+    # 存款 #
+    def deposit (dec amount) do
+        if amount > 0 then
+            this.balance = this.balance + amount
+            say(this.owner_name + " 存入了 " + amount + ". 新余额: " + this.balance)
+        else
+            say("存款金额必须为正数。")
+        endif
+    enddef
+
+    # 取款 #
+    def withdraw (dec amount) do
+        if amount > this.balance then
+            say("余额不足。")
+            return 0 # 返回 0 表示取款失败 #
+        else
+            this.balance = this.balance - amount
+            say(this.owner_name + " 取出了 " + amount + ". 新余额: " + this.balance)
+            return 1 # 返回 1 表示取款成功 #
+        endif
+    enddef
+endins
+
+say("--- 8. 测试 'Account' 类 ---")
+dec my_account = new(Account)
+my_account.owner_name = "Alice"
+
+my_account.deposit(50)  # 余额: 150 #
+my_account.withdraw(20) # 余额: 130 #
+my_account.withdraw(200) # 应该提示余额不足 #
+
+say("测试完成。如果所有输出都符合预期，那么 'ins' 功能正常工作！")
