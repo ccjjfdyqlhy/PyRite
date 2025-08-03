@@ -568,6 +568,25 @@ public:
     bool operator>(const BigNumber& other) const { return other < *this; }
     bool operator<=(const BigNumber& other) const { return !(other < *this); }
     bool operator>=(const BigNumber& other) const { return !(*this < other); }
+
+    // 添加判断负数的方法
+    bool isNegative() const {
+        return is_negative;
+    }
+    
+    // 添加转换为双精度浮点数的方法
+    double toDouble() const {
+        double result = 0.0;
+        // 整数部分
+        for (int i = digits.size() - 1; i >= 0; i--) {
+            result = result * 10 + digits[i];
+        }
+        // 如果是负数，加负号
+        if (is_negative) {
+            result = -result;
+        }
+        return result;
+    }
 };
 
 #endif // BIG_INT_HPP

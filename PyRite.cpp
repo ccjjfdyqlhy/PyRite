@@ -14,10 +14,12 @@
 #include <functional>
 #include <fstream>
 #include <exception>
-#include <cstdlib> // For system()
-#include <cstdio>  // For remove()
-#include <unordered_set> // For type checking
+#include <cstdlib>
+#include <cstdio>
+#include <unordered_set>
 #include "BigNumber.hpp"
+#include "Tense.hpp"    // 矩阵支持
+#include "File.hpp"     // 文件操作支持
 
 // --- 全局 DEBUG 开关 ---
 // 小心，不要用于发布版本
@@ -284,16 +286,17 @@ void ListValue::setSubscript(const Value& index, ValuePtr value) {
 // --- 函数参数定义 ---
 // 1. 移动 TokenType enum class 的定义到这里，确保 ParameterDefinition 能看到它
 enum class TokenType {
-    DEC, STR, BIN, LIST,
-    IF, THEN, ELSE, ENDIF, WHILE, DO, FINALLY, ENDWHILE, DEF, ENDDEF, RETURN, SAY, INP, MARK, JUMP, HALT, RUN,
+    DEC, STR, BIN, LIST, ANY, TENSE,  // 添加 ANY 和 TENSE
+    IF, THEN, ELSE, ENDIF, WHILE, DO, FINALLY, ENDWHILE, DEF, ENDDEF, RETURN, SAY, ASK, MARK, JUMP, HALT, RUN,
     TRY, CATCH, ENDTRY, RAISE,
     AWAIT, ENDAWAIT,
-    INS, CONTAINS, ENDINS, // New keywords for classes
+    INS, CONTAINS, ENDINS,
     IDENTIFIER, NUMBER, STRING, HEX_LITERAL,
     EQUAL, EQUAL_EQUAL, BANG_EQUAL, LESS, LESS_EQUAL, GREATER, GREATER_EQUAL,
     PLUS, MINUS, STAR, SLASH, LPAREN, RPAREN, COMMA, CARET,
     LBRACKET, RBRACKET,
     DOT, // For accessing instance properties/methods
+    NULL_LITERAL,  // 添加空值字面量
     END_OF_FILE, UNKNOWN
 };
 // 2. 修改 ParameterDefinition 结构体定义
@@ -502,8 +505,15 @@ struct Token { TokenType type; std::string lexeme; int line; };
 class Tokenizer {
 public:
     Tokenizer(const std::string& source) : source(source), start(0), current(0), line(1) {
+        keywords["any"] = TokenType::ANY;  // 添加 any 关键字
+        keywords["tense"] = TokenType::TENSE;  // 添加 tense 关键字
+        keywords["nul"] = TokenType::NULL_LITERAL;  // 添加 nul 关键字
         keywords["dec"] = TokenType::DEC; keywords["str"] = TokenType::STR; keywords["bin"] = TokenType::BIN; keywords["list"] = TokenType::LIST;
-        keywords["if"] = TokenType::IF; keywords["then"] = TokenType::THEN; keywords["else"] = TokenType::ELSE; keywords["endif"] = TokenType::ENDIF; keywords["while"] = TokenType::WHILE; keywords["do"] = TokenType::DO; keywords["finally"] = TokenType::FINALLY; keywords["endwhile"] = TokenType::ENDWHILE; keywords["def"] = TokenType::DEF; keywords["enddef"] = TokenType::ENDDEF; keywords["return"] = TokenType::RETURN; keywords["say"] = TokenType::SAY; keywords["inp"] = TokenType::INP; keywords["mark"] = TokenType::MARK; keywords["jump"] = TokenType::JUMP; keywords["halt"] = TokenType::HALT; keywords["run"] = TokenType::RUN;
+        keywords["if"] = TokenType::IF; keywords["then"] = TokenType::THEN; keywords["else"] = TokenType::ELSE; keywords["endif"] = TokenType::ENDIF; 
+        keywords["while"] = TokenType::WHILE; keywords["do"] = TokenType::DO; keywords["finally"] = TokenType::FINALLY; keywords["endwhile"] = TokenType::ENDWHILE; 
+        keywords["def"] = TokenType::DEF; keywords["enddef"] = TokenType::ENDDEF; keywords["return"] = TokenType::RETURN; keywords["say"] = TokenType::SAY; 
+        keywords["ask"] = TokenType::ASK; keywords["mark"] = TokenType::MARK; keywords["jump"] = TokenType::JUMP; keywords["halt"] = TokenType::HALT; 
+        keywords["run"] = TokenType::RUN;
         keywords["await"] = TokenType::AWAIT; keywords["endawait"] = TokenType::ENDAWAIT;
         keywords["try"] = TokenType::TRY; keywords["catch"] = TokenType::CATCH; keywords["endtry"] = TokenType::ENDTRY; keywords["raise"] = TokenType::RAISE;
         keywords["ins"] = TokenType::INS; keywords["contains"] = TokenType::CONTAINS; keywords["endins"] = TokenType::ENDINS; // Register new keywords
@@ -614,7 +624,22 @@ public:
     }
     bool has_error() const { return had_error; }
 private:
-    Tokenizer tokenizer; Token current_token, previous_token; bool had_error;
+    Tokenizer tokenizer; 
+    Token current_token, previous_token; 
+    bool had_error;
+
+    // 添加 statement() 方法的前向声明
+    AstNodePtr statement() {
+        if (match({TokenType::IF})) return if_statement();
+        if (match({TokenType::WHILE})) return while_statement();
+        if (match({TokenType::AWAIT})) return await_statement();
+        if (match({TokenType::SAY})) return say_statement();
+        if (match({TokenType::RETURN})) return return_statement();
+        if (match({TokenType::TRY})) return try_statement();
+        if (match({TokenType::RAISE})) return raise_statement();
+        return expression_statement();
+    }
+    
     void advance() { previous_token = current_token; current_token = tokenizer.next_token(); }
     void consume(TokenType type, const std::string& msg) { if (current_token.type == type) { advance(); return; } throw std::runtime_error(msg); }
     bool check(TokenType type) { return current_token.type == type; }
@@ -631,8 +656,9 @@ private:
     ParameterDefinition parse_parameter() {
         if (DEBUG) std::cout << "[调试:解析器] 正在解析参数..." << std::endl;
         Token keyword = current_token;
-        if (!match({TokenType::DEC, TokenType::STR, TokenType::BIN, TokenType::LIST})) {
-            throw std::runtime_error("函数参数需要类型关键字 (dec, str, bin, list)。");
+        if (!match({TokenType::DEC, TokenType::STR, TokenType::BIN, TokenType::LIST, TokenType::ANY})) { 
+            // 同时更新错误提示信息
+            throw std::runtime_error("函数参数需要类型关键字 (dec, str, bin, list, any)。");
         }
         consume(TokenType::IDENTIFIER, "需要参数名。");
         std::string param_name = previous_token.lexeme;
@@ -650,7 +676,10 @@ private:
             } else if (check(TokenType::HEX_LITERAL)) {
                 advance();
                 default_value = std::make_shared<BinaryValue>(previous_token.lexeme);
-            } else if (check(TokenType::LBRACKET)) {
+            } else if (check(TokenType::NULL_LITERAL)) {
+                advance(); // 消耗 'nul' token
+                default_value = std::make_shared<NullValue>();
+			} else if (check(TokenType::LBRACKET)) {
                 // For list default, we need to parse a list literal.
                 // This is a bit tricky in a single pass, so for now, we'll just create an empty list as default.
                 // A more complete solution would parse the list literal properly.
@@ -662,7 +691,7 @@ private:
                     throw std::runtime_error("当前版本不支持非空列表作为默认参数值。");
                 }
             } else {
-                throw std::runtime_error("默认参数值必须是字面量 (数字, 字符串, 十六进制, 空列表)。");
+                throw std::runtime_error("默认参数值必须是字面量 (空值, 数字, 字符串, 十六进制, 空列表)。");
             }
         }
         // 5. 使用正确的构造函数创建 ParameterDefinition
@@ -725,7 +754,6 @@ private:
         return std::make_shared<ClassDefNode>(line, name, fields, methods);
     }
     // --- End of new Parser method ---
-    AstNodePtr statement() { if (DEBUG) std::cout << "[调试:解析器] 正在解析语句 (当前词法单元: " << current_token.lexeme << ")..." << std::endl; if (match({TokenType::IF})) return if_statement(); if (match({TokenType::WHILE})) return while_statement(); if (match({TokenType::AWAIT})) return await_statement(); if (match({TokenType::TRY})) return try_statement(); if (match({TokenType::RAISE})) return raise_statement(); if (match({TokenType::SAY})) return say_statement(); if (match({TokenType::RETURN})) return return_statement(); if (check(TokenType::ELSE) || check(TokenType::ENDIF) || check(TokenType::FINALLY) || check(TokenType::ENDWHILE) || check(TokenType::ENDDEF) || check(TokenType::ENDAWAIT) || check(TokenType::CATCH) || check(TokenType::ENDTRY) || check(TokenType::ENDINS)) { throw std::runtime_error("关键字 '" + current_token.lexeme + "' 位置错误。"); } return expression_statement(); }
     AstNodePtr if_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::THEN, "if 条件后需要 'then'。"); std::vector<AstNodePtr> then_branch; while(!check(TokenType::ELSE) && !check(TokenType::ENDIF) && !check(TokenType::END_OF_FILE)) { then_branch.push_back(declaration()); } std::vector<AstNodePtr> else_branch; if (match({TokenType::ELSE})) { while(!check(TokenType::ENDIF) && !check(TokenType::END_OF_FILE)) { else_branch.push_back(declaration()); } } consume(TokenType::ENDIF, "if 语句后需要 'endif'。"); return std::make_shared<IfStatementNode>(line, condition, then_branch, else_branch); }
     AstNodePtr while_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::DO, "while 条件后需要 'do'。"); std::vector<AstNodePtr> do_branch; while(!check(TokenType::FINALLY) && !check(TokenType::ENDWHILE) && !check(TokenType::END_OF_FILE)) { do_branch.push_back(declaration()); } std::vector<AstNodePtr> finally_branch; if (match({TokenType::FINALLY})) { while(!check(TokenType::ENDWHILE) && !check(TokenType::END_OF_FILE)) { finally_branch.push_back(declaration()); } } consume(TokenType::ENDWHILE, "while 循环后需要 'endwhile'。"); return std::make_shared<WhileStatementNode>(line, condition, do_branch, finally_branch); }
     AstNodePtr await_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::THEN, "await 条件后需要 'then'。"); std::vector<AstNodePtr> then_branch; while (!check(TokenType::ENDAWAIT) && !check(TokenType::END_OF_FILE)) { then_branch.push_back(declaration()); } consume(TokenType::ENDAWAIT, "await 语句后需要 'endawait'。"); return std::make_shared<AwaitStatementNode>(line, condition, then_branch); }
@@ -782,7 +810,29 @@ private:
     AstNodePtr finish_call(AstNodePtr callee) { int line = previous_token.line; std::vector<AstNodePtr> arguments; if (!check(TokenType::RPAREN)) { do { if (arguments.size() >= 255) throw std::runtime_error("函数参数不能超过255个。"); arguments.push_back(expression()); } while (match({TokenType::COMMA})); } consume(TokenType::RPAREN, "参数后需要 ')'。"); return std::make_shared<CallNode>(line, callee, arguments); }
     AstNodePtr finish_subscript(AstNodePtr object) { int line = previous_token.line; AstNodePtr index = expression(); consume(TokenType::RBRACKET, "下标后需要 ']'。"); return std::make_shared<SubscriptNode>(line, object, index); }
     AstNodePtr list_literal() { int line = previous_token.line; std::vector<AstNodePtr> elements; if (!check(TokenType::RBRACKET)) { do { elements.push_back(expression()); } while (match({TokenType::COMMA})); } consume(TokenType::RBRACKET, "列表后需要 ']'。"); return std::make_shared<ListLiteralNode>(line, elements); }
-    AstNodePtr primary() { int line = current_token.line; if (match({TokenType::NUMBER})) return std::make_shared<LiteralNode>(line, std::make_shared<NumberValue>(BigNumber(previous_token.lexeme))); if (match({TokenType::STRING})) return std::make_shared<LiteralNode>(line, std::make_shared<StringValue>(previous_token.lexeme)); if (match({TokenType::HEX_LITERAL})) return std::make_shared<LiteralNode>(line, std::make_shared<BinaryValue>(previous_token.lexeme)); if (match({TokenType::LBRACKET})) return list_literal(); if (match({TokenType::IDENTIFIER})) return std::make_shared<VariableNode>(line, previous_token.lexeme); if (match({TokenType::INP})) { consume(TokenType::LPAREN, "'inp' 后需要 '('。"); AstNodePtr prompt = expression(); consume(TokenType::RPAREN, "提示符后需要 ')'。"); return std::make_shared<InpNode>(line, prompt); } if (match({TokenType::LPAREN})) { AstNodePtr expr = expression(); consume(TokenType::RPAREN, "表达式后需要 ')'。"); return expr; } throw std::runtime_error("需要表达式。"); }
+    AstNodePtr primary() { 
+        int line = current_token.line; 
+        if (match({TokenType::NUMBER})) return std::make_shared<LiteralNode>(line, std::make_shared<NumberValue>(BigNumber(previous_token.lexeme))); 
+        if (match({TokenType::STRING})) return std::make_shared<LiteralNode>(line, std::make_shared<StringValue>(previous_token.lexeme)); 
+        if (match({TokenType::HEX_LITERAL})) return std::make_shared<LiteralNode>(line, std::make_shared<BinaryValue>(previous_token.lexeme)); 
+        if (match({TokenType::NULL_LITERAL})) {
+            return std::make_shared<LiteralNode>(line, std::make_shared<NullValue>());
+        }
+		if (match({TokenType::LBRACKET})) return list_literal(); 
+        if (match({TokenType::IDENTIFIER})) return std::make_shared<VariableNode>(line, previous_token.lexeme); 
+        if (match({TokenType::ASK})) { 
+            consume(TokenType::LPAREN, "'ask' 后需要 '('。"); 
+            AstNodePtr prompt = expression(); 
+            consume(TokenType::RPAREN, "提示符后需要 ')'。"); 
+            return std::make_shared<InpNode>(line, prompt); 
+        } 
+        if (match({TokenType::LPAREN})) { 
+            AstNodePtr expr = expression(); 
+            consume(TokenType::RPAREN, "表达式后需要 ')'。"); 
+            return expr; 
+        } 
+        throw std::runtime_error("需要表达式。"); 
+    }
 };
 // --- Interpreter ---
 class Interpreter {
@@ -850,6 +900,8 @@ private:
 // --- Helper function for type checking (定义) ---
 bool is_type_compatible(TokenType expected_type, const ValuePtr& value) {
     switch (expected_type) {
+        case TokenType::ANY:
+            return true;  // ANY 类型接受任何值
         case TokenType::DEC:
             return dynamic_cast<NumberValue*>(value.get()) != nullptr;
         case TokenType::STR:
@@ -864,6 +916,7 @@ bool is_type_compatible(TokenType expected_type, const ValuePtr& value) {
 }
 std::string token_type_to_string(TokenType type) {
     switch (type) {
+        case TokenType::ANY: return "any";
         case TokenType::DEC: return "dec";
         case TokenType::STR: return "str";
         case TokenType::BIN: return "bin";
@@ -1576,7 +1629,7 @@ void run_repl(Interpreter& interpreter) {
     interpreter.repl_buffer.clear();
     int line_number = 1;
     std::vector<std::string> env_stack = {"void"};
-    std::cout << "PyRite 解释器 0.18.0 (tags/v0.18.0, compilers/TDM-GCC 4.9.2 64-bit Release)"
+    std::cout << "PyRite 解释器 0.19.0 (tags/v0.19.0, compilers/TDM-GCC 4.9.2 64-bit Release)"
               << (DEBUG ? " [DEBUG]" : "") << ".\n";
     std::cout << "输入 'run()' 执行缓冲代码, 'compile()' 编译代码, 'halt()' 退出, 'about()' 查看版本信息.\n";
     std::cout << std::endl;
@@ -1598,7 +1651,7 @@ void run_repl(Interpreter& interpreter) {
         if (trimmed_line == "halt()") break;
         if (trimmed_line == "about()") {
             std::cout << "----------------------------------------\n"
-                      << " PyRite Language Interpreter v0.18.0" << (DEBUG ? " [DEBUG]" : "") << "\n"
+                      << " PyRite Language Interpreter v0.19.0" << (DEBUG ? " [DEBUG]" : "") << "\n"
                       << " (c) 2024-2025. DarkstarXD. 保留所有权利.\n"
                       << " 一个简单到神奇的编程语言?!\n"
                       << "----------------------------------------\n";
