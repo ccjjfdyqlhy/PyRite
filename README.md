@@ -1,7 +1,9 @@
 ![cover](https://github.com/ccjjfdyqlhy/PyRite/blob/main/cover.png)
-# PyRite: 一个简洁到神奇的编程语言。
+# PyRite: 一套简洁到神奇的编程语言！！
 
 **现在支持中日英三种语言！** 日语特供一版超可爱的版本~~
+
+其他语言版本的 **README** 正在编纂中~
 
 ![Language](https://img.shields.io/badge/language-C%2B%2B11-blue.svg)
 ![Status](https://img.shields.io/badge/status-in--development-orange.svg)
@@ -41,7 +43,9 @@ PyRite 是一个用 C++11 编写的、小巧的动态脚本语言解释器。它
 
 **注意：开发版解释器源代码中可能会启用 `DEBUG` ，这将会在终端里释放大量的内部调试信息。如果你不想看到这些额外的内容，请在编译前将 `SimPy.cpp` 中前面位置的 `debug` 设为 `false` 。**
 
-要编译 PyRite 解释器本身，在项目根目录中运行以下命令：
+首先，转到解释器源代码 `PyRite.cpp` ，调整最后一条 `include` 为你想设置的语言的对应头文件。  
+
+然后在项目根目录中运行以下命令：
 
 ```bash
 g++ PyRite.cpp -o PyRite -std=c++11 -O2
@@ -213,7 +217,7 @@ endtry
 #### 常用函数
 
 *   `say(...)`: 打印一个或多个值到控制台。
-*   `inp(prompt)`: 显示提示并从用户处读取一行输入。
+*   `ask(prompt)`: 显示提示并从用户处读取一行输入。
 *   `abs(number)`: 返回数字的绝对值。
 *   `rt(number, n=2)`: 计算 `number` 的 n 次方根（默认为平方根）。
 *   `sort(list)`: 返回一个排序后的新列表。
@@ -255,5 +259,6 @@ endtry
 
 欢迎对 PyRite 项目做出贡献！你可以通过以下方式参与：
 *   报告 Bug 或提出新功能建议。
-*   **由于代码标准和早期开发阶段的原因，暂时不接受有关代码修改的PR。**
+*   **提交更好的高精度实现的PR（紧急！！）**
+*   提交新建或修订语言文件的PR。
 *   撰写文档和示例。
