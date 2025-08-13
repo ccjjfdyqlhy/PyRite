@@ -18,22 +18,23 @@
 #include <cstdio>
 #include <unordered_set>
 #include "BigNumber.hpp"
-#include "Tense.hpp"    // 矩阵支持
-#include "File.hpp"     // 文件操作支持
+#include "Tense.hpp"    // Matrix support
+#include "File.hpp"     // File operation support
+#include "msg_jp_special1.hpp" // --- Import all string constants ---
 
-// --- 全局 DEBUG 开关 ---
-// 小心，不要用于发布版本
-// 开启此选项可能会因为打印大量调试信息而降低 I/O 速度。
-constexpr bool DEBUG = false;
+// --- Global DEBUG Switch ----
+// Be careful, do not use in release builds.
+// Enabling this may slow down I/O due to printing large amounts of debug information.
+constexpr bool DEBUG = true;
 
-// --- 前向声明 ---
+// --- Forward Declarations ---
 struct Value; struct Function; class Interpreter; class Environment; class NumberValue; class BinaryValue; class StringValue; class ListValue; class NativeFnValue; class ExceptionValue;
 struct Class; struct Instance;
 using ValuePtr = std::shared_ptr<Value>;
 using ClassPtr = std::shared_ptr<Class>;
 using InstancePtr = std::shared_ptr<Instance>;
 
-// --- Value 基类和派生类 ---
+// --- Base Value Class and Derived Classes ---
 struct Value {
     virtual ~Value() {}
     virtual std::string toString() const = 0;
@@ -130,7 +131,7 @@ public:
 
     BoundMethodValue(InstancePtr inst, std::shared_ptr<Function> m) : instance(inst), method(m) {}
 
-    // --- 将实现分离出去，只留下声明 ---
+    // --- Implementation moved out, only declaration remains ---
     std::string toString() const override;
     std::string repr() const override;
 
@@ -148,16 +149,16 @@ public:
     bool isEqualTo(const Value& other) const override { if (const ExceptionValue* o = dynamic_cast<const ExceptionValue*>(&other)) { return payload->isEqualTo(*(o->payload)); } return false; }
 };
 
-// --- 运算符和转换实现 ---
-ValuePtr Value::add(const Value&) const { throw std::runtime_error("不支持的操作数类型用于 +。"); }
-ValuePtr Value::subtract(const Value&) const { throw std::runtime_error("不支持的操作数类型用于 -。"); }
-ValuePtr Value::multiply(const Value&) const { throw std::runtime_error("不支持的操作数类型用于 *。"); }
-ValuePtr Value::divide(const Value&) const { throw std::runtime_error("不支持的操作数类型用于 /。"); }
-ValuePtr Value::power(const Value&) const { throw std::runtime_error("不支持的操作数类型用于 ^。"); }
+// --- Operator and Conversion Implementations ---
+ValuePtr Value::add(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_UNSUPPORTED_OPERAND_ADD); }
+ValuePtr Value::subtract(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_UNSUPPORTED_OPERAND_SUB); }
+ValuePtr Value::multiply(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_UNSUPPORTED_OPERAND_MUL); }
+ValuePtr Value::divide(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_UNSUPPORTED_OPERAND_DIV); }
+ValuePtr Value::power(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_UNSUPPORTED_OPERAND_POW); }
 bool Value::isEqualTo(const Value&) const { return false; }
-bool Value::isLessThan(const Value&) const { throw std::runtime_error("不支持的操作数类型用于比较。"); }
-ValuePtr Value::getSubscript(const Value&) const { throw std::runtime_error("对象不可下标。"); }
-void Value::setSubscript(const Value&, ValuePtr) { throw std::runtime_error("对象不支持项目赋值。"); }
+bool Value::isLessThan(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_UNSUPPORTED_COMPARISON); }
+ValuePtr Value::getSubscript(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_OBJECT_NOT_SUBSCRIPTABLE); }
+void Value::setSubscript(const Value&, ValuePtr) { throw std::runtime_error(PyRiteMessages::ERROR_OBJECT_ITEM_ASSIGNMENT_UNSUPPORTED); }
 ValuePtr NumberValue::add(const Value& other) const {
     if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return std::make_shared<NumberValue>(this->value + o->value);
     if (const BinaryValue* o = dynamic_cast<const BinaryValue*>(&other)) return std::make_shared<NumberValue>(this->value + o->toBigNumber());
@@ -170,7 +171,7 @@ ValuePtr NumberValue::power(const Value& other) const { if (const NumberValue* o
 bool NumberValue::isEqualTo(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return this->value == o->value; if (const BinaryValue* o = dynamic_cast<const BinaryValue*>(&other)) return this->value == o->toBigNumber(); return false; }
 bool NumberValue::isLessThan(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return this->value < o->value; return Value::isLessThan(other); }
 BinaryValue::BinaryValue(const std::string& hex_str) {
-    if (hex_str.rfind("0x", 0) != 0) throw std::invalid_argument("十六进制字符串必须以 '0x' 开头。");
+    if (hex_str.rfind("0x", 0) != 0) throw std::invalid_argument(PyRiteMessages::ERROR_HEX_STRING_PREFIX);
     std::string hex = hex_str.substr(2);
     if (hex.length() % 2 != 0) hex = "0" + hex;
     for (size_t i = 0; i < hex.length(); i += 2) {
@@ -239,7 +240,7 @@ ValuePtr ListValue::multiply(const Value& other) const {
             }
             return std::make_shared<ListValue>(new_elements);
         } catch (...) {
-            throw std::runtime_error("列表重复次数必须是整数。");
+            throw std::runtime_error(PyRiteMessages::ERROR_LIST_REPEAT_COUNT_INTEGER);
         }
     }
     return Value::multiply(other);
@@ -254,7 +255,7 @@ bool ListValue::isEqualTo(const Value& other) const {
 }
 ValuePtr ListValue::getSubscript(const Value& index) const {
     const NumberValue* num_val = dynamic_cast<const NumberValue*>(&index);
-    if (!num_val) throw std::runtime_error("列表索引必须是数字。");
+    if (!num_val) throw std::runtime_error(PyRiteMessages::ERROR_LIST_INDEX_MUST_BE_NUMBER);
     try {
         long long i = num_val->value.toLongLong();
         long long size = elements.size();
@@ -262,14 +263,14 @@ ValuePtr ListValue::getSubscript(const Value& index) const {
         if (i >= 0 && i < size) {
             return elements[i];
         }
-        throw std::runtime_error("列表索引超出范围。");
+        throw std::runtime_error(PyRiteMessages::ERROR_LIST_INDEX_OUT_OF_RANGE);
     } catch (...) {
-        throw std::runtime_error("无效的列表索引。");
+        throw std::runtime_error(PyRiteMessages::ERROR_INVALID_LIST_INDEX);
     }
 }
 void ListValue::setSubscript(const Value& index, ValuePtr value) {
     const NumberValue* num_val = dynamic_cast<const NumberValue*>(&index);
-    if (!num_val) throw std::runtime_error("列表索引必须是数字。");
+    if (!num_val) throw std::runtime_error(PyRiteMessages::ERROR_LIST_INDEX_MUST_BE_NUMBER);
      try {
         long long i = num_val->value.toLongLong();
         long long size = elements.size();
@@ -278,15 +279,15 @@ void ListValue::setSubscript(const Value& index, ValuePtr value) {
             elements[i] = value;
             return;
         }
-        throw std::runtime_error("列表索引超出范围。");
+        throw std::runtime_error(PyRiteMessages::ERROR_LIST_INDEX_OUT_OF_RANGE);
     } catch (...) {
-        throw std::runtime_error("无效的列表索引。");
+        throw std::runtime_error(PyRiteMessages::ERROR_INVALID_LIST_INDEX);
     }
 }
-// --- 函数参数定义 ---
-// 1. 移动 TokenType enum class 的定义到这里，确保 ParameterDefinition 能看到它
+// --- Function Parameter Definition ---
+// 1. Move TokenType enum class definition here to ensure ParameterDefinition can see it
 enum class TokenType {
-    DEC, STR, BIN, LIST, ANY, TENSE,  // 添加 ANY 和 TENSE
+    DEC, STR, BIN, LIST, ANY, TENSE,  // Added ANY and TENSE
     IF, THEN, ELSE, ENDIF, WHILE, DO, FINALLY, ENDWHILE, DEF, ENDDEF, RETURN, SAY, ASK, MARK, JUMP, HALT, RUN,
     TRY, CATCH, ENDTRY, RAISE,
     AWAIT, ENDAWAIT,
@@ -296,25 +297,25 @@ enum class TokenType {
     PLUS, MINUS, STAR, SLASH, LPAREN, RPAREN, COMMA, CARET,
     LBRACKET, RBRACKET,
     DOT, // For accessing instance properties/methods
-    NULL_LITERAL,  // 添加空值字面量
+    NULL_LITERAL,  // Added null literal
     END_OF_FILE, UNKNOWN
 };
-// 2. 修改 ParameterDefinition 结构体定义
+// 2. Modify ParameterDefinition struct definition
 struct ParameterDefinition {
-    TokenType type_keyword; // 类型关键字 (TokenType::DEC, STR, BIN, LIST)
-    std::string name;       // 参数名称
-    ValuePtr default_value; // 默认值 (可以是 nullptr)
-    bool has_default;       // 是否有默认值
-    // 构造函数
+    TokenType type_keyword; // Type keyword (TokenType::DEC, STR, BIN, LIST)
+    std::string name;       // Parameter name
+    ValuePtr default_value; // Default value (can be nullptr)
+    bool has_default;       // Flag for whether it has a default value
+    // Constructor
     ParameterDefinition(TokenType tk, const std::string& n, ValuePtr dv = nullptr)
         : type_keyword(tk), name(n), default_value(dv), has_default(dv != nullptr) {}
 };
-// --- AST 节点和相关结构 ---
+// --- AST Nodes and Related Structures ---
 struct AstNode; class Environment; using AstNodePtr = std::shared_ptr<AstNode>;
-// 3. 修改 Function 结构体，使用 ParameterDefinition
+// 3. Modify Function struct to use ParameterDefinition
 struct Function {
     std::string name;
-    std::vector<ParameterDefinition> params; // 使用 ParameterDefinition 列表
+    std::vector<ParameterDefinition> params; // Use a list of ParameterDefinition
     std::vector<AstNodePtr> body;
     std::shared_ptr<Environment> closure;
     Function(const std::string& n, const std::vector<ParameterDefinition>& p, const std::vector<AstNodePtr>& b, const std::shared_ptr<Environment>& c)
@@ -330,7 +331,7 @@ std::string FunctionValue::repr() const {
     ss << ">";
     return ss.str();
 }
-// --- C++ 异常定义 ---
+// --- C++ Exception Definitions ---
 class RuntimeError : public std::runtime_error { public: int line; RuntimeError(int l, const std::string& msg) : std::runtime_error(msg), line(l) {} };
 class ReturnValueException : public std::runtime_error { public: ValuePtr value; ReturnValueException(ValuePtr v) : std::runtime_error(""), value(v) {} };
 class PyRiteRaiseException : public std::runtime_error { public: ValuePtr value; PyRiteRaiseException(ValuePtr v) : std::runtime_error(""), value(v) {} };
@@ -340,46 +341,46 @@ class Environment : public std::enable_shared_from_this<Environment> {
 public:
     Environment(std::shared_ptr<Environment> enc = nullptr) : enclosing(enc) {}
     void define(const std::string& name, ValuePtr value) {
-        if (DEBUG) std::cout << "[调试:环境] 在环境 " << this << " 中定义 '" << name << "' 为 " << value->repr() << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_ENV_DEFINE << name << PyRiteMessages::DEBUG_ENV_IN_ENV << this << PyRiteMessages::DEBUG_ENV_AS << value->repr() << std::endl;
         values[name] = value;
     }
     void assign(const std::string& name, ValuePtr value) {
         if (values.count(name)) {
-            if (DEBUG) std::cout << "[调试:环境] 在环境 " << this << " 中给 '" << name << "' 赋值 = " << value->repr() << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_ENV_ASSIGN << name << PyRiteMessages::DEBUG_ENV_IN_ENV << this << PyRiteMessages::DEBUG_ENV_VALUE << value->repr() << std::endl;
             values[name] = value;
             return;
         }
         if (enclosing) {
-            if (DEBUG) std::cout << "[调试:环境] 在 " << this << " 中赋值失败，尝试外层环境 " << enclosing.get() << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_ENV_ASSIGN_FAIL << this << PyRiteMessages::DEBUG_ENV_TRY_ENCLOSING << enclosing.get() << std::endl;
             enclosing->assign(name, value);
             return;
         }
-        throw RuntimeError(0, "未定义的变量 '" + name + "'。");
+        throw RuntimeError(0, std::string(PyRiteMessages::RUNTIME_ERROR_UNDEFINED_VARIABLE_PREFIX) + name + PyRiteMessages::RUNTIME_ERROR_UNDEFINED_VARIABLE_SUFFIX);
     }
     ValuePtr get(const std::string& name) {
-        if (DEBUG) std::cout << "[调试:环境] 从环境 " << this << " 中获取 '" << name << "'" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_ENV_GET << name << PyRiteMessages::DEBUG_ENV_FROM_ENV << this << std::endl;
         if (values.count(name)) {
-            if (DEBUG) std::cout << "[调试:环境]   找到 '" << name << "' = " << values.at(name)->repr() << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_ENV_FOUND << name << "' = " << values.at(name)->repr() << std::endl;
             return values[name];
         }
         if (enclosing) {
-            if (DEBUG) std::cout << "[调试:环境]   在 " << this << " 中获取失败，尝试外层环境 " << enclosing.get() << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_ENV_GET_FAIL << this << PyRiteMessages::DEBUG_ENV_TRY_ENCLOSING << enclosing.get() << std::endl;
             return enclosing->get(name);
         }
-        throw RuntimeError(0, "未定义的变量 '" + name + "'。");
+        throw RuntimeError(0, std::string(PyRiteMessages::RUNTIME_ERROR_UNDEFINED_VARIABLE_PREFIX) + name + PyRiteMessages::RUNTIME_ERROR_UNDEFINED_VARIABLE_SUFFIX);
     }
     
-    // 将 get_type 的实现分离出去，只留下声明
+    // Implementation for get_type moved out, only declaration remains
     ValuePtr get_type(const std::string& name); 
 
 private:
     std::shared_ptr<Environment> enclosing; std::map<std::string, ValuePtr> values;
 };
 
-// --- Helper function for type checking (声明提前) ---
+// --- Helper function for type checking (forward declaration) ---
 bool is_type_compatible(TokenType expected_type, const ValuePtr& value);
 std::string token_type_to_string(TokenType type);
-// --- Class and Instance Definitions (移动到 Environment 之后) ---
+// --- Class and Instance Definitions (moved after Environment) ---
 struct Class : public Value {
     std::string name;
     std::vector<ParameterDefinition> fields; // Field definitions with types and defaults
@@ -404,12 +405,12 @@ public: // Add public specifier
     std::shared_ptr<Environment> instance_env; // Holds instance fields
     Instance(ClassPtr k) : klass(k) {
         // Create a new environment for this instance, enclosed in the class's closure
-        if (DEBUG) std::cout << "[调试:实例] 正在创建 '" << k->name << "' 的实例。创建新环境，其外层为 " << k->closure.get() << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_INSTANCE_CREATING << k->name << PyRiteMessages::DEBUG_INSTANCE_NEW_ENV << k->closure.get() << std::endl;
         instance_env = std::make_shared<Environment>(klass->closure);
         // Initialize fields with their default values
         for (const auto& field_def : klass->fields) {
             ValuePtr default_val = field_def.default_value ? field_def.default_value->clone() : std::make_shared<NullValue>();
-             if (DEBUG) std::cout << "[调试:实例]   正在用默认值 " << default_val->repr() << " 初始化字段 '" << field_def.name << "'" << std::endl;
+             if (DEBUG) std::cout << PyRiteMessages::DEBUG_INSTANCE_INIT_FIELD << field_def.name << PyRiteMessages::DEBUG_INSTANCE_WITH_DEFAULT << default_val->repr() << std::endl;
             instance_env->define(field_def.name, default_val);
         }
     }
@@ -425,58 +426,58 @@ public: // Add public specifier
     }
     // Get a field or method
     ValuePtr get(const std::string& name) {
-        if (DEBUG) std::cout << "[调试:实例] 正在从 '" << klass->name << "' 的实例中获取属性 '" << name << "'。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_INSTANCE_GET_PROP << name << PyRiteMessages::DEBUG_INSTANCE_FROM << klass->name << "'." << std::endl;
         // 1. Check instance fields
         try {
-            if (DEBUG) std::cout << "[调试:实例]   正在检查实例字段..." << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_INSTANCE_CHECK_FIELDS << std::endl;
             return instance_env->get(name);
         } catch (const RuntimeError&) {
             // 2. Check class methods
-            if (DEBUG) std::cout << "[调试:实例]   属性 '" << name << "' 不在字段中。正在检查类方法..." << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_INSTANCE_PROP_NOT_IN_FIELDS << name << PyRiteMessages::DEBUG_INSTANCE_CHECK_METHODS << std::endl;
             auto it = klass->methods.find(name);
             if (it != klass->methods.end()) {
-                if (DEBUG) std::cout << "[调试:实例]   找到方法 '" << name << "'。正在创建绑定方法。" << std::endl;
+                if (DEBUG) std::cout << PyRiteMessages::DEBUG_INSTANCE_FOUND_METHOD << name << PyRiteMessages::DEBUG_INSTANCE_CREATING_BOUND_METHOD << std::endl;
                 // Found a method. Return a new BoundMethodValue which pairs the instance ('this')
                 // with the method's function data. The interpreter will handle calling it.
                 return std::make_shared<BoundMethodValue>(this->shared_from_this(), it->second);
             }
         }
-        throw std::runtime_error("Undefined property '" + name + "'.");
+        throw std::runtime_error(std::string(PyRiteMessages::RUNTIME_ERROR_UNDEFINED_PROPERTY_PREFIX) + name + PyRiteMessages::RUNTIME_ERROR_UNDEFINED_PROPERTY_SUFFIX);
     }
     // Set a field
     void set(const std::string& name, ValuePtr value) {
-        if (DEBUG) std::cout << "[调试:实例] 正在为 '" << klass->name << "' 的实例设置属性 '" << name << "' 为 " << value->repr() << "。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_INSTANCE_SET_PROP << name << PyRiteMessages::DEBUG_INSTANCE_FOR << klass->name << PyRiteMessages::DEBUG_INSTANCE_TO_VALUE << value->repr() << "." << std::endl;
         // Check if the field is defined in the class
         bool field_found = false;
         for (const auto& field_def : klass->fields) {
             if (field_def.name == name) {
                 field_found = true;
                 // Type check
-                if (DEBUG) std::cout << "[调试:实例]   找到字段 '" << name << "'。类型检查中... 期望: " << token_type_to_string(field_def.type_keyword) << std::endl;
-                if (!is_type_compatible(field_def.type_keyword, value)) { // 使用辅助函数
+                if (DEBUG) std::cout << PyRiteMessages::DEBUG_INSTANCE_FOUND_FIELD << name << PyRiteMessages::DEBUG_INSTANCE_TYPE_CHECKING << token_type_to_string(field_def.type_keyword) << std::endl;
+                if (!is_type_compatible(field_def.type_keyword, value)) { // Use helper function
                      std::stringstream ss;
-                     ss << "字段 '" << name << "' 类型不匹配。期望类型是 '" << token_type_to_string(field_def.type_keyword) // 使用辅助函数
-                        << "', 但实际类型是 '";
+                     ss << PyRiteMessages::RUNTIME_ERROR_FIELD_TYPE_MISMATCH_PREFIX << name << PyRiteMessages::RUNTIME_ERROR_FIELD_TYPE_MISMATCH_EXPECTED << token_type_to_string(field_def.type_keyword) // Use helper function
+                        << PyRiteMessages::RUNTIME_ERROR_FIELD_TYPE_MISMATCH_GOT;
                      if (dynamic_cast<NumberValue*>(value.get())) ss << "dec";
                      else if (dynamic_cast<StringValue*>(value.get())) ss << "str";
                      else if (dynamic_cast<BinaryValue*>(value.get())) ss << "bin";
                      else if (dynamic_cast<ListValue*>(value.get())) ss << "list";
                      else ss << "unknown";
-                     ss << "'。";
+                     ss << PyRiteMessages::RUNTIME_ERROR_FIELD_TYPE_MISMATCH_SUFFIX;
                      throw std::runtime_error(ss.str());
                 }
                 break;
             }
         }
         if (!field_found) {
-            throw std::runtime_error("Cannot set undefined field '" + name + "'.");
+            throw std::runtime_error(std::string(PyRiteMessages::RUNTIME_ERROR_UNDEFINED_FIELD_PREFIX) + name + PyRiteMessages::RUNTIME_ERROR_UNDEFINED_FIELD_SUFFIX);
         }
-        if (DEBUG) std::cout << "[调试:实例]   类型检查通过。正在设置字段值。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_INSTANCE_TYPE_CHECK_OK << std::endl;
         instance_env->define(name, value); // This will overwrite if it exists
     }
 };
 
-// --- Environment::get_type 实现 (在 Class 和 Instance 定义之后) ---
+// --- Environment::get_type Implementation (after Class and Instance definitions) ---
 ValuePtr Environment::get_type(const std::string& name) {
     ValuePtr val = get(name);
     if (dynamic_cast<NumberValue*>(val.get())) return std::make_shared<StringValue>("dec");
@@ -484,15 +485,15 @@ ValuePtr Environment::get_type(const std::string& name) {
     if (dynamic_cast<BinaryValue*>(val.get())) return std::make_shared<StringValue>("bin");
     if (dynamic_cast<ListValue*>(val.get())) return std::make_shared<StringValue>("list");
     if (dynamic_cast<ExceptionValue*>(val.get())) return std::make_shared<StringValue>("exception");
-    // 此时 Class 和 Instance 都是完整类型，dynamic_cast 可以安全使用
+    // At this point, Class and Instance are complete types, so dynamic_cast can be used safely
     if (dynamic_cast<Class*>(val.get())) return std::make_shared<StringValue>("class");
     if (dynamic_cast<Instance*>(val.get())) return std::make_shared<StringValue>("instance");
     return std::make_shared<StringValue>("unknown");
 }
 
-// --- BoundMethodValue 方法实现 (在 Instance 和 Function 定义之后) ---
+// --- BoundMethodValue Method Implementations (after Instance and Function definitions) ---
 std::string BoundMethodValue::toString() const {
-    // 此时 Instance 和 Function 都是完整类型, 可以安全地访问其成员
+    // At this point, Instance and Function are complete types, so their members can be accessed safely
     return "<bound method " + instance->klass->name + "." + method->name + ">";
 }
 
@@ -505,9 +506,9 @@ struct Token { TokenType type; std::string lexeme; int line; };
 class Tokenizer {
 public:
     Tokenizer(const std::string& source) : source(source), start(0), current(0), line(1) {
-        keywords["any"] = TokenType::ANY;  // 添加 any 关键字
-        keywords["tense"] = TokenType::TENSE;  // 添加 tense 关键字
-        keywords["nul"] = TokenType::NULL_LITERAL;  // 添加 nul 关键字
+        keywords["any"] = TokenType::ANY;  // Add 'any' keyword
+        keywords["tense"] = TokenType::TENSE;  // Add 'tense' keyword
+        keywords["nul"] = TokenType::NULL_LITERAL;  // Add 'nul' keyword
         keywords["dec"] = TokenType::DEC; keywords["str"] = TokenType::STR; keywords["bin"] = TokenType::BIN; keywords["list"] = TokenType::LIST;
         keywords["if"] = TokenType::IF; keywords["then"] = TokenType::THEN; keywords["else"] = TokenType::ELSE; keywords["endif"] = TokenType::ENDIF; 
         keywords["while"] = TokenType::WHILE; keywords["do"] = TokenType::DO; keywords["finally"] = TokenType::FINALLY; keywords["endwhile"] = TokenType::ENDWHILE; 
@@ -534,7 +535,7 @@ public:
             case '[': return make_token(TokenType::LBRACKET); case ']': return make_token(TokenType::RBRACKET);
             case '.': return make_token(TokenType::DOT); // Add DOT token
         }
-        return make_token(TokenType::UNKNOWN, "意外的字符。");
+        return make_token(TokenType::UNKNOWN, PyRiteMessages::PARSE_ERROR_UNEXPECTED_CHAR);
     }
 private:
     const std::string& source; size_t start, current; int line; std::map<std::string, TokenType> keywords;
@@ -555,10 +556,10 @@ private:
     Token identifier() { while (isalnum(peek()) || peek() == '_') advance(); std::string text = source.substr(start, current - start); auto it = keywords.find(text); return make_token(it != keywords.end() ? it->second : TokenType::IDENTIFIER); }
     Token number() { while (isdigit(peek())) advance(); if (peek() == '.' && isdigit(peek_next())) { advance(); while (isdigit(peek())) advance(); } return make_token(TokenType::NUMBER); }
     Token hex_literal() { advance(); while (isxdigit(peek())) advance(); return make_token(TokenType::HEX_LITERAL); }
-    Token string(char quote) { while (peek() != quote && !is_at_end()) { if (peek() == '\n') line++; advance(); } if (is_at_end()) return make_token(TokenType::UNKNOWN, "未终止的字符串。"); advance(); return Token{TokenType::STRING, source.substr(start + 1, current - start - 2), line}; }
+    Token string(char quote) { while (peek() != quote && !is_at_end()) { if (peek() == '\n') line++; advance(); } if (is_at_end()) return make_token(TokenType::UNKNOWN, PyRiteMessages::PARSE_ERROR_UNTERMINATED_STRING); advance(); return Token{TokenType::STRING, source.substr(start + 1, current - start - 2), line}; }
 };
 
-// --- AST 节点定义 ---
+// --- AST Node Definitions ---
 struct AstNode { int line; AstNode(int l) : line(l) {} virtual ~AstNode() = default; virtual ValuePtr accept(Interpreter& visitor) = 0; };
 struct LiteralNode : AstNode { ValuePtr value; LiteralNode(int l, ValuePtr v) : AstNode(l), value(v) {} ValuePtr accept(Interpreter& visitor) override; };
 struct ListLiteralNode : AstNode { std::vector<AstNodePtr> elements; ListLiteralNode(int l, std::vector<AstNodePtr> e) : AstNode(l), elements(e) {} ValuePtr accept(Interpreter& visitor) override; };
@@ -608,14 +609,14 @@ class Parser {
 public:
     Parser(const std::string& source) : tokenizer(source), had_error(false) {}
     std::vector<AstNodePtr> parse() { 
-        if (DEBUG) std::cout << "[调试:解析器] 开始解析..." << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_START << std::endl;
         std::vector<AstNodePtr> statements; 
         current_token = tokenizer.next_token(); 
         while (current_token.type != TokenType::END_OF_FILE && current_token.type != TokenType::HALT && current_token.type != TokenType::RUN) { 
             try { 
                 statements.push_back(declaration()); 
             } catch (const std::runtime_error& e) { 
-                std::cerr << "[解析错误] 行 " << current_token.line << ": " << e.what() << std::endl; 
+                std::cerr << PyRiteMessages::PARSE_ERROR_PREFIX << current_token.line << ": " << e.what() << PyRiteMessages::PARSE_ERROR_SUFFIX;
                 had_error = true; 
                 synchronize(); 
             } 
@@ -628,7 +629,7 @@ private:
     Token current_token, previous_token; 
     bool had_error;
 
-    // 添加 statement() 方法的前向声明
+    // Forward declaration for statement() method
     AstNodePtr statement() {
         if (match({TokenType::IF})) return if_statement();
         if (match({TokenType::WHILE})) return while_statement();
@@ -646,25 +647,25 @@ private:
     bool match(const std::vector<TokenType>& types) { for (TokenType type : types) { if (check(type)) { advance(); return true; } } return false; }
     void synchronize() { advance(); while(current_token.type != TokenType::END_OF_FILE) { switch(current_token.type) { case TokenType::DEC: case TokenType::STR: case TokenType::IF: case TokenType::WHILE: case TokenType::DEF: case TokenType::INS: case TokenType::SAY: case TokenType::RETURN: case TokenType::TRY: return; default: advance(); } } }
     AstNodePtr declaration() { 
-        if (DEBUG) std::cout << "[调试:解析器] 正在解析声明 (当前词法单元: " << current_token.lexeme << ")..." << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_DECL << current_token.lexeme << ")..." << std::endl;
         if (match({TokenType::DEC, TokenType::STR, TokenType::BIN, TokenType::LIST})) return var_declaration(); 
         if (match({TokenType::DEF})) return function_definition("function"); 
         if (match({TokenType::INS})) return class_definition(); 
         return statement(); 
     }
-    // 4. 实现 parse_parameter 方法
+    // 4. Implement parse_parameter method
     ParameterDefinition parse_parameter() {
-        if (DEBUG) std::cout << "[调试:解析器] 正在解析参数..." << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_PARAM << std::endl;
         Token keyword = current_token;
         if (!match({TokenType::DEC, TokenType::STR, TokenType::BIN, TokenType::LIST, TokenType::ANY})) { 
-            // 同时更新错误提示信息
-            throw std::runtime_error("函数参数需要类型关键字 (dec, str, bin, list, any)。");
+            // Also update the error message
+            throw std::runtime_error(PyRiteMessages::PARSE_ERROR_EXPECT_PARAM_TYPE);
         }
-        consume(TokenType::IDENTIFIER, "需要参数名。");
+        consume(TokenType::IDENTIFIER, PyRiteMessages::PARSE_ERROR_EXPECT_PARAM_NAME);
         std::string param_name = previous_token.lexeme;
         ValuePtr default_value = nullptr;
         if (match({TokenType::EQUAL})) {
-            if (DEBUG) std::cout << "[调试:解析器]   正在为 '" << param_name << "' 解析默认值..." << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_DEFAULT_VAL_FOR << param_name << "'..." << std::endl;
             // Evaluate default value expression. For simplicity, we'll only allow literals here.
             // A more robust implementation would evaluate the expression in the global scope.
             if (check(TokenType::NUMBER)) {
@@ -677,7 +678,7 @@ private:
                 advance();
                 default_value = std::make_shared<BinaryValue>(previous_token.lexeme);
             } else if (check(TokenType::NULL_LITERAL)) {
-                advance(); // 消耗 'nul' token
+                advance(); // consume 'nul' token
                 default_value = std::make_shared<NullValue>();
 			} else if (check(TokenType::LBRACKET)) {
                 // For list default, we need to parse a list literal.
@@ -688,78 +689,78 @@ private:
                     advance(); // consume ']'
                     default_value = std::make_shared<ListValue>(std::vector<ValuePtr>{});
                 } else {
-                    throw std::runtime_error("当前版本不支持非空列表作为默认参数值。");
+                    throw std::runtime_error(PyRiteMessages::PARSE_ERROR_UNSUPPORTED_DEFAULT_LIST);
                 }
             } else {
-                throw std::runtime_error("默认参数值必须是字面量 (空值, 数字, 字符串, 十六进制, 空列表)。");
+                throw std::runtime_error(PyRiteMessages::PARSE_ERROR_DEFAULT_VALUE_LITERAL);
             }
         }
-        // 5. 使用正确的构造函数创建 ParameterDefinition
-        if (DEBUG) std::cout << "[调试:解析器]   已解析参数: " << param_name << (default_value ? " (带默认值)" : "") << std::endl;
+        // 5. Use the correct constructor to create ParameterDefinition
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSED_PARAM << param_name << (default_value ? PyRiteMessages::DEBUG_PARSER_WITH_DEFAULT : "") << std::endl;
         return ParameterDefinition(keyword.type, param_name, default_value);
     }
     AstNodePtr var_declaration() { 
-        if (DEBUG) std::cout << "[调试:解析器] 正在解析变量声明..." << std::endl;
-        Token keyword = previous_token; consume(TokenType::IDENTIFIER, "需要变量名。"); std::string name = previous_token.lexeme; AstNodePtr initializer = nullptr; if (match({TokenType::EQUAL})) { initializer = expression(); } return std::make_shared<VarDeclarationNode>(keyword.line, keyword, name, initializer); }
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_VAR_DECL << std::endl;
+        Token keyword = previous_token; consume(TokenType::IDENTIFIER, PyRiteMessages::PARSE_ERROR_EXPECT_VAR_NAME); std::string name = previous_token.lexeme; AstNodePtr initializer = nullptr; if (match({TokenType::EQUAL})) { initializer = expression(); } return std::make_shared<VarDeclarationNode>(keyword.line, keyword, name, initializer); }
     AstNodePtr function_definition(const std::string& kind) {
-        if (DEBUG) std::cout << "[调试:解析器] 正在解析" << (kind == "function" ? "函数" : "方法") << "定义..." << std::endl;
+        if (DEBUG) std::cout << (kind == "function" ? PyRiteMessages::DEBUG_PARSER_PARSING_FUNC_DEF : PyRiteMessages::DEBUG_PARSER_PARSING_METHOD_DEF) << std::endl;
         int line = previous_token.line;
-        consume(TokenType::IDENTIFIER, "需要 " + kind + " 名称。");
+        consume(TokenType::IDENTIFIER, std::string("Expected ") + kind + " name.");
         std::string name = previous_token.lexeme;
-        consume(TokenType::LPAREN, "名称后需要 '('。");
-        std::vector<ParameterDefinition> params; // 使用 ParameterDefinition
+        consume(TokenType::LPAREN, std::string("'('") + PyRiteMessages::PARSE_ERROR_EXPECT_LPAREN_AFTER_NAME);
+        std::vector<ParameterDefinition> params; // Use ParameterDefinition
         if (!check(TokenType::RPAREN)) {
             do {
-                if (params.size() >= 255) throw std::runtime_error("函数参数不能超过255个。");
-                params.push_back(parse_parameter()); // 调用 parse_parameter
+                if (params.size() >= 255) throw std::runtime_error(PyRiteMessages::PARSE_ERROR_TOO_MANY_PARAMS);
+                params.push_back(parse_parameter()); // Call parse_parameter
             } while (match({TokenType::COMMA}));
         }
-        consume(TokenType::RPAREN, "参数后需要 ')'。");
-        consume(TokenType::DO, "函数体前需要 'do'。");
+        consume(TokenType::RPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_RPAREN_AFTER_PARAMS);
+        consume(TokenType::DO, PyRiteMessages::PARSE_ERROR_EXPECT_DO_BEFORE_BODY);
         std::vector<AstNodePtr> body;
         while (!check(TokenType::ENDDEF) && !check(TokenType::END_OF_FILE)) {
             body.push_back(declaration());
         }
-        consume(TokenType::ENDDEF, "函数体后需要 'enddef'。");
-        if (DEBUG) std::cout << "[调试:解析器]   完成解析" << (kind == "function" ? "函数" : "方法") << " '" << name << "'。" << std::endl;
+        consume(TokenType::ENDDEF, PyRiteMessages::PARSE_ERROR_EXPECT_ENDDEF_AFTER_BODY);
+        if (DEBUG) std::cout << (kind == "function" ? PyRiteMessages::DEBUG_PARSER_DONE_PARSING_FUNC : PyRiteMessages::DEBUG_PARSER_DONE_PARSING_METHOD) << name << "'." << std::endl;
         return std::make_shared<FunctionDefNode>(line, name, params, body);
     }
     // --- New Parser method for Class Definition ---
     AstNodePtr class_definition() {
-        if (DEBUG) std::cout << "[调试:解析器] 正在解析类定义..." << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_CLASS_DEF << std::endl;
         int line = previous_token.line;
-        consume(TokenType::IDENTIFIER, "需要类名。");
+        consume(TokenType::IDENTIFIER, PyRiteMessages::PARSE_ERROR_EXPECT_CLASS_NAME);
         std::string name = previous_token.lexeme;
         std::vector<ParameterDefinition> fields;
         if (match({TokenType::LPAREN})) {
             if (!check(TokenType::RPAREN)) {
                 do {
-                    if (fields.size() >= 255) throw std::runtime_error("类字段不能超过255个。");
+                    if (fields.size() >= 255) throw std::runtime_error(PyRiteMessages::PARSE_ERROR_TOO_MANY_FIELDS);
                     fields.push_back(parse_parameter()); // Reuse parse_parameter for fields
                 } while (match({TokenType::COMMA}));
             }
-            consume(TokenType::RPAREN, "字段后需要 ')'。");
+            consume(TokenType::RPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_RPAREN_AFTER_FIELDS);
         }
-        consume(TokenType::CONTAINS, "类定义后需要 'contains'。");
+        consume(TokenType::CONTAINS, PyRiteMessages::PARSE_ERROR_EXPECT_CONTAINS_AFTER_CLASS_DEF);
         std::vector<AstNodePtr> methods;
         while (!check(TokenType::ENDINS) && !check(TokenType::END_OF_FILE)) {
             if (match({TokenType::DEF})) {
                 methods.push_back(function_definition("method")); // Reuse function_definition for methods
             } else {
-                 throw std::runtime_error("类 'contains' 块内只允许定义方法 (def)。");
+                 throw std::runtime_error(PyRiteMessages::PARSE_ERROR_ONLY_METHODS_IN_CLASS);
             }
         }
-        consume(TokenType::ENDINS, "类定义后需要 'endins'。");
-        if (DEBUG) std::cout << "[调试:解析器]   完成解析类 '" << name << "'。" << std::endl;
+        consume(TokenType::ENDINS, PyRiteMessages::PARSE_ERROR_EXPECT_ENDINS_AFTER_CLASS_BODY);
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_DONE_PARSING_CLASS << name << "'." << std::endl;
         return std::make_shared<ClassDefNode>(line, name, fields, methods);
     }
     // --- End of new Parser method ---
-    AstNodePtr if_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::THEN, "if 条件后需要 'then'。"); std::vector<AstNodePtr> then_branch; while(!check(TokenType::ELSE) && !check(TokenType::ENDIF) && !check(TokenType::END_OF_FILE)) { then_branch.push_back(declaration()); } std::vector<AstNodePtr> else_branch; if (match({TokenType::ELSE})) { while(!check(TokenType::ENDIF) && !check(TokenType::END_OF_FILE)) { else_branch.push_back(declaration()); } } consume(TokenType::ENDIF, "if 语句后需要 'endif'。"); return std::make_shared<IfStatementNode>(line, condition, then_branch, else_branch); }
-    AstNodePtr while_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::DO, "while 条件后需要 'do'。"); std::vector<AstNodePtr> do_branch; while(!check(TokenType::FINALLY) && !check(TokenType::ENDWHILE) && !check(TokenType::END_OF_FILE)) { do_branch.push_back(declaration()); } std::vector<AstNodePtr> finally_branch; if (match({TokenType::FINALLY})) { while(!check(TokenType::ENDWHILE) && !check(TokenType::END_OF_FILE)) { finally_branch.push_back(declaration()); } } consume(TokenType::ENDWHILE, "while 循环后需要 'endwhile'。"); return std::make_shared<WhileStatementNode>(line, condition, do_branch, finally_branch); }
-    AstNodePtr await_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::THEN, "await 条件后需要 'then'。"); std::vector<AstNodePtr> then_branch; while (!check(TokenType::ENDAWAIT) && !check(TokenType::END_OF_FILE)) { then_branch.push_back(declaration()); } consume(TokenType::ENDAWAIT, "await 语句后需要 'endawait'。"); return std::make_shared<AwaitStatementNode>(line, condition, then_branch); }
-    AstNodePtr try_statement() { int line = previous_token.line; std::vector<AstNodePtr> try_branch; while (!check(TokenType::CATCH) && !check(TokenType::END_OF_FILE)) { try_branch.push_back(declaration()); } consume(TokenType::CATCH, "'try' 块后需要 'catch'。"); consume(TokenType::IDENTIFIER, "'catch' 后需要一个变量名。"); std::string exception_var = previous_token.lexeme; std::vector<AstNodePtr> catch_branch; while (!check(TokenType::FINALLY) && !check(TokenType::ENDTRY) && !check(TokenType::END_OF_FILE)) { catch_branch.push_back(declaration()); } std::vector<AstNodePtr> finally_branch; if (match({TokenType::FINALLY})) { while (!check(TokenType::ENDTRY) && !check(TokenType::END_OF_FILE)) { finally_branch.push_back(declaration()); } } consume(TokenType::ENDTRY, "try/catch/finally 结构后需要 'endtry'。"); return std::make_shared<TryCatchNode>(line, try_branch, exception_var, catch_branch, finally_branch); }
+    AstNodePtr if_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::THEN, PyRiteMessages::PARSE_ERROR_EXPECT_THEN_AFTER_IF); std::vector<AstNodePtr> then_branch; while(!check(TokenType::ELSE) && !check(TokenType::ENDIF) && !check(TokenType::END_OF_FILE)) { then_branch.push_back(declaration()); } std::vector<AstNodePtr> else_branch; if (match({TokenType::ELSE})) { while(!check(TokenType::ENDIF) && !check(TokenType::END_OF_FILE)) { else_branch.push_back(declaration()); } } consume(TokenType::ENDIF, PyRiteMessages::PARSE_ERROR_EXPECT_ENDIF_AFTER_IF); return std::make_shared<IfStatementNode>(line, condition, then_branch, else_branch); }
+    AstNodePtr while_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::DO, PyRiteMessages::PARSE_ERROR_EXPECT_DO_AFTER_WHILE); std::vector<AstNodePtr> do_branch; while(!check(TokenType::FINALLY) && !check(TokenType::ENDWHILE) && !check(TokenType::END_OF_FILE)) { do_branch.push_back(declaration()); } std::vector<AstNodePtr> finally_branch; if (match({TokenType::FINALLY})) { while(!check(TokenType::ENDWHILE) && !check(TokenType::END_OF_FILE)) { finally_branch.push_back(declaration()); } } consume(TokenType::ENDWHILE, PyRiteMessages::PARSE_ERROR_EXPECT_ENDWHILE_AFTER_WHILE); return std::make_shared<WhileStatementNode>(line, condition, do_branch, finally_branch); }
+    AstNodePtr await_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::THEN, PyRiteMessages::PARSE_ERROR_EXPECT_THEN_AFTER_AWAIT); std::vector<AstNodePtr> then_branch; while (!check(TokenType::ENDAWAIT) && !check(TokenType::END_OF_FILE)) { then_branch.push_back(declaration()); } consume(TokenType::ENDAWAIT, PyRiteMessages::PARSE_ERROR_EXPECT_ENDAWAIT_AFTER_AWAIT); return std::make_shared<AwaitStatementNode>(line, condition, then_branch); }
+    AstNodePtr try_statement() { int line = previous_token.line; std::vector<AstNodePtr> try_branch; while (!check(TokenType::CATCH) && !check(TokenType::END_OF_FILE)) { try_branch.push_back(declaration()); } consume(TokenType::CATCH, PyRiteMessages::PARSE_ERROR_EXPECT_CATCH_AFTER_TRY); consume(TokenType::IDENTIFIER, PyRiteMessages::PARSE_ERROR_EXPECT_VAR_AFTER_CATCH); std::string exception_var = previous_token.lexeme; std::vector<AstNodePtr> catch_branch; while (!check(TokenType::FINALLY) && !check(TokenType::ENDTRY) && !check(TokenType::END_OF_FILE)) { catch_branch.push_back(declaration()); } std::vector<AstNodePtr> finally_branch; if (match({TokenType::FINALLY})) { while (!check(TokenType::ENDTRY) && !check(TokenType::END_OF_FILE)) { finally_branch.push_back(declaration()); } } consume(TokenType::ENDTRY, PyRiteMessages::PARSE_ERROR_EXPECT_ENDTRY_AFTER_TRY); return std::make_shared<TryCatchNode>(line, try_branch, exception_var, catch_branch, finally_branch); }
     AstNodePtr raise_statement() { int line = previous_token.line; AstNodePtr expr = expression(); return std::make_shared<RaiseNode>(line, expr); }
-    AstNodePtr say_statement() { int line = previous_token.line; consume(TokenType::LPAREN, "'say' 后需要 '('。"); AstNodePtr value = expression(); consume(TokenType::RPAREN, "表达式后需要 ')'。"); return std::make_shared<SayNode>(line, value); }
+    AstNodePtr say_statement() { int line = previous_token.line; consume(TokenType::LPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_LPAREN_AFTER_SAY); AstNodePtr value = expression(); consume(TokenType::RPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_RPAREN_AFTER_EXPR); return std::make_shared<SayNode>(line, value); }
     AstNodePtr return_statement() { int line = previous_token.line; ValuePtr v = std::make_shared<NullValue>(); AstNodePtr val_node = std::make_shared<LiteralNode>(line, v); if (!check(TokenType::ENDDEF) && !check(TokenType::ENDIF) && !check(TokenType::ENDWHILE) && !check(TokenType::ENDTRY)) { val_node = expression(); } return std::make_shared<ReturnNode>(line, val_node); }
     AstNodePtr expression_statement() { 
         int line = current_token.line;
@@ -770,14 +771,14 @@ private:
     AstNodePtr assignment() {
         AstNodePtr expr = equality();
         if (match({TokenType::EQUAL})) {
-            if (DEBUG) std::cout << "[调试:解析器] 正在解析赋值表达式..." << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_ASSIGNMENT << std::endl;
             int line = previous_token.line;
             AstNodePtr value = assignment(); // Right-associative
             // Check if the left-hand side is a valid assignment target
             if (dynamic_cast<VariableNode*>(expr.get()) || dynamic_cast<SubscriptNode*>(expr.get()) || dynamic_cast<GetNode*>(expr.get())) { // Add GetNode check
                 return std::make_shared<AssignmentNode>(line, expr, value);
             }
-            throw std::runtime_error("无效的赋值目标。");
+            throw std::runtime_error(PyRiteMessages::RUNTIME_ERROR_INVALID_ASSIGNMENT_TARGET);
         }
         return expr;
     }
@@ -791,14 +792,14 @@ private:
         AstNodePtr expr = primary();
         while (true) {
             if (match({TokenType::LPAREN})) {
-                if (DEBUG) std::cout << "[调试:解析器] 正在解析函数调用..." << std::endl;
+                if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_CALL << std::endl;
                 expr = finish_call(expr);
             } else if (match({TokenType::LBRACKET})) {
-                if (DEBUG) std::cout << "[调试:解析器] 正在解析下标访问..." << std::endl;
+                if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_SUBSCRIPT << std::endl;
                 expr = finish_subscript(expr);
             } else if (match({TokenType::DOT})) { // Handle property/method access
-                if (DEBUG) std::cout << "[调试:解析器] 正在解析属性/方法访问..." << std::endl;
-                consume(TokenType::IDENTIFIER, "需要属性或方法名。");
+                if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_GET << std::endl;
+                consume(TokenType::IDENTIFIER, PyRiteMessages::PARSE_ERROR_EXPECT_PROP_NAME);
                 std::string name = previous_token.lexeme;
                 expr = std::make_shared<GetNode>(previous_token.line, expr, name); // Create GetNode
             } else {
@@ -807,9 +808,9 @@ private:
         }
         return expr;
     }
-    AstNodePtr finish_call(AstNodePtr callee) { int line = previous_token.line; std::vector<AstNodePtr> arguments; if (!check(TokenType::RPAREN)) { do { if (arguments.size() >= 255) throw std::runtime_error("函数参数不能超过255个。"); arguments.push_back(expression()); } while (match({TokenType::COMMA})); } consume(TokenType::RPAREN, "参数后需要 ')'。"); return std::make_shared<CallNode>(line, callee, arguments); }
-    AstNodePtr finish_subscript(AstNodePtr object) { int line = previous_token.line; AstNodePtr index = expression(); consume(TokenType::RBRACKET, "下标后需要 ']'。"); return std::make_shared<SubscriptNode>(line, object, index); }
-    AstNodePtr list_literal() { int line = previous_token.line; std::vector<AstNodePtr> elements; if (!check(TokenType::RBRACKET)) { do { elements.push_back(expression()); } while (match({TokenType::COMMA})); } consume(TokenType::RBRACKET, "列表后需要 ']'。"); return std::make_shared<ListLiteralNode>(line, elements); }
+    AstNodePtr finish_call(AstNodePtr callee) { int line = previous_token.line; std::vector<AstNodePtr> arguments; if (!check(TokenType::RPAREN)) { do { if (arguments.size() >= 255) throw std::runtime_error(PyRiteMessages::PARSE_ERROR_TOO_MANY_ARGS); arguments.push_back(expression()); } while (match({TokenType::COMMA})); } consume(TokenType::RPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_RPAREN_AFTER_PARAMS); return std::make_shared<CallNode>(line, callee, arguments); }
+    AstNodePtr finish_subscript(AstNodePtr object) { int line = previous_token.line; AstNodePtr index = expression(); consume(TokenType::RBRACKET, PyRiteMessages::PARSE_ERROR_EXPECT_RBRACKET_AFTER_INDEX); return std::make_shared<SubscriptNode>(line, object, index); }
+    AstNodePtr list_literal() { int line = previous_token.line; std::vector<AstNodePtr> elements; if (!check(TokenType::RBRACKET)) { do { elements.push_back(expression()); } while (match({TokenType::COMMA})); } consume(TokenType::RBRACKET, PyRiteMessages::PARSE_ERROR_EXPECT_RBRACKET_AFTER_LIST); return std::make_shared<ListLiteralNode>(line, elements); }
     AstNodePtr primary() { 
         int line = current_token.line; 
         if (match({TokenType::NUMBER})) return std::make_shared<LiteralNode>(line, std::make_shared<NumberValue>(BigNumber(previous_token.lexeme))); 
@@ -821,17 +822,17 @@ private:
 		if (match({TokenType::LBRACKET})) return list_literal(); 
         if (match({TokenType::IDENTIFIER})) return std::make_shared<VariableNode>(line, previous_token.lexeme); 
         if (match({TokenType::ASK})) { 
-            consume(TokenType::LPAREN, "'ask' 后需要 '('。"); 
+            consume(TokenType::LPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_LPAREN_AFTER_ASK);
             AstNodePtr prompt = expression(); 
-            consume(TokenType::RPAREN, "提示符后需要 ')'。"); 
+            consume(TokenType::RPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_RPAREN_AFTER_PROMPT);
             return std::make_shared<InpNode>(line, prompt); 
         } 
         if (match({TokenType::LPAREN})) { 
             AstNodePtr expr = expression(); 
-            consume(TokenType::RPAREN, "表达式后需要 ')'。"); 
+            consume(TokenType::RPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_RPAREN_AFTER_EXPR);
             return expr; 
         } 
-        throw std::runtime_error("需要表达式。"); 
+        throw std::runtime_error(PyRiteMessages::PARSE_ERROR_EXPECT_EXPRESSION);
     }
 };
 // --- Interpreter ---
@@ -840,30 +841,30 @@ public:
     Interpreter(); // Constructor defined after helper methods
     std::string base_path;
     void interpret(const std::vector<AstNodePtr>& statements) {
-        if (DEBUG) std::cout << "[调试:解释器] 开始解释 " << statements.size() << " 条语句。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_INTERP_START << statements.size() << PyRiteMessages::DEBUG_INTERP_STATEMENTS << std::endl;
         try { 
             int i = 0;
             for (const auto& stmt : statements) { 
-                if (DEBUG) std::cout << "[调试:解释器] === 正在执行顶层语句 " << i++ << " (行 " << stmt->line << ") ===" << std::endl;
+                if (DEBUG) std::cout << PyRiteMessages::DEBUG_INTERP_EXEC_TOP_LEVEL << i++ << PyRiteMessages::DEBUG_INTERP_AT_LINE << stmt->line << PyRiteMessages::DEBUG_INTERP_END_EXEC_STMT << std::endl;
                 check_timeout(stmt->line); 
                 execute(stmt); 
             } 
         }
-        catch (const PyRiteRaiseException& ex) { std::cerr << "[未捕获的异常] " << ex.value->repr() << std::endl; print_stack_trace(); }
-        catch (const RuntimeError& error) { std::cerr << "[运行时错误] 行 " << error.line << ": " << error.what() << std::endl; print_stack_trace(); }
-        if (DEBUG) std::cout << "[调试:解释器] 解释执行完毕。" << std::endl;
+        catch (const PyRiteRaiseException& ex) { std::cerr << PyRiteMessages::RUNTIME_ERROR_UNCAUGHT_EXCEPTION_PREFIX << ex.value->repr() << std::endl; print_stack_trace(); }
+        catch (const RuntimeError& error) { std::cerr << PyRiteMessages::RUNTIME_ERROR_PREFIX << error.line << ": " << error.what() << std::endl; print_stack_trace(); }
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_INTERP_DONE << std::endl;
     }
     void execute(const AstNodePtr& stmt) { 
-        if (DEBUG) std::cout << "[调试:解释器] 正在执行类型为 " << typeid(*stmt).name() << " 的语句" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_INTERP_EXEC_STMT_TYPE << typeid(*stmt).name() << std::endl;
         stmt->accept(*this); 
     }
     ValuePtr evaluate(const AstNodePtr& expr) {
-        if (DEBUG) std::cout << "[调试:解释器] 正在求值类型为 " << typeid(*expr).name() << " 的表达式" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_INTERP_EVAL_EXPR_TYPE << typeid(*expr).name() << std::endl;
         return expr->accept(*this); 
     }
     void execute_block(const std::vector<AstNodePtr>& statements, std::shared_ptr<Environment> block_env) {
         std::shared_ptr<Environment> previous = this->environment;
-        if (DEBUG) std::cout << "[调试:解释器] ---> 进入新的执行块/作用域。环境: " << block_env.get() << " 上一个: " << previous.get() << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_INTERP_BLOCK_ENTER << block_env.get() << PyRiteMessages::DEBUG_INTERP_BLOCK_PREVIOUS << previous.get() << std::endl;
         try { 
             this->environment = block_env; 
             for(const auto& stmt : statements) { 
@@ -872,19 +873,19 @@ public:
             } 
         } catch (...) { 
             this->environment = previous; 
-            if (DEBUG) std::cout << "[调试:解释器] <--- 因异常退出执行块/作用域。恢复环境至 " << previous.get() << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_INTERP_BLOCK_EXIT_EXCEPTION << previous.get() << std::endl;
             throw; 
         }
         this->environment = previous;
-        if (DEBUG) std::cout << "[调试:解释器] <--- 退出执行块/作用域。恢复环境至 " << previous.get() << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_INTERP_BLOCK_EXIT << previous.get() << std::endl;
     }
-    // 超时检查相关
+    // Timeout check related
     void check_timeout(int line) {
         if (time_limit_ms > 0) {
             auto now = std::chrono::high_resolution_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
             if (elapsed >= time_limit_ms) {
-                throw RuntimeError(line, "执行超时 (" + std::to_string(time_limit_ms) + "ms)。");
+                throw RuntimeError(line, std::string(PyRiteMessages::RUNTIME_ERROR_EXECUTION_TIMEOUT_PREFIX) + std::to_string(time_limit_ms) + PyRiteMessages::RUNTIME_ERROR_EXECUTION_TIMEOUT_SUFFIX);
             }
         }
     }
@@ -895,13 +896,13 @@ public:
     std::string repl_buffer; // For REPL buffer compilation
 private:
     void define_native_functions();
-    void print_stack_trace() { if (call_stack.empty()) return; std::cerr << "堆栈追踪:" << std::endl; for (auto it = call_stack.rbegin(); it != call_stack.rend(); ++it) { std::cerr << "  在 " << it->function_name << " (行 " << it->call_site_line << ")" << std::endl; } call_stack.clear(); }
+    void print_stack_trace() { if (call_stack.empty()) return; std::cerr << PyRiteMessages::RUNTIME_ERROR_STACK_TRACE_HEADER << std::endl; for (auto it = call_stack.rbegin(); it != call_stack.rend(); ++it) { std::cerr << PyRiteMessages::RUNTIME_ERROR_STACK_TRACE_ENTRY_PREFIX << it->function_name << PyRiteMessages::RUNTIME_ERROR_STACK_TRACE_ENTRY_SUFFIX << it->call_site_line << ")" << std::endl; } call_stack.clear(); }
 };
-// --- Helper function for type checking (定义) ---
+// --- Helper function for type checking (definition) ---
 bool is_type_compatible(TokenType expected_type, const ValuePtr& value) {
     switch (expected_type) {
         case TokenType::ANY:
-            return true;  // ANY 类型接受任何值
+            return true;  // ANY type accepts any value
         case TokenType::DEC:
             return dynamic_cast<NumberValue*>(value.get()) != nullptr;
         case TokenType::STR:
@@ -925,28 +926,28 @@ std::string token_type_to_string(TokenType type) {
     }
 }
 
-// --- AST 节点 accept 方法的实现 ---
+// --- AST Node accept Method Implementations ---
 ValuePtr LiteralNode::accept(Interpreter& visitor) { 
-    if (DEBUG) std::cout << "[调试:执行] 正在求值 LiteralNode。值: " << value->repr() << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_LITERAL_NODE << value->repr() << std::endl;
     return value; 
 }
 ValuePtr ListLiteralNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[调试:执行] 正在求值 ListLiteralNode，包含 " << elements.size() << " 个元素。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_LIST_LITERAL_NODE << elements.size() << PyRiteMessages::DEBUG_EXEC_LIST_LITERAL_NODE_ELEMENTS << std::endl;
     std::vector<ValuePtr> evaluated_elements; for (const auto& elem : elements) { evaluated_elements.push_back(visitor.evaluate(elem)); } return std::make_shared<ListValue>(evaluated_elements); }
 ValuePtr VariableNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[调试:执行] 正在求值 VariableNode '" << name << "'。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_VAR_NODE << name << "'." << std::endl;
     try { return visitor.environment->get(name); } catch(RuntimeError& e) { throw RuntimeError(line, e.what()); }
 }
 ValuePtr AssignmentNode::accept(Interpreter& visitor) {
     auto val = visitor.evaluate(value);
-    if (DEBUG) std::cout << "[调试:执行] 正在执行 AssignmentNode。要赋的值: " << val->repr() << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_ASSIGN_NODE << val->repr() << std::endl;
 
     if (auto var_node = dynamic_cast<VariableNode*>(target.get())) {
-        if (DEBUG) std::cout << "[调试:执行]   赋值目标是 VariableNode: '" << var_node->name << "'。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_ASSIGN_TARGET_VAR << var_node->name << "'." << std::endl;
         try { visitor.environment->assign(var_node->name, val); }
         catch (RuntimeError& e) { throw RuntimeError(line, e.what()); }
     } else if (auto sub_node = dynamic_cast<SubscriptNode*>(target.get())) {
-        if (DEBUG) std::cout << "[调试:执行]   赋值目标是 SubscriptNode。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_ASSIGN_TARGET_SUBSCRIPT << std::endl;
         try {
             auto object = visitor.evaluate(sub_node->object);
             auto index = visitor.evaluate(sub_node->index);
@@ -955,56 +956,56 @@ ValuePtr AssignmentNode::accept(Interpreter& visitor) {
             throw RuntimeError(line, e.what());
         }
     } else if (auto get_node = dynamic_cast<GetNode*>(target.get())) {
-         if (DEBUG) std::cout << "[调试:执行]   赋值目标是 GetNode: 属性 '" << get_node->name << "'。" << std::endl;
+         if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_ASSIGN_TARGET_GET << get_node->name << "'." << std::endl;
          // This handles `instance.property = value`
          try {
              auto object = visitor.evaluate(get_node->object);
              if (auto instance = std::dynamic_pointer_cast<Instance>(object)) {
                  instance->set(get_node->name, val);
              } else {
-                 throw RuntimeError(line, "只有实例对象可以设置属性。");
+                 throw RuntimeError(line, PyRiteMessages::RUNTIME_ERROR_ONLY_INSTANCES_CAN_SET_PROPERTIES);
              }
          } catch (const std::runtime_error& e) {
              throw RuntimeError(line, e.what());
          }
     } else {
-        throw RuntimeError(line, "无效的赋值目标。");
+        throw RuntimeError(line, PyRiteMessages::RUNTIME_ERROR_INVALID_ASSIGNMENT_TARGET);
     }
     return val;
 }
 ValuePtr VarDeclarationNode::accept(Interpreter& visitor) {
     ValuePtr val = std::make_shared<NullValue>();
     if (initializer) { 
-        if (DEBUG) std::cout << "[调试:执行] 正在为 '" << name << "' 执行带初始化器的 VarDeclarationNode。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_VAR_DECL_NODE_INIT << name << PyRiteMessages::DEBUG_EXEC_VAR_DECL_NODE_WITH_INIT << std::endl;
         val = visitor.evaluate(initializer); 
     } else {
-        if (DEBUG) std::cout << "[调试:执行] 正在为 '" << name << "' 执行不带初始化器的 VarDeclarationNode。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_VAR_DECL_NODE_INIT << name << PyRiteMessages::DEBUG_EXEC_VAR_DECL_NODE_NO_INIT << std::endl;
     }
 
-    if (DEBUG) std::cout << "[调试:执行]   声明类型: " << keyword.lexeme << "。初始值: " << val->repr() << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_VAR_DECL_DECLARED_TYPE << keyword.lexeme << PyRiteMessages::DEBUG_EXEC_VAR_DECL_INITIAL_VALUE << val->repr() << std::endl;
 
     if (keyword.type == TokenType::DEC) {
-        if (auto s_val = dynamic_cast<StringValue*>(val.get())) { try { val = std::make_shared<NumberValue>(BigNumber(s_val->value)); } catch (const std::invalid_argument&) { throw RuntimeError(line, "无法将字符串 '" + s_val->value + "' 转换为数字。"); } }
+        if (auto s_val = dynamic_cast<StringValue*>(val.get())) { try { val = std::make_shared<NumberValue>(BigNumber(s_val->value)); } catch (const std::invalid_argument&) { throw RuntimeError(line, std::string(PyRiteMessages::RUNTIME_ERROR_CANNOT_CONVERT_STRING_TO_NUMBER_PREFIX) + s_val->value + PyRiteMessages::RUNTIME_ERROR_CANNOT_CONVERT_STRING_TO_NUMBER_SUFFIX); } }
         else if (auto b_val = dynamic_cast<BinaryValue*>(val.get())) { val = std::make_shared<NumberValue>(b_val->toBigNumber()); }
         else if (dynamic_cast<NullValue*>(val.get())) { val = std::make_shared<NumberValue>(0); }
     } else if (keyword.type == TokenType::STR) {
         val = std::make_shared<StringValue>(val->toString());
     } else if (keyword.type == TokenType::BIN) {
-        if (auto s_val = dynamic_cast<StringValue*>(val.get())) { try { val = std::make_shared<BinaryValue>(s_val->value); } catch(...) { throw RuntimeError(line, "无法将字符串 '" + s_val->value + "' 转换为二进制对象。必须是 '0x...' 格式。"); } }
+        if (auto s_val = dynamic_cast<StringValue*>(val.get())) { try { val = std::make_shared<BinaryValue>(s_val->value); } catch(...) { throw RuntimeError(line, std::string(PyRiteMessages::RUNTIME_ERROR_CANNOT_CONVERT_STRING_TO_BINARY_PREFIX) + s_val->value + PyRiteMessages::RUNTIME_ERROR_CANNOT_CONVERT_STRING_TO_BINARY_SUFFIX); } }
         else if (dynamic_cast<NullValue*>(val.get())) { val = std::make_shared<BinaryValue>(std::vector<uint8_t>{0}); }
     } else if (keyword.type == TokenType::LIST) {
-        if (!dynamic_cast<ListValue*>(val.get()) && !dynamic_cast<NullValue*>(val.get())) { throw RuntimeError(line, "只能用列表初始化列表变量。"); }
+        if (!dynamic_cast<ListValue*>(val.get()) && !dynamic_cast<NullValue*>(val.get())) { throw RuntimeError(line, PyRiteMessages::RUNTIME_ERROR_LIST_INIT_WITH_LIST_ONLY); }
         if (dynamic_cast<NullValue*>(val.get())) { val = std::make_shared<ListValue>(std::vector<ValuePtr>{}); }
     }
-    if (DEBUG) std::cout << "[调试:执行]   类型强制转换后的最终值: " << val->repr() << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_VAR_DECL_FINAL_VALUE << val->repr() << std::endl;
     visitor.environment->define(name, val);
     return std::make_shared<NullValue>();
 }
 ValuePtr BinaryOpNode::accept(Interpreter& visitor) { 
-    if (DEBUG) std::cout << "[调试:执行] 正在求值 BinaryOpNode (操作符: " << op.lexeme << ")。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_BINARY_OP << op.lexeme << ")." << std::endl;
     auto left_val = visitor.evaluate(left); 
     auto right_val = visitor.evaluate(right); 
-    if (DEBUG) std::cout << "[调试:执行]   左操作数: " << left_val->repr() << ", 右操作数: " << right_val->repr() << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_BINARY_OP_LEFT << left_val->repr() << PyRiteMessages::DEBUG_EXEC_BINARY_OP_RIGHT << right_val->repr() << std::endl;
     try {
         switch(op.type) {
             case TokenType::PLUS: return left_val->add(*right_val); case TokenType::MINUS: return left_val->subtract(*right_val);
@@ -1022,11 +1023,11 @@ ValuePtr BinaryOpNode::accept(Interpreter& visitor) {
     return std::make_shared<NullValue>();
 }
 ValuePtr SubscriptNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[调试:执行] 正在求值 SubscriptNode。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_SUBSCRIPT_NODE << std::endl;
     try {
         auto object = visitor.evaluate(this->object);
         auto index = visitor.evaluate(this->index);
-        if (DEBUG) std::cout << "[调试:执行]   对象: " << object->repr() << ", 索引: " << index->repr() << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_SUBSCRIPT_NODE_OBJ << object->repr() << PyRiteMessages::DEBUG_EXEC_SUBSCRIPT_NODE_IDX << index->repr() << std::endl;
         return object->getSubscript(*index);
     } catch (const std::runtime_error& e) {
         throw RuntimeError(line, e.what());
@@ -1034,14 +1035,14 @@ ValuePtr SubscriptNode::accept(Interpreter& visitor) {
 }
 // --- New AST Node accept methods for Classes ---
 ValuePtr ClassDefNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[调试:执行] 正在为类 '" << name << "' 执行 ClassDefNode。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CLASS_DEF_NODE << name << "'." << std::endl;
     // Parse methods from AST nodes into Function objects
     std::map<std::string, std::shared_ptr<Function>> methods_map;
     for (const auto& method_ast : methods) {
         // The parser ensures these are FunctionDefNode
         auto func_def_node = std::dynamic_pointer_cast<FunctionDefNode>(method_ast);
         if (func_def_node) {
-            if (DEBUG) std::cout << "[调试:执行]   正在处理方法 '" << func_def_node->name << "'。" << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CLASS_DEF_PROCESSING_METHOD << func_def_node->name << "'." << std::endl;
             // Create the Function object for the method
             auto method_func = std::make_shared<Function>(
                 func_def_node->name,
@@ -1059,9 +1060,9 @@ ValuePtr ClassDefNode::accept(Interpreter& visitor) {
     return std::make_shared<NullValue>();
 }
 ValuePtr GetNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[调试:执行] 正在为属性 '" << name << "' 求值 GetNode。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_GET_NODE << name << "'." << std::endl;
     auto object_val = visitor.evaluate(object);
-    if (DEBUG) std::cout << "[调试:执行]   对象求值为: " << object_val->repr() << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_GET_NODE_OBJECT_EVAL << object_val->repr() << std::endl;
     if (auto instance = std::dynamic_pointer_cast<Instance>(object_val)) {
         try {
             // Call the simplified get() method without the interpreter reference
@@ -1070,79 +1071,79 @@ ValuePtr GetNode::accept(Interpreter& visitor) {
             throw RuntimeError(line, e.what());
         }
     }
-    throw RuntimeError(line, "只有实例对象可以获取属性 '" + name + "'。");
+    throw RuntimeError(line, std::string(PyRiteMessages::RUNTIME_ERROR_ONLY_INSTANCES_HAVE_PROPERTIES_PREFIX) + name + PyRiteMessages::RUNTIME_ERROR_ONLY_INSTANCES_HAVE_PROPERTIES_SUFFIX);
 }
 ValuePtr SetNode::accept(Interpreter& visitor) {
     // This node is primarily handled in AssignmentNode now.
     // But if needed directly, it would evaluate object, value, and call instance->set().
-    throw RuntimeError(line, "SetNode 应该通过 AssignmentNode 处理。");
+    throw RuntimeError(line, PyRiteMessages::RUNTIME_ERROR_SET_NODE_HANDLED_BY_ASSIGNMENT);
 }
 // --- End of new AST Node accept methods ---
 ValuePtr IfStatementNode::accept(Interpreter& visitor) { 
     visitor.check_timeout(line);
-    if (DEBUG) std::cout << "[调试:执行] 正在执行 IfStatementNode。求值条件中..." << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_IF_NODE << std::endl;
     auto condition_val = visitor.evaluate(condition);
-    if (DEBUG) std::cout << "[调试:执行]   条件为 " << (condition_val->isTruthy() ? "真" : "假") << " (" << condition_val->repr() << ")." << std::endl;
+    if (DEBUG) std::cout << (condition_val->isTruthy() ? PyRiteMessages::DEBUG_EXEC_IF_CONDITION_TRUE : PyRiteMessages::DEBUG_EXEC_IF_CONDITION_FALSE) << PyRiteMessages::DEBUG_EXEC_IF_CONDITION_VALUE << condition_val->repr() << ")." << std::endl;
 
     if (condition_val->isTruthy()) { 
-        if (DEBUG) std::cout << "[调试:执行]   正在执行 'then' 分支。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_IF_THEN << std::endl;
         visitor.execute_block(then_branch, std::make_shared<Environment>(visitor.environment)); 
     } else if (!else_branch.empty()) { 
-        if (DEBUG) std::cout << "[调试:执行]   正在执行 'else' 分支。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_IF_ELSE << std::endl;
         visitor.execute_block(else_branch, std::make_shared<Environment>(visitor.environment)); 
     } 
     return std::make_shared<NullValue>(); 
 }
 ValuePtr WhileStatementNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[调试:执行] 正在执行 WhileStatementNode。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_WHILE_NODE << std::endl;
     while(true) {
         auto condition_val = visitor.evaluate(condition);
-        if (DEBUG) std::cout << "[调试:执行]   While 循环条件为 " << (condition_val->isTruthy() ? "真" : "假") << " (" << condition_val->repr() << ")." << std::endl;
+        if (DEBUG) std::cout << (condition_val->isTruthy() ? PyRiteMessages::DEBUG_EXEC_WHILE_CONDITION_TRUE : PyRiteMessages::DEBUG_EXEC_WHILE_CONDITION_FALSE) << PyRiteMessages::DEBUG_EXEC_IF_CONDITION_VALUE << condition_val->repr() << ")." << std::endl;
         if (!condition_val->isTruthy()) break;
 
         visitor.check_timeout(line); 
         visitor.execute_block(do_branch, std::make_shared<Environment>(visitor.environment)); 
     } 
     if (!finally_branch.empty()) {
-        if (DEBUG) std::cout << "[调试:执行]   正在执行 while 循环的 'finally' 分支。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_WHILE_FINALLY << std::endl;
         visitor.execute_block(finally_branch, std::make_shared<Environment>(visitor.environment)); 
     } 
     return std::make_shared<NullValue>(); 
 }
 ValuePtr AwaitStatementNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[调试:执行] 正在执行 AwaitStatementNode。等待条件满足..." << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_AWAIT_NODE << std::endl;
     while(!visitor.evaluate(condition)->isTruthy()) {
         visitor.check_timeout(line);
         std::this_thread::sleep_for(std::chrono::milliseconds(20)); // Prevent busy-waiting
     }
-    if (DEBUG) std::cout << "[调试:执行]   Await 条件已满足。正在执行 'then' 分支。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_AWAIT_SATISFIED << std::endl;
     visitor.execute_block(then_branch, std::make_shared<Environment>(visitor.environment));
     return std::make_shared<NullValue>();
 }
 ValuePtr SayNode::accept(Interpreter& visitor) { 
-    if (DEBUG) std::cout << "[调试:执行] 正在执行 SayNode。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_SAY_NODE << std::endl;
     auto val = visitor.evaluate(expression); 
-    if (DEBUG) std::cout << "[调试:执行]   要 say 的值: " << val->repr() << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_SAY_VALUE << val->repr() << std::endl;
     std::cout << val->toString() << std::endl; 
     return std::make_shared<NullValue>(); 
 }
 ValuePtr InpNode::accept(Interpreter& visitor) { auto prompt = visitor.evaluate(expression); std::cout << prompt->toString(); std::string input; std::getline(std::cin, input); return std::make_shared<StringValue>(input); }
 ValuePtr FunctionDefNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[调试:执行] 正在为 '" << name << "' 执行 FunctionDefNode。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_FUNC_DEF_NODE << name << "'." << std::endl;
     auto function = std::make_shared<Function>(name, params, body, visitor.environment); 
     visitor.environment->define(name, std::make_shared<FunctionValue>(function)); 
     return std::make_shared<NullValue>(); 
 }
 ValuePtr CallNode::accept(Interpreter& visitor) {
     visitor.check_timeout(line);
-    if (DEBUG) std::cout << "[调试:执行] 正在执行 CallNode (行 " << line << ")。求值被调用者中..." << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE << line << PyRiteMessages::DEBUG_EXEC_CALL_NODE_EVAL_CALLEE << std::endl;
 
     if (auto callee_var = dynamic_cast<VariableNode*>(callee.get())) {
         if (callee_var->name == "swap") {
-            if (arguments.size() != 2) throw RuntimeError(line, "swap()需要2个变量名作为参数。");
+            if (arguments.size() != 2) throw RuntimeError(line, PyRiteMessages::ERROR_SWAP_REQUIRES_TWO_VARS);
             auto arg1 = dynamic_cast<VariableNode*>(arguments[0].get());
             auto arg2 = dynamic_cast<VariableNode*>(arguments[1].get());
-            if (!arg1 || !arg2) throw RuntimeError(line, "swap()的参数必须是变量名。");
+            if (!arg1 || !arg2) throw RuntimeError(line, PyRiteMessages::ERROR_SWAP_ARGS_MUST_BE_VARS);
             try {
                 std::string name1 = arg1->name; std::string name2 = arg2->name;
                 ValuePtr val1 = visitor.environment->get(name1); ValuePtr val2 = visitor.environment->get(name2);
@@ -1178,53 +1179,53 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
     }
 
     auto callee_val = visitor.evaluate(callee);
-    if (DEBUG) std::cout << "[调试:执行]   被调用者求值为: " << callee_val->repr() << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_CALLEE_EVAL << callee_val->repr() << std::endl;
 
     std::vector<ValuePtr> arg_values;
-    if (DEBUG) std::cout << "[调试:执行]   正在求值 " << arguments.size() << " 个参数..." << std::endl; 
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_EVAL_ARGS << arguments.size() << PyRiteMessages::DEBUG_EXEC_CALL_NODE_ARGS << std::endl; 
     for(const auto& arg_expr : arguments) { 
         arg_values.push_back(visitor.evaluate(arg_expr)); 
     }
 
-    // 1. 处理原生函数
+    // 1. Handle native functions
     if (auto native_fn = dynamic_cast<NativeFnValue*>(callee_val.get())) {
-        if (DEBUG) std::cout << "[调试:执行]   正在调用原生函数 '" << native_fn->name << "'。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_NATIVE << native_fn->name << "'." << std::endl;
         visitor.call_stack.push_back({native_fn->name, line});
         try {
             ValuePtr result = native_fn->call(arg_values);
             visitor.call_stack.pop_back();
             return result;
-        } catch(const std::exception& e) { // 捕获更通用的异常类型
+        } catch(const std::exception& e) { // Catch more generic exception types
             visitor.call_stack.pop_back();
             throw RuntimeError(line, e.what());
         }
     }
 
-    // 2. 处理绑定的实例方法
+    // 2. Handle bound instance methods
     if (auto bound_method = dynamic_cast<BoundMethodValue*>(callee_val.get())) {
         auto function = bound_method->method;
-        if (DEBUG) std::cout << "[调试:执行]   正在对实例 " << bound_method->instance->repr() << " 调用绑定方法 '" << function->name << "'。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_BOUND_METHOD << bound_method->instance->klass->name << "." << function->name << PyRiteMessages::DEBUG_EXEC_CALL_NODE_ON_INSTANCE << bound_method->instance->repr() << "." << std::endl;
         auto call_env = std::make_shared<Environment>(function->closure);
         
-        // 关键步骤: 在方法环境中定义 'this'
-        if (DEBUG) std::cout << "[调试:执行]     在方法作用域中定义 'this'。" << std::endl;
+        // Crucial step: define 'this' in the method environment
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_DEFINE_THIS << std::endl;
         call_env->define("this", bound_method->instance);
 
-        // --- 参数绑定与类型检查 ---
+        // --- Argument binding and type checking ---
         const auto& param_defs = function->params;
         size_t num_provided_args = arg_values.size();
         size_t num_required_params = 0;
         for (const auto& p : param_defs) { if (!p.has_default) num_required_params++; }
-        if (DEBUG) std::cout << "[调试:执行]     正在绑定 " << num_provided_args << " 个实参到 " << param_defs.size() << " 个形参 (" << num_required_params << " 个是必需的)。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_BINDING_ARGS << num_provided_args << PyRiteMessages::DEBUG_EXEC_CALL_NODE_ARGS_TO << param_defs.size() << PyRiteMessages::DEBUG_EXEC_CALL_NODE_PARAMS << num_required_params << PyRiteMessages::DEBUG_EXEC_CALL_NODE_REQUIRED << std::endl;
 
         if (num_provided_args < num_required_params) {
             std::stringstream ss;
-            ss << "方法 '" << function->name << "' 至少需要 " << num_required_params << " 个参数, 但收到了 " << num_provided_args << " 个。";
+            ss << "Method '" << function->name << PyRiteMessages::ERROR_ARG_COUNT_PREFIX_AT_LEAST << num_required_params << PyRiteMessages::ERROR_ARG_COUNT_SUFFIX_BUT_GOT_PLURAL << num_provided_args << ".";
             throw RuntimeError(line, ss.str());
         }
         if (num_provided_args > param_defs.size()) {
             std::stringstream ss;
-            ss << "方法 '" << function->name << "' 最多需要 " << param_defs.size() << " 个参数, 但收到了 " << num_provided_args << " 个。";
+            ss << "Method '" << function->name << PyRiteMessages::ERROR_ARG_COUNT_PREFIX_AT_MOST << param_defs.size() << PyRiteMessages::ERROR_ARG_COUNT_SUFFIX_BUT_GOT << num_provided_args << ".";
             throw RuntimeError(line, ss.str());
         }
 
@@ -1235,25 +1236,26 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
             } else {
                 current_arg_value = param_defs[i].default_value->clone();
             }
-            if (DEBUG) std::cout << "[调试:执行]       正在绑定形参 '" << param_defs[i].name << "' 到实参 " << current_arg_value->repr() << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_BINDING_PARAM << param_defs[i].name << PyRiteMessages::DEBUG_EXEC_CALL_NODE_TO_ARG << current_arg_value->repr() << std::endl;
             if (!is_type_compatible(param_defs[i].type_keyword, current_arg_value)) {
                  std::stringstream ss;
-                 ss << "方法 '" << function->name << "' 的第 " << (i+1) << " 个参数 '" << param_defs[i].name
-                    << "' 类型不匹配。期望类型是 '" << token_type_to_string(param_defs[i].type_keyword)
-                    << "', 但实际类型是 '";
+                 ss << PyRiteMessages::ERROR_ARG_TYPE_MISMATCH_PREFIX << (i+1) << PyRiteMessages::ERROR_ARG_TYPE_MISMATCH_IN_METHOD << function->name
+                    << PyRiteMessages::ERROR_ARG_TYPE_MISMATCH_NAME << param_defs[i].name
+                    << PyRiteMessages::ERROR_ARG_TYPE_MISMATCH_EXPECTED << token_type_to_string(param_defs[i].type_keyword)
+                    << PyRiteMessages::ERROR_ARG_TYPE_MISMATCH_GOT;
                  if (dynamic_cast<NumberValue*>(current_arg_value.get())) ss << "dec";
                  else if (dynamic_cast<StringValue*>(current_arg_value.get())) ss << "str";
                  else if (dynamic_cast<BinaryValue*>(current_arg_value.get())) ss << "bin";
                  else if (dynamic_cast<ListValue*>(current_arg_value.get())) ss << "list";
                  else ss << "unknown";
-                 ss << "'。";
+                 ss << PyRiteMessages::ERROR_ARG_TYPE_MISMATCH_SUFFIX;
                  throw RuntimeError(line, ss.str());
             }
             call_env->define(param_defs[i].name, current_arg_value);
         }
-        // --- 参数绑定结束 ---
+        // --- End of argument binding ---
 
-        if (DEBUG) std::cout << "[调试:执行]     正在将 '" << function->name << "' 推入调用栈。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_PUSH_STACK << function->name << PyRiteMessages::DEBUG_EXEC_CALL_NODE_TO_STACK << std::endl;
         visitor.call_stack.push_back({function->name, line});
         ValuePtr return_val = std::make_shared<NullValue>();
         try {
@@ -1262,31 +1264,31 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
             return_val = rv.value;
         }
         visitor.call_stack.pop_back();
-        if (DEBUG) std::cout << "[调试:执行]     正在从调用栈中弹出 '" << function->name << "'。返回值: " << return_val->repr() << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_POP_STACK << function->name << PyRiteMessages::DEBUG_EXEC_CALL_NODE_FROM_STACK << return_val->repr() << std::endl;
         return return_val;
     }
 
-    // 3. 处理普通函数
+    // 3. Handle regular functions
     if (auto func_val = dynamic_cast<FunctionValue*>(callee_val.get())) {
         auto function = func_val->value;
-        if (DEBUG) std::cout << "[调试:执行]   正在调用用户函数 '" << function->name << "'。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_USER << function->name << "'." << std::endl;
         auto call_env = std::make_shared<Environment>(function->closure);
 
-        // --- 参数绑定与类型检查 (与方法逻辑相同, 但没有'this') ---
+        // --- Argument binding and type checking (same logic as methods, but no 'this') ---
         const auto& param_defs = function->params;
         size_t num_provided_args = arg_values.size();
         size_t num_required_params = 0;
         for (const auto& p : param_defs) { if (!p.has_default) num_required_params++; }
-        if (DEBUG) std::cout << "[调试:执行]     正在绑定 " << num_provided_args << " 个实参到 " << param_defs.size() << " 个形参 (" << num_required_params << " 个是必需的)。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_BINDING_ARGS << num_provided_args << PyRiteMessages::DEBUG_EXEC_CALL_NODE_ARGS_TO << param_defs.size() << PyRiteMessages::DEBUG_EXEC_CALL_NODE_PARAMS << num_required_params << PyRiteMessages::DEBUG_EXEC_CALL_NODE_REQUIRED << std::endl;
         
         if (num_provided_args < num_required_params) {
             std::stringstream ss;
-            ss << "函数 '" << function->name << "' 至少需要 " << num_required_params << " 个参数, 但收到了 " << num_provided_args << " 个。";
+            ss << "Function '" << function->name << PyRiteMessages::ERROR_ARG_COUNT_PREFIX_AT_LEAST << num_required_params << PyRiteMessages::ERROR_ARG_COUNT_SUFFIX_BUT_GOT_PLURAL << num_provided_args << ".";
             throw RuntimeError(line, ss.str());
         }
         if (num_provided_args > param_defs.size()) {
             std::stringstream ss;
-            ss << "函数 '" << function->name << "' 最多需要 " << param_defs.size() << " 个参数, 但收到了 " << num_provided_args << " 个。";
+            ss << "Function '" << function->name << PyRiteMessages::ERROR_ARG_COUNT_PREFIX_AT_MOST << param_defs.size() << PyRiteMessages::ERROR_ARG_COUNT_SUFFIX_BUT_GOT << num_provided_args << ".";
             throw RuntimeError(line, ss.str());
         }
 
@@ -1297,25 +1299,26 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
             } else {
                 current_arg_value = param_defs[i].default_value->clone();
             }
-            if (DEBUG) std::cout << "[调试:执行]       正在绑定形参 '" << param_defs[i].name << "' 到实参 " << current_arg_value->repr() << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_BINDING_PARAM << param_defs[i].name << PyRiteMessages::DEBUG_EXEC_CALL_NODE_TO_ARG << current_arg_value->repr() << std::endl;
             if (!is_type_compatible(param_defs[i].type_keyword, current_arg_value)) {
                  std::stringstream ss;
-                 ss << "函数 '" << function->name << "' 的第 " << (i+1) << " 个参数 '" << param_defs[i].name
-                    << "' 类型不匹配。期望类型是 '" << token_type_to_string(param_defs[i].type_keyword)
-                    << "', 但实际类型是 '";
+                 ss << PyRiteMessages::ERROR_ARG_TYPE_MISMATCH_PREFIX << (i+1) << PyRiteMessages::ERROR_ARG_TYPE_MISMATCH_IN_FUNCTION << function->name
+                    << PyRiteMessages::ERROR_ARG_TYPE_MISMATCH_NAME << param_defs[i].name
+                    << PyRiteMessages::ERROR_ARG_TYPE_MISMATCH_EXPECTED << token_type_to_string(param_defs[i].type_keyword)
+                    << PyRiteMessages::ERROR_ARG_TYPE_MISMATCH_GOT;
                  if (dynamic_cast<NumberValue*>(current_arg_value.get())) ss << "dec";
                  else if (dynamic_cast<StringValue*>(current_arg_value.get())) ss << "str";
                  else if (dynamic_cast<BinaryValue*>(current_arg_value.get())) ss << "bin";
                  else if (dynamic_cast<ListValue*>(current_arg_value.get())) ss << "list";
                  else ss << "unknown";
-                 ss << "'。";
+                 ss << PyRiteMessages::ERROR_ARG_TYPE_MISMATCH_SUFFIX;
                  throw RuntimeError(line, ss.str());
             }
             call_env->define(param_defs[i].name, current_arg_value);
         }
-        // --- 参数绑定结束 ---
+        // --- End of argument binding ---
 
-        if (DEBUG) std::cout << "[调试:执行]     正在将 '" << function->name << "' 推入调用栈。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_PUSH_STACK << function->name << PyRiteMessages::DEBUG_EXEC_CALL_NODE_TO_STACK << std::endl;
         visitor.call_stack.push_back({function->name, line});
         ValuePtr return_val = std::make_shared<NullValue>();
         try { 
@@ -1324,74 +1327,74 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
             return_val = rv.value; 
         }
         visitor.call_stack.pop_back();
-        if (DEBUG) std::cout << "[调试:执行]     正在从调用栈中弹出 '" << function->name << "'。返回值: " << return_val->repr() << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_POP_STACK << function->name << PyRiteMessages::DEBUG_EXEC_CALL_NODE_FROM_STACK << return_val->repr() << std::endl;
         return return_val;
     }
 
-    throw RuntimeError(line, "只能调用函数或方法。被调用者的类型是 '" + callee_val->repr() + "'。");
+    throw RuntimeError(line, std::string(PyRiteMessages::RUNTIME_ERROR_CAN_ONLY_CALL_FUNCTIONS) + callee_val->repr() + PyRiteMessages::RUNTIME_ERROR_CAN_ONLY_CALL_FUNCTIONS_SUFFIX);
 }
 ValuePtr ReturnNode::accept(Interpreter& visitor) { 
     ValuePtr val = std::make_shared<NullValue>(); 
     if (value) { 
         val = visitor.evaluate(value); 
     } 
-    if (DEBUG) std::cout << "[调试:执行] 正在执行 ReturnNode。正在抛出带值 " << val->repr() << " 的 ReturnValueException。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_RETURN_NODE << val->repr() << "." << std::endl;
     throw ReturnValueException(val); 
 }
 ValuePtr RaiseNode::accept(Interpreter& visitor) {
     auto value_to_raise = visitor.evaluate(expression);
-    if (DEBUG) std::cout << "[调试:执行] 正在执行 RaiseNode。正在抛出带负载 " << value_to_raise->repr() << " 的 PyRiteRaiseException。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_RAISE_NODE << value_to_raise->repr() << "." << std::endl;
     throw PyRiteRaiseException(value_to_raise); 
 }
 ValuePtr TryCatchNode::accept(Interpreter& visitor) {
     std::unique_ptr<std::exception_ptr> captured_exception = nullptr;
     try {
         try {
-            if (DEBUG) std::cout << "[调试:执行] 正在执行 TryCatchNode。进入 'try' 块。" << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_TRY_NODE << std::endl;
             visitor.execute_block(try_branch, std::make_shared<Environment>(visitor.environment));
         } catch (const PyRiteRaiseException& ex) {
-            if (DEBUG) std::cout << "[调试:执行]   在 'try' 块中捕获到 PyRiteRaiseException。负载: " << ex.value->repr() << "。正在执行 'catch' 块。" << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_TRY_CAUGHT_PYRITE << ex.value->repr() << PyRiteMessages::DEBUG_EXEC_TRY_EXEC_CATCH << std::endl;
             auto catch_env = std::make_shared<Environment>(visitor.environment);
             catch_env->define(exception_var, ex.value);
             visitor.execute_block(catch_branch, catch_env);
         } catch (const RuntimeError& ex) {
-            if (DEBUG) std::cout << "[调试:执行]   在 'try' 块中捕获到 RuntimeError: " << ex.what() << "。正在执行 'catch' 块。" << std::endl;
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_TRY_CAUGHT_RUNTIME << ex.what() << PyRiteMessages::DEBUG_EXEC_TRY_EXEC_CATCH << std::endl;
             auto exception_obj = std::make_shared<ExceptionValue>(std::make_shared<StringValue>(ex.what()));
             auto catch_env = std::make_shared<Environment>(visitor.environment);
             catch_env->define(exception_var, exception_obj);
             visitor.execute_block(catch_branch, catch_env);
         }
     } catch (...) {
-        if (DEBUG) std::cout << "[调试:执行]   在 'catch' 块中捕获到意外异常。它将在 'finally' 之后被重新抛出。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_TRY_CAUGHT_UNEXPECTED << std::endl;
         captured_exception.reset(new std::exception_ptr(std::current_exception()));
     }
     if (!finally_branch.empty()) {
-        if (DEBUG) std::cout << "[调试:执行]   正在执行 'finally' 块。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_TRY_EXEC_FINALLY << std::endl;
         visitor.execute_block(finally_branch, std::make_shared<Environment>(visitor.environment));
     }
     if (captured_exception) {
-        if (DEBUG) std::cout << "[调试:执行]   正在从 'catch' 块中重新抛出异常。" << std::endl;
+        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_TRY_RETHROWING << std::endl;
         std::rethrow_exception(*captured_exception);
     }
-    if (DEBUG) std::cout << "[调试:执行]   TryCatchNode 执行完毕。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_TRY_DONE << std::endl;
     return std::make_shared<NullValue>();
 }
 ValuePtr ExpressionStatementNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << "[调试:执行] 正在执行 ExpressionStatementNode。" << std::endl;
+    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_EXPR_STMT_NODE << std::endl;
     visitor.evaluate(expression);
-    return std::make_shared<NullValue>(); // 表达式语句本身不返回值
+    return std::make_shared<NullValue>(); // Expression statements themselves do not return a value
 }
 
-// --- Interpreter Constructor 和内置函数定义 ---
+// --- Interpreter Constructor and Native Function Definitions ---
 Interpreter::Interpreter() : globals(std::make_shared<Environment>()), environment(globals), time_limit_ms(0) {
     define_native_functions();
 }
 void Interpreter::define_native_functions() {
-    #define REQUIRE_ARGS(name, count) if(args.size() != count) throw std::runtime_error(name "() 需要 " #count " 个参数。");
-    #define REQUIRE_MIN_ARGS(name, count) if(args.size() < count) throw std::runtime_error(name "() 至少需要 " #count " 个参数。");
-    #define GET_NUM(val, var_name) auto var_name = dynamic_cast<NumberValue*>(val.get()); if(!var_name) throw std::runtime_error("参数必须是数字。");
-    #define GET_LIST(val, var_name) auto var_name = dynamic_cast<ListValue*>(val.get()); if(!var_name) throw std::runtime_error("参数必须是列表。");
-    #define GET_STR(val, var_name) auto var_name = dynamic_cast<StringValue*>(val.get()); if(!var_name) throw std::runtime_error("参数必须是字符串。");
+    #define REQUIRE_ARGS(name, count) if(args.size() != count) throw std::runtime_error(name + std::string(PyRiteMessages::NATIVE_ERROR_REQUIRES_ARGS_SUFFIX) + #count + " arguments.");
+    #define REQUIRE_MIN_ARGS(name, count) if(args.size() < count) throw std::runtime_error(name + std::string(PyRiteMessages::NATIVE_ERROR_REQUIRES_MIN_ARGS_SUFFIX) + #count + " arguments.");
+    #define GET_NUM(val, var_name) auto var_name = dynamic_cast<NumberValue*>(val.get()); if(!var_name) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_ARG_MUST_BE_NUMBER);
+    #define GET_LIST(val, var_name) auto var_name = dynamic_cast<ListValue*>(val.get()); if(!var_name) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_ARG_MUST_BE_LIST);
+    #define GET_STR(val, var_name) auto var_name = dynamic_cast<StringValue*>(val.get()); if(!var_name) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_ARG_MUST_BE_STRING);
     // --- Exception Factory ---
     globals->define("Exception", std::make_shared<NativeFnValue>("Exception", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("Exception", 1);
@@ -1404,7 +1407,7 @@ void Interpreter::define_native_functions() {
         return std::make_shared<NumberValue>(num_val->value.abs());
     }));
     globals->define("rt", std::make_shared<NativeFnValue>("rt", [](const std::vector<ValuePtr>& args){
-        if (args.size() < 1 || args.size() > 2) throw std::runtime_error("rt() 需要 1 或 2 个参数。");
+        if (args.size() < 1 || args.size() > 2) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_RT_ARGS);
         GET_NUM(args[0], num_val);
         BigNumber n = 2;
         if(args.size() == 2) {
@@ -1442,7 +1445,7 @@ void Interpreter::define_native_functions() {
     }));
     // --- Aggregate Functions ---
     auto min_max_logic = [](const std::vector<ValuePtr>& args, bool is_max) {
-        if (args.empty()) throw std::runtime_error("min/max 需要至少一个参数。");
+        if (args.empty()) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_MIN_MAX_EMPTY);
         const std::vector<ValuePtr>* values_to_compare;
         std::vector<ValuePtr> temp_list;
         if (args.size() == 1 && dynamic_cast<ListValue*>(args[0].get())) {
@@ -1451,7 +1454,7 @@ void Interpreter::define_native_functions() {
             temp_list = args;
             values_to_compare = &temp_list;
         }
-        if (values_to_compare->empty()) throw std::runtime_error("无法从空列表/参数中查找 min/max。");
+        if (values_to_compare->empty()) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_MIN_MAX_EMPTY_LIST);
         ValuePtr extreme = (*values_to_compare)[0];
         for (size_t i = 1; i < values_to_compare->size(); ++i) {
             ValuePtr current = (*values_to_compare)[i];
@@ -1462,7 +1465,7 @@ void Interpreter::define_native_functions() {
                     if (current->isLessThan(*extreme)) extreme = current;
                 }
             } catch (const std::runtime_error&) {
-                throw std::runtime_error("min/max 的所有参数必须是可比较类型 (数字或字符串)。");
+                throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_MIN_MAX_UNCOMPARABLE);
             }
         }
         return extreme;
@@ -1474,7 +1477,7 @@ void Interpreter::define_native_functions() {
         GET_NUM(args[0], sec_val);
         auto end_time = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(sec_val->value.toLongLong() * 1000);
         auto timer_fn_body = [end_time](const std::vector<ValuePtr>& inner_args) -> ValuePtr {
-            if (!inner_args.empty()) throw std::runtime_error("计时器函数不接受参数。");
+            if (!inner_args.empty()) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_TIMER_FN_NO_ARGS);
             auto now = std::chrono::high_resolution_clock::now();
             return std::make_shared<NumberValue>(now >= end_time ? 1 : 0);
         };
@@ -1503,21 +1506,21 @@ void Interpreter::define_native_functions() {
         REQUIRE_ARGS("tan", 1); GET_NUM(args[0], x); return std::make_shared<NumberValue>(BigNumber(std::to_string(tan(x->value.toLongLong()))));
     }));
     globals->define("log", std::make_shared<NativeFnValue>("log", [](const std::vector<ValuePtr>& args) {
-        REQUIRE_ARGS("log", 1); GET_NUM(args[0], x); if(x->value <= BigNumber(0)) throw std::runtime_error("log()的参数必须为正。");
+        REQUIRE_ARGS("log", 1); GET_NUM(args[0], x); if(x->value <= BigNumber(0)) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_LOG_POSITIVE);
         return std::make_shared<NumberValue>(BigNumber(std::to_string(log(x->value.toLongLong()))));
     }));
-    // 用来新建一个实例的内置函数 
+    // Built-in function to create a new instance
     globals->define("new", std::make_shared<NativeFnValue>("new", [](const std::vector<ValuePtr>& args) -> ValuePtr {
          REQUIRE_ARGS("new", 1);
          auto class_val = std::dynamic_pointer_cast<Class>(args[0]);
          if (!class_val) {
-             throw std::runtime_error("new() 的第一个参数必须是一个类。");
+             throw std::runtime_error(PyRiteMessages::ERROR_NEW_REQUIRES_CLASS);
          }
          return std::make_shared<Instance>(class_val);
      }));
 }
 
-// --- 辅助Fn ---
+// --- Helper Functions ---
 std::string trim(const std::string& str) {
     const std::string whitespace = " \t\n\r";
     const auto strBegin = str.find_first_not_of(whitespace);
@@ -1534,7 +1537,7 @@ bool is_simple_identifier(const std::string& s) {
 void run_file(const char* filename, Interpreter& interpreter) {
     std::ifstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "错误: 无法打开文件 '" << filename << "'" << std::endl;
+        std::cerr << PyRiteMessages::MAIN_FILE_OPEN_ERROR << filename << "'" << std::endl;
         exit(1);
     }
     std::string source_code((std::istreambuf_iterator<char>(file)),
@@ -1562,7 +1565,7 @@ std::map<std::string, std::string> parse_function_call(const std::string& call_s
     size_t open_paren = call_str.find('(');
     size_t close_paren = call_str.rfind(')');
     if (close_paren == std::string::npos || open_paren == std::string::npos) {
-        result["error"] = "语法错误: 调用缺少 '()'。";
+        result["error"] = PyRiteMessages::COMPILE_SYNTAX_ERROR;
         return result;
     }
     std::string args_str = call_str.substr(open_paren + 1, close_paren - open_paren - 1);
@@ -1598,7 +1601,7 @@ std::map<std::string, std::string> parse_function_call(const std::string& call_s
                     result[key] = value;
                 } else {
                     // Positional argument or error. We'll treat it as an error for named args.
-                    result["error"] = "语法错误: 参数必须是 key=value 形式。";
+                    result["error"] = PyRiteMessages::COMPILE_ARG_SYNTAX_ERROR;
                     return result;
                 }
                 arg_start = i + 1;
@@ -1618,20 +1621,20 @@ std::map<std::string, std::string> parse_function_call(const std::string& call_s
             }
             result[key] = value;
         } else {
-            result["error"] = "语法错误: 参数必须是 key=value 形式。";
+            result["error"] = PyRiteMessages::COMPILE_ARG_SYNTAX_ERROR;
         }
     }
     return result;
 }
 
-// -- 启动！！  --
+// -- Start!!  --
 void run_repl(Interpreter& interpreter) {
     interpreter.repl_buffer.clear();
     int line_number = 1;
     std::vector<std::string> env_stack = {"void"};
-    std::cout << "PyRite 解释器 0.19.0 (tags/v0.19.0, compilers/TDM-GCC 4.9.2 64-bit Release)"
-              << (DEBUG ? " [DEBUG]" : "") << ".\n";
-    std::cout << "输入 'run()' 执行缓冲代码, 'compile()' 编译代码, 'halt()' 退出, 'about()' 查看版本信息.\n";
+    std::cout << PyRiteMessages::REPL_WELCOME_BANNER_1
+              << (DEBUG ? PyRiteMessages::REPL_WELCOME_BANNER_DEBUG : "") << PyRiteMessages::REPL_WELCOME_BANNER_2;
+    std::cout << PyRiteMessages::REPL_WELCOME_BANNER_3;
     std::cout << std::endl;
     while (true) {
         std::string current_env = env_stack.back();
@@ -1650,11 +1653,11 @@ void run_repl(Interpreter& interpreter) {
         std::string trimmed_line = trim(line_input);
         if (trimmed_line == "halt()") break;
         if (trimmed_line == "about()") {
-            std::cout << "----------------------------------------\n"
-                      << " PyRite Language Interpreter v0.19.0" << (DEBUG ? " [DEBUG]" : "") << "\n"
-                      << " (c) 2024-2025. DarkstarXD. 保留所有权利.\n"
-                      << " 一个简单到神奇的编程语言?!\n"
-                      << "----------------------------------------\n";
+            std::cout << PyRiteMessages::ABOUT_HEADER_FOOTER
+                      << PyRiteMessages::ABOUT_LINE_1 << (DEBUG ? PyRiteMessages::REPL_WELCOME_BANNER_DEBUG : "")
+                      << PyRiteMessages::ABOUT_LINE_2
+                      << PyRiteMessages::ABOUT_LINE_3
+                      << PyRiteMessages::ABOUT_HEADER_FOOTER;
             continue;
         }
         if (starts_with(trimmed_line, "compile(") && ends_with(trimmed_line, ")")) {
@@ -1684,12 +1687,12 @@ void run_repl(Interpreter& interpreter) {
                 if (compile_from_buffer) {
                     source_code = interpreter.repl_buffer;
                     if (source_code.empty()) {
-                        throw std::runtime_error("缓冲区为空, 无法编译。");
+                        throw std::runtime_error(PyRiteMessages::COMPILE_BUFFER_EMPTY);
                     }
                 } else {
                     full_src_filename_for_msg = src_path_arg;
                     std::ifstream src_file(src_path_arg);
-                    if (!src_file.is_open()) throw std::runtime_error("无法打开源文件: " + src_path_arg);
+                    if (!src_file.is_open()) throw std::runtime_error(std::string(PyRiteMessages::COMPILE_CANNOT_OPEN_SOURCE) + src_path_arg);
                     source_code.assign((std::istreambuf_iterator<char>(src_file)), std::istreambuf_iterator<char>());
                     src_file.close();
                     size_t last_slash = src_path_arg.find_last_of("/\\");
@@ -1702,25 +1705,25 @@ void run_repl(Interpreter& interpreter) {
                 std::string template_content;
                 std::string template_path = interpreter.base_path + PATH_SEPARATOR + "template.cpp";
                 std::ifstream template_file(template_path);
-                if (!template_file.is_open()) throw std::runtime_error("无法打开编译模板文件: " + template_path);
+                if (!template_file.is_open()) throw std::runtime_error(std::string(PyRiteMessages::COMPILE_CANNOT_OPEN_TEMPLATE) + template_path);
                 template_content.assign((std::istreambuf_iterator<char>(template_file)), std::istreambuf_iterator<char>());
                 template_file.close();
                 // Step 5: Replace placeholder in template
                 std::string placeholder = "WRITE_SRC_CODE_HERE";
                 size_t pos = template_content.find(placeholder);
-                if (pos == std::string::npos) throw std::runtime_error("在 template.cpp 中未找到占位符 WRITE_SRC_CODE_HERE。");
+                if (pos == std::string::npos) throw std::runtime_error(PyRiteMessages::COMPILE_TEMPLATE_PLACEHOLDER_MISSING);
                 template_content.replace(pos, placeholder.length(), source_code);
                 // Step 6: Write temporary C++ file and VERIFY the write operation
                 std::string temp_cpp_path = output_dir + PATH_SEPARATOR + output_stem + ".cpp";
-                std::cout << "转译目标：" << temp_cpp_path << std::endl;
+                std::cout << PyRiteMessages::COMPILE_TRANSLATION_TARGET << temp_cpp_path << std::endl;
                 std::ofstream temp_cpp_file(temp_cpp_path);
                 if (!temp_cpp_file.is_open()) {
-                    throw std::runtime_error("无法打开临时编译文件进行写入(请检查权限和路径): " + temp_cpp_path);
+                    throw std::runtime_error(std::string(PyRiteMessages::COMPILE_CANNOT_OPEN_TEMP_WRITE) + temp_cpp_path);
                 }
                 temp_cpp_file << template_content;
                 temp_cpp_file.close();
                 if (temp_cpp_file.fail()) {
-                    throw std::runtime_error("写入临时编译文件失败(可能是权限问题或磁盘已满): " + temp_cpp_path);
+                    throw std::runtime_error(std::string(PyRiteMessages::COMPILE_WRITE_TEMP_FAILED) + temp_cpp_path);
                 }
                 // Step 7: Construct and execute compile command
                 std::string output_exe_name = output_stem;
@@ -1734,7 +1737,7 @@ void run_repl(Interpreter& interpreter) {
                     << " \"" << temp_cpp_path << "\""
                     << " -o \"" << output_exe_path << "\""
                     << " -I. -std=c++11 -O2 " << extra_flags_arg;
-                std::cout << "使用编译指令：" << cmd.str() << std::endl;
+                std::cout << PyRiteMessages::COMPILE_COMMAND_INFO << cmd.str() << std::endl;
                 int result = system(("\"" + cmd.str() + "\"").c_str());
                 // Step 8: Clean up
                 remove(temp_cpp_path.c_str());
@@ -1742,13 +1745,13 @@ void run_repl(Interpreter& interpreter) {
                 auto end_time_compile = std::chrono::high_resolution_clock::now();
                 double duration = std::chrono::duration_cast<std::chrono::duration<double>>(end_time_compile - start_time_compile).count();
                 if (result == 0) {
-                    std::cout << "编译 " << full_src_filename_for_msg << " 成功 (用时 "
-                              << std::fixed << std::setprecision(2) << duration << " s) 输出到 " << output_exe_path << std::endl;
+                    std::cout << PyRiteMessages::COMPILE_SUCCESS_PREFIX << full_src_filename_for_msg << PyRiteMessages::COMPILE_SUCCESS_TOOK
+                              << std::fixed << std::setprecision(2) << duration << PyRiteMessages::COMPILE_SUCCESS_SECONDS << output_exe_path << std::endl;
                 } else {
-                    throw std::runtime_error("编译 " + full_src_filename_for_msg + " 失败 (编译器错误)");
+                    throw std::runtime_error(std::string(PyRiteMessages::COMPILE_FAILURE_PREFIX) + full_src_filename_for_msg + PyRiteMessages::COMPILE_FAILURE_SUFFIX);
                 }
             } catch (const std::runtime_error& e) {
-                std::cerr << "[编译错误] " << e.what() << "。" << std::endl;
+                std::cerr << PyRiteMessages::COMPILE_ERROR_PREFIX << e.what() << PyRiteMessages::COMPILE_ERROR_SUFFIX << std::endl;
             }
             continue;
         }
@@ -1761,7 +1764,7 @@ void run_repl(Interpreter& interpreter) {
         }
         if (starts_with(trimmed_line, "run(") && ends_with(trimmed_line, ")")) {
             if (interpreter.repl_buffer.empty()) {
-                std::cout << "没有可执行的代码。" << std::endl;
+                std::cout << PyRiteMessages::REPL_NO_CODE_TO_RUN << std::endl;
                 continue;
             }
             bool tick_enabled = false;
@@ -1769,7 +1772,7 @@ void run_repl(Interpreter& interpreter) {
             // Parse run arguments
             auto parsed_args = parse_function_call(trimmed_line);
             if (parsed_args.count("error")) {
-                std::cerr << "[运行时错误] " << parsed_args.at("error") << std::endl;
+                std::cerr << PyRiteMessages::RUNTIME_ERROR_PREFIX << parsed_args.at("error") << std::endl;
                 continue;
             }
             if (parsed_args.count("tick")) {
@@ -1777,7 +1780,7 @@ void run_repl(Interpreter& interpreter) {
                 if (tick_val == "1" || tick_val == "true") {
                     tick_enabled = true;
                 } else if (tick_val != "0" && tick_val != "false") {
-                    std::cerr << "[运行时错误] run() 的 tick 参数必须是布尔值 (0/1, false/true)。" << std::endl;
+                    std::cerr << PyRiteMessages::REPL_TICK_ARG_ERROR << std::endl;
                     continue;
                 }
             }
@@ -1789,11 +1792,11 @@ void run_repl(Interpreter& interpreter) {
                         time_limit = std::stoll(limit_str);
                     } else {
                         // It might be an expression or variable. For simplicity in REPL, we require a literal number.
-                         std::cerr << "[运行时错误] run() 的 limit 参数必须是数字字面量。" << std::endl;
+                         std::cerr << PyRiteMessages::REPL_LIMIT_ARG_ERROR_LITERAL << std::endl;
                          continue;
                     }
                 } catch(...) {
-                    std::cerr << "[运行时错误] run() 的 limit 参数无效。" << std::endl;
+                    std::cerr << PyRiteMessages::REPL_LIMIT_ARG_ERROR_INVALID << std::endl;
                     continue;
                 }
             }
@@ -1807,7 +1810,7 @@ void run_repl(Interpreter& interpreter) {
                 if (tick_enabled) {
                     auto end_time = std::chrono::high_resolution_clock::now();
                     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
-                    std::cout << "代码执行耗时: " << duration << "ms。" << std::endl;
+                    std::cout << PyRiteMessages::REPL_EXECUTION_TIME_PREFIX << duration << PyRiteMessages::REPL_EXECUTION_TIME_SUFFIX << std::endl;
                 }
             }
             interpreter.repl_buffer.clear();
@@ -1857,7 +1860,7 @@ void run_repl(Interpreter& interpreter) {
         interpreter.repl_buffer += line_input + "\n";
         line_number++;
     }
-    std::cout << "解释器已停止。" << std::endl;
+    std::cout << PyRiteMessages::REPL_HALTED << std::endl;
 }
 
 // -- main entrance -- 
@@ -1871,7 +1874,7 @@ int main(int argc, char* argv[]) {
     }
     interpreter.base_path = executable_dir;
     if (argc > 2) {
-        std::cerr << "用法: " << argv[0] << " [script.src]" << std::endl;
+        std::cerr << PyRiteMessages::MAIN_USAGE_ERROR << argv[0] << PyRiteMessages::MAIN_USAGE_ERROR_SCRIPT << std::endl;
         return 1;
     } else if (argc == 2) {
         run_file(argv[1], interpreter);
