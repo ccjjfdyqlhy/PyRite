@@ -127,8 +127,8 @@ namespace PyRiteMessages {
 
 
     // --- 调试信息 ---
-    constexpr const char* DEBUG_ENV_DEFINE = "[调试:环境] 在环境 ";
-    constexpr const char* DEBUG_ENV_IN_ENV = " 中定义 '";
+    constexpr const char* DEBUG_ENV_DEFINE = "[调试:环境] 定义 ";
+    constexpr const char* DEBUG_ENV_IN_ENV = " 于环境 '";
     constexpr const char* DEBUG_ENV_AS = "' 为 ";
     constexpr const char* DEBUG_ENV_ASSIGN = "[调试:环境] 正在赋值给 '";
     constexpr const char* DEBUG_ENV_VALUE = "' = ";
@@ -256,7 +256,7 @@ namespace PyRiteMessages {
     constexpr const char* DEBUG_INSTANCE_TYPE_CHECK_OK = "  类型检查通过。正在设置字段值。";
 
     // --- REPL 与 Main ---
-    constexpr const char* REPL_WELCOME_BANNER_1 = "PyRite 解释器 0.19.0 (tags/v0.19.0, compilers/TDM-GCC 4.9.2 64-bit Release)";
+    constexpr const char* REPL_WELCOME_BANNER_1 = "PyRite 解释器 ";
     constexpr const char* REPL_WELCOME_BANNER_DEBUG = " [调试模式]";
     constexpr const char* REPL_WELCOME_BANNER_2 = "。\n";
     constexpr const char* REPL_WELCOME_BANNER_3 = "输入 'run()' 执行缓冲代码, 'compile()' 进行编译, 'halt()' 退出, 'about()' 查看版本信息。\n";
@@ -268,9 +268,9 @@ namespace PyRiteMessages {
     constexpr const char* REPL_EXECUTION_TIME_PREFIX = "代码执行时间: ";
     constexpr const char* REPL_EXECUTION_TIME_SUFFIX = "毫秒。";
     constexpr const char* ABOUT_HEADER_FOOTER = "----------------------------------------\n";
-    constexpr const char* ABOUT_LINE_1 = " PyRite 语言解释器 v0.19.0";
+    constexpr const char* ABOUT_LINE_1 = " PyRite 语言解释器 ";
     constexpr const char* ABOUT_LINE_2 = "\n (c) 2024-2025. DarkstarXD. 保留所有权利。\n";
-    constexpr const char* ABOUT_LINE_3 = " 一门简单到不可思议的编程语言?!\n";
+    constexpr const char* ABOUT_LINE_3 = " 一种简单到神奇的编程语言?!\n";
     constexpr const char* MAIN_USAGE_ERROR = "用法: ";
     constexpr const char* MAIN_USAGE_ERROR_SCRIPT = " [script.src]";
     constexpr const char* MAIN_FILE_OPEN_ERROR = "错误: 无法打开文件 '";

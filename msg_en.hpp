@@ -256,7 +256,7 @@ namespace PyRiteMessages {
     constexpr const char* DEBUG_INSTANCE_TYPE_CHECK_OK = "  Type check passed. Setting field value.";
 
     // --- REPL & Main ---
-    constexpr const char* REPL_WELCOME_BANNER_1 = "PyRite Interpreter 0.19.0 (tags/v0.19.0, compilers/TDM-GCC 4.9.2 64-bit Release)";
+    constexpr const char* REPL_WELCOME_BANNER_1 = "PyRite Interpreter ";
     constexpr const char* REPL_WELCOME_BANNER_DEBUG = " [DEBUG]";
     constexpr const char* REPL_WELCOME_BANNER_2 = ".\n";
     constexpr const char* REPL_WELCOME_BANNER_3 = "Enter 'run()' to execute buffered code, 'compile()' to compile, 'halt()' to exit, 'about()' for version info.\n";
@@ -268,7 +268,7 @@ namespace PyRiteMessages {
     constexpr const char* REPL_EXECUTION_TIME_PREFIX = "Code execution time: ";
     constexpr const char* REPL_EXECUTION_TIME_SUFFIX = "ms.";
     constexpr const char* ABOUT_HEADER_FOOTER = "----------------------------------------\n";
-    constexpr const char* ABOUT_LINE_1 = " PyRite Language Interpreter v0.19.0";
+    constexpr const char* ABOUT_LINE_1 = " PyRite Language Interpreter ";
     constexpr const char* ABOUT_LINE_2 = "\n (c) 2024-2025. DarkstarXD. All Rights Reserved.\n";
     constexpr const char* ABOUT_LINE_3 = " A programming language that's simple to the point of being magical?!\n";
     constexpr const char* MAIN_USAGE_ERROR = "Usage: ";

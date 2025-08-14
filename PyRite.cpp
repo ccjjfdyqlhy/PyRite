@@ -1,3 +1,52 @@
+#pragma GCC optimize(3)
+#pragma GCC target("avx")
+#pragma GCC optimize("Ofast")
+#pragma GCC optimize("inline")
+#pragma GCC optimize("-fgcse")
+#pragma GCC optimize("-fgcse-lm")
+#pragma GCC optimize("-fipa-sra")
+#pragma GCC optimize("-ftree-pre")
+#pragma GCC optimize("-ftree-vrp")
+#pragma GCC optimize("-fpeephole2")
+#pragma GCC optimize("-ffast-math")
+#pragma GCC optimize("-fsched-spec")
+#pragma GCC optimize("unroll-loops")
+#pragma GCC optimize("-falign-jumps")
+#pragma GCC optimize("-falign-loops")
+#pragma GCC optimize("-falign-labels")
+#pragma GCC optimize("-fdevirtualize")
+#pragma GCC optimize("-fcaller-saves")
+#pragma GCC optimize("-fcrossjumping")
+#pragma GCC optimize("-fthread-jumps")
+#pragma GCC optimize("-funroll-loops")
+#pragma GCC optimize("-fwhole-program")
+#pragma GCC optimize("-freorder-blocks")
+#pragma GCC optimize("-fschedule-insns")
+#pragma GCC optimize("inline-functions")
+#pragma GCC optimize("-ftree-tail-merge")
+#pragma GCC optimize("-fschedule-insns2")
+#pragma GCC optimize("-fstrict-aliasing")
+#pragma GCC optimize("-fstrict-overflow")
+#pragma GCC optimize("-falign-functions")
+#pragma GCC optimize("-fcse-skip-blocks")
+#pragma GCC optimize("-fcse-follow-jumps")
+#pragma GCC optimize("-fsched-interblock")
+#pragma GCC optimize("-fpartial-inlining")
+#pragma GCC optimize("no-stack-protector")
+#pragma GCC optimize("-freorder-functions")
+#pragma GCC optimize("-findirect-inlining")
+#pragma GCC optimize("-fhoist-adjacent-loads")
+#pragma GCC optimize("-frerun-cse-after-loop")
+#pragma GCC optimize("inline-small-functions")
+#pragma GCC optimize("-finline-small-functions")
+#pragma GCC optimize("-ftree-switch-conversion")
+#pragma GCC optimize("-foptimize-sibling-calls")
+#pragma GCC optimize("-fexpensive-optimizations")
+#pragma GCC optimize("-funsafe-loop-optimizations")
+#pragma GCC optimize("inline-functions-called-once")
+#pragma GCC optimize("-fdelete-null-pointer-checks")
+#pragma GCC optimize(2)
+
 #include <iostream>
 #include <string>
 #include <vector>
@@ -20,14 +69,15 @@
 #include "BigNumber.hpp"
 #include "Tense.hpp"    // Matrix support
 #include "File.hpp"     // File operation support
-#include "msg_jp_special1.hpp" // --- Import all string constants ---
+#include "msg_cn.hpp" // --- Import all string constants ---
 
 // --- Global DEBUG Switch ----
 // Be careful, do not use in release builds.
 // Enabling this may slow down I/O due to printing large amounts of debug information.
-constexpr bool DEBUG = true;
+constexpr bool DEBUG = false;
 
 // --- Forward Declarations ---
+std::string VERSION = "v0.20.1";
 struct Value; struct Function; class Interpreter; class Environment; class NumberValue; class BinaryValue; class StringValue; class ListValue; class NativeFnValue; class ExceptionValue;
 struct Class; struct Instance;
 using ValuePtr = std::shared_ptr<Value>;
@@ -287,17 +337,19 @@ void ListValue::setSubscript(const Value& index, ValuePtr value) {
 // --- Function Parameter Definition ---
 // 1. Move TokenType enum class definition here to ensure ParameterDefinition can see it
 enum class TokenType {
-    DEC, STR, BIN, LIST, ANY, TENSE,  // Added ANY and TENSE
-    IF, THEN, ELSE, ENDIF, WHILE, DO, FINALLY, ENDWHILE, DEF, ENDDEF, RETURN, SAY, ASK, MARK, JUMP, HALT, RUN,
+    DEC, STR, BIN, LIST, ANY, TENSE,
+    IF, THEN, ELSE, ENDIF, WHILE, DO, FINALLY, ENDWHILE, FN, ENDFN, RETURN, SAY, ASK, HALT, RUN,
     TRY, CATCH, ENDTRY, RAISE,
     AWAIT, ENDAWAIT,
     INS, CONTAINS, ENDINS,
+    USING, AS,
+    REPEAT, FOR, TIMES, UNTIL, ENDREP, BREAK,
     IDENTIFIER, NUMBER, STRING, HEX_LITERAL,
     EQUAL, EQUAL_EQUAL, BANG_EQUAL, LESS, LESS_EQUAL, GREATER, GREATER_EQUAL,
     PLUS, MINUS, STAR, SLASH, LPAREN, RPAREN, COMMA, CARET,
     LBRACKET, RBRACKET,
-    DOT, // For accessing instance properties/methods
-    NULL_LITERAL,  // Added null literal
+    DOT,
+    NULL_LITERAL,
     END_OF_FILE, UNKNOWN
 };
 // 2. Modify ParameterDefinition struct definition
@@ -335,6 +387,8 @@ std::string FunctionValue::repr() const {
 class RuntimeError : public std::runtime_error { public: int line; RuntimeError(int l, const std::string& msg) : std::runtime_error(msg), line(l) {} };
 class ReturnValueException : public std::runtime_error { public: ValuePtr value; ReturnValueException(ValuePtr v) : std::runtime_error(""), value(v) {} };
 class PyRiteRaiseException : public std::runtime_error { public: ValuePtr value; PyRiteRaiseException(ValuePtr v) : std::runtime_error(""), value(v) {} };
+class BreakException : public std::runtime_error { public: BreakException() : std::runtime_error("") {} };
+
 
 // --- Environment ---
 class Environment : public std::enable_shared_from_this<Environment> {
@@ -506,18 +560,20 @@ struct Token { TokenType type; std::string lexeme; int line; };
 class Tokenizer {
 public:
     Tokenizer(const std::string& source) : source(source), start(0), current(0), line(1) {
-        keywords["any"] = TokenType::ANY;  // Add 'any' keyword
-        keywords["tense"] = TokenType::TENSE;  // Add 'tense' keyword
-        keywords["nul"] = TokenType::NULL_LITERAL;  // Add 'nul' keyword
+        keywords["any"] = TokenType::ANY;
+        keywords["tense"] = TokenType::TENSE;
+        keywords["nul"] = TokenType::NULL_LITERAL;
         keywords["dec"] = TokenType::DEC; keywords["str"] = TokenType::STR; keywords["bin"] = TokenType::BIN; keywords["list"] = TokenType::LIST;
         keywords["if"] = TokenType::IF; keywords["then"] = TokenType::THEN; keywords["else"] = TokenType::ELSE; keywords["endif"] = TokenType::ENDIF; 
         keywords["while"] = TokenType::WHILE; keywords["do"] = TokenType::DO; keywords["finally"] = TokenType::FINALLY; keywords["endwhile"] = TokenType::ENDWHILE; 
-        keywords["def"] = TokenType::DEF; keywords["enddef"] = TokenType::ENDDEF; keywords["return"] = TokenType::RETURN; keywords["say"] = TokenType::SAY; 
-        keywords["ask"] = TokenType::ASK; keywords["mark"] = TokenType::MARK; keywords["jump"] = TokenType::JUMP; keywords["halt"] = TokenType::HALT; 
-        keywords["run"] = TokenType::RUN;
+        keywords["fn"] = TokenType::FN; keywords["endfn"] = TokenType::ENDFN; keywords["return"] = TokenType::RETURN; keywords["say"] = TokenType::SAY; 
+        keywords["ask"] = TokenType::ASK; keywords["halt"] = TokenType::HALT; keywords["run"] = TokenType::RUN;
         keywords["await"] = TokenType::AWAIT; keywords["endawait"] = TokenType::ENDAWAIT;
         keywords["try"] = TokenType::TRY; keywords["catch"] = TokenType::CATCH; keywords["endtry"] = TokenType::ENDTRY; keywords["raise"] = TokenType::RAISE;
-        keywords["ins"] = TokenType::INS; keywords["contains"] = TokenType::CONTAINS; keywords["endins"] = TokenType::ENDINS; // Register new keywords
+        keywords["ins"] = TokenType::INS; keywords["contains"] = TokenType::CONTAINS; keywords["endins"] = TokenType::ENDINS;
+        keywords["as"] = TokenType::AS; keywords["using"] = TokenType::USING;
+        keywords["repeat"] = TokenType::REPEAT; keywords["for"] = TokenType::FOR; keywords["times"] = TokenType::TIMES;
+        keywords["until"] = TokenType::UNTIL; keywords["endrep"] = TokenType::ENDREP; keywords["break"] = TokenType::BREAK;
     }
     Token next_token() {
         skip_whitespace(); start = current; if (is_at_end()) return make_token(TokenType::END_OF_FILE);
@@ -533,7 +589,7 @@ public:
             case '<': return make_token(match('=') ? TokenType::LESS_EQUAL : TokenType::LESS); case '>': return make_token(match('=') ? TokenType::GREATER_EQUAL : TokenType::GREATER);
             case '"': case '\'': return string(c);
             case '[': return make_token(TokenType::LBRACKET); case ']': return make_token(TokenType::RBRACKET);
-            case '.': return make_token(TokenType::DOT); // Add DOT token
+            case '.': return make_token(TokenType::DOT);
         }
         return make_token(TokenType::UNKNOWN, PyRiteMessages::PARSE_ERROR_UNEXPECTED_CHAR);
     }
@@ -565,14 +621,19 @@ struct LiteralNode : AstNode { ValuePtr value; LiteralNode(int l, ValuePtr v) : 
 struct ListLiteralNode : AstNode { std::vector<AstNodePtr> elements; ListLiteralNode(int l, std::vector<AstNodePtr> e) : AstNode(l), elements(e) {} ValuePtr accept(Interpreter& visitor) override; };
 struct VariableNode : AstNode { std::string name; VariableNode(int l, std::string n) : AstNode(l), name(n) {} ValuePtr accept(Interpreter& visitor) override; };
 struct BinaryOpNode : AstNode { AstNodePtr left; Token op; AstNodePtr right; BinaryOpNode(int l, AstNodePtr lt, Token o, AstNodePtr rt) : AstNode(l), left(lt), op(o), right(rt) {} ValuePtr accept(Interpreter& visitor) override; };
+struct TypeConversionNode : AstNode { AstNodePtr expression; Token type_keyword; TypeConversionNode(int l, AstNodePtr e, Token tk) : AstNode(l), expression(e), type_keyword(tk) {} ValuePtr accept(Interpreter& visitor) override; };
 struct AssignmentNode : AstNode { AstNodePtr target; AstNodePtr value; AssignmentNode(int l, AstNodePtr t, AstNodePtr v) : AstNode(l), target(t), value(v) {} ValuePtr accept(Interpreter& visitor) override; };
 struct VarDeclarationNode : AstNode { Token keyword; std::string name; AstNodePtr initializer; VarDeclarationNode(int l, Token kw, std::string n, AstNodePtr init) : AstNode(l), keyword(kw), name(n), initializer(init) {} ValuePtr accept(Interpreter& visitor) override; };
+struct UsingNode : AstNode { std::string original_name; std::string alias_name; UsingNode(int l, std::string o, std::string a) : AstNode(l), original_name(o), alias_name(a) {} ValuePtr accept(Interpreter& visitor) override; };
 struct IfStatementNode : AstNode { AstNodePtr condition; std::vector<AstNodePtr> then_branch, else_branch; IfStatementNode(int l, AstNodePtr c, std::vector<AstNodePtr> t, std::vector<AstNodePtr> e) : AstNode(l), condition(c), then_branch(t), else_branch(e) {} ValuePtr accept(Interpreter& visitor) override; };
 struct WhileStatementNode : AstNode { AstNodePtr condition; std::vector<AstNodePtr> do_branch, finally_branch; WhileStatementNode(int l, AstNodePtr c, std::vector<AstNodePtr> d, std::vector<AstNodePtr> f) : AstNode(l), condition(c), do_branch(d), finally_branch(f) {} ValuePtr accept(Interpreter& visitor) override; };
+struct RepeatForNode : AstNode { std::vector<AstNodePtr> body; AstNodePtr count_expr; RepeatForNode(int l, std::vector<AstNodePtr> b, AstNodePtr c) : AstNode(l), body(b), count_expr(c) {} ValuePtr accept(Interpreter& visitor) override; };
+struct RepeatUntilNode : AstNode { std::vector<AstNodePtr> body; AstNodePtr condition; RepeatUntilNode(int l, std::vector<AstNodePtr> b, AstNodePtr c) : AstNode(l), body(b), condition(c) {} ValuePtr accept(Interpreter& visitor) override; };
+struct BreakNode : AstNode { BreakNode(int l) : AstNode(l) {} ValuePtr accept(Interpreter& visitor) override; };
 struct AwaitStatementNode : AstNode { AstNodePtr condition; std::vector<AstNodePtr> then_branch; AwaitStatementNode(int l, AstNodePtr c, std::vector<AstNodePtr> t) : AstNode(l), condition(c), then_branch(t) {} ValuePtr accept(Interpreter& visitor) override; };
 struct SayNode : AstNode { AstNodePtr expression; SayNode(int l, AstNodePtr e) : AstNode(l), expression(e) {} ValuePtr accept(Interpreter& visitor) override; };
 struct InpNode : AstNode { AstNodePtr expression; InpNode(int l, AstNodePtr e) : AstNode(l), expression(e) {} ValuePtr accept(Interpreter& visitor) override; };
-struct FunctionDefNode : AstNode { std::string name; std::vector<ParameterDefinition> params; std::vector<AstNodePtr> body; FunctionDefNode(int l, std::string n, std::vector<ParameterDefinition> p, std::vector<AstNodePtr> b) : AstNode(l), name(n), params(p), body(b) {} ValuePtr accept(Interpreter& visitor) override; };
+struct FnDefNode : AstNode { std::string name; std::vector<ParameterDefinition> params; std::vector<AstNodePtr> body; FnDefNode(int l, std::string n, std::vector<ParameterDefinition> p, std::vector<AstNodePtr> b) : AstNode(l), name(n), params(p), body(b) {} ValuePtr accept(Interpreter& visitor) override; };
 struct CallNode : AstNode { AstNodePtr callee; std::vector<AstNodePtr> arguments; CallNode(int l, AstNodePtr c, std::vector<AstNodePtr> a) : AstNode(l), callee(c), arguments(a) {} ValuePtr accept(Interpreter& visitor) override; };
 struct SubscriptNode : AstNode { AstNodePtr object; AstNodePtr index; SubscriptNode(int l, AstNodePtr o, AstNodePtr i) : AstNode(l), object(o), index(i) {} ValuePtr accept(Interpreter& visitor) override; };
 struct ReturnNode : AstNode { AstNodePtr value; ReturnNode(int l, AstNodePtr v) : AstNode(l), value(v) {} ValuePtr accept(Interpreter& visitor) override; };
@@ -580,21 +641,21 @@ struct RaiseNode : AstNode { AstNodePtr expression; RaiseNode(int l, AstNodePtr 
 struct TryCatchNode : AstNode { std::vector<AstNodePtr> try_branch; std::string exception_var; std::vector<AstNodePtr> catch_branch; std::vector<AstNodePtr> finally_branch; TryCatchNode(int l, std::vector<AstNodePtr> t, std::string ev, std::vector<AstNodePtr> c, std::vector<AstNodePtr> f) : AstNode(l), try_branch(t), exception_var(ev), catch_branch(c), finally_branch(f) {} ValuePtr accept(Interpreter& visitor) override; };
 struct ClassDefNode : AstNode {
     std::string name;
-    std::vector<ParameterDefinition> fields; // Field definitions
-    std::vector<AstNodePtr> methods; // Method definitions (FunctionDefNode)
+    std::vector<ParameterDefinition> fields;
+    std::vector<AstNodePtr> methods;
     ClassDefNode(int l, const std::string& n, const std::vector<ParameterDefinition>& f, const std::vector<AstNodePtr>& m)
         : AstNode(l), name(n), fields(f), methods(m) {}
     ValuePtr accept(Interpreter& visitor) override;
 };
 struct GetNode : AstNode {
     AstNodePtr object;
-    std::string name; // property/method name
+    std::string name;
     GetNode(int l, AstNodePtr obj, const std::string& n) : AstNode(l), object(obj), name(n) {}
     ValuePtr accept(Interpreter& visitor) override;
 };
 struct SetNode : AstNode {
     AstNodePtr object;
-    std::string name; // property name
+    std::string name;
     AstNodePtr value;
     SetNode(int l, AstNodePtr obj, const std::string& n, AstNodePtr val) : AstNode(l), object(obj), name(n), value(val) {}
     ValuePtr accept(Interpreter& visitor) override;
@@ -629,10 +690,11 @@ private:
     Token current_token, previous_token; 
     bool had_error;
 
-    // Forward declaration for statement() method
     AstNodePtr statement() {
         if (match({TokenType::IF})) return if_statement();
         if (match({TokenType::WHILE})) return while_statement();
+        if (match({TokenType::REPEAT})) return repeat_statement();
+        if (match({TokenType::BREAK})) return break_statement();
         if (match({TokenType::AWAIT})) return await_statement();
         if (match({TokenType::SAY})) return say_statement();
         if (match({TokenType::RETURN})) return return_statement();
@@ -645,20 +707,19 @@ private:
     void consume(TokenType type, const std::string& msg) { if (current_token.type == type) { advance(); return; } throw std::runtime_error(msg); }
     bool check(TokenType type) { return current_token.type == type; }
     bool match(const std::vector<TokenType>& types) { for (TokenType type : types) { if (check(type)) { advance(); return true; } } return false; }
-    void synchronize() { advance(); while(current_token.type != TokenType::END_OF_FILE) { switch(current_token.type) { case TokenType::DEC: case TokenType::STR: case TokenType::IF: case TokenType::WHILE: case TokenType::DEF: case TokenType::INS: case TokenType::SAY: case TokenType::RETURN: case TokenType::TRY: return; default: advance(); } } }
+    void synchronize() { advance(); while(current_token.type != TokenType::END_OF_FILE) { switch(current_token.type) { case TokenType::DEC: case TokenType::STR: case TokenType::IF: case TokenType::WHILE: case TokenType::FN: case TokenType::INS: case TokenType::SAY: case TokenType::RETURN: case TokenType::TRY: return; default: advance(); } } }
     AstNodePtr declaration() { 
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_DECL << current_token.lexeme << ")..." << std::endl;
         if (match({TokenType::DEC, TokenType::STR, TokenType::BIN, TokenType::LIST})) return var_declaration(); 
-        if (match({TokenType::DEF})) return function_definition("function"); 
+        if (match({TokenType::FN})) return fn_definition("function"); 
         if (match({TokenType::INS})) return class_definition(); 
+        if (match({TokenType::USING})) return using_statement();
         return statement(); 
     }
-    // 4. Implement parse_parameter method
     ParameterDefinition parse_parameter() {
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_PARAM << std::endl;
         Token keyword = current_token;
         if (!match({TokenType::DEC, TokenType::STR, TokenType::BIN, TokenType::LIST, TokenType::ANY})) { 
-            // Also update the error message
             throw std::runtime_error(PyRiteMessages::PARSE_ERROR_EXPECT_PARAM_TYPE);
         }
         consume(TokenType::IDENTIFIER, PyRiteMessages::PARSE_ERROR_EXPECT_PARAM_NAME);
@@ -666,8 +727,6 @@ private:
         ValuePtr default_value = nullptr;
         if (match({TokenType::EQUAL})) {
             if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_DEFAULT_VAL_FOR << param_name << "'..." << std::endl;
-            // Evaluate default value expression. For simplicity, we'll only allow literals here.
-            // A more robust implementation would evaluate the expression in the global scope.
             if (check(TokenType::NUMBER)) {
                 advance();
                 default_value = std::make_shared<NumberValue>(BigNumber(previous_token.lexeme));
@@ -678,15 +737,12 @@ private:
                 advance();
                 default_value = std::make_shared<BinaryValue>(previous_token.lexeme);
             } else if (check(TokenType::NULL_LITERAL)) {
-                advance(); // consume 'nul' token
+                advance();
                 default_value = std::make_shared<NullValue>();
 			} else if (check(TokenType::LBRACKET)) {
-                // For list default, we need to parse a list literal.
-                // This is a bit tricky in a single pass, so for now, we'll just create an empty list as default.
-                // A more complete solution would parse the list literal properly.
-                advance(); // consume '['
+                advance();
                 if (check(TokenType::RBRACKET)) {
-                    advance(); // consume ']'
+                    advance();
                     default_value = std::make_shared<ListValue>(std::vector<ValuePtr>{});
                 } else {
                     throw std::runtime_error(PyRiteMessages::PARSE_ERROR_UNSUPPORTED_DEFAULT_LIST);
@@ -695,37 +751,35 @@ private:
                 throw std::runtime_error(PyRiteMessages::PARSE_ERROR_DEFAULT_VALUE_LITERAL);
             }
         }
-        // 5. Use the correct constructor to create ParameterDefinition
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSED_PARAM << param_name << (default_value ? PyRiteMessages::DEBUG_PARSER_WITH_DEFAULT : "") << std::endl;
         return ParameterDefinition(keyword.type, param_name, default_value);
     }
     AstNodePtr var_declaration() { 
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_VAR_DECL << std::endl;
         Token keyword = previous_token; consume(TokenType::IDENTIFIER, PyRiteMessages::PARSE_ERROR_EXPECT_VAR_NAME); std::string name = previous_token.lexeme; AstNodePtr initializer = nullptr; if (match({TokenType::EQUAL})) { initializer = expression(); } return std::make_shared<VarDeclarationNode>(keyword.line, keyword, name, initializer); }
-    AstNodePtr function_definition(const std::string& kind) {
+    AstNodePtr fn_definition(const std::string& kind) {
         if (DEBUG) std::cout << (kind == "function" ? PyRiteMessages::DEBUG_PARSER_PARSING_FUNC_DEF : PyRiteMessages::DEBUG_PARSER_PARSING_METHOD_DEF) << std::endl;
         int line = previous_token.line;
         consume(TokenType::IDENTIFIER, std::string("Expected ") + kind + " name.");
         std::string name = previous_token.lexeme;
         consume(TokenType::LPAREN, std::string("'('") + PyRiteMessages::PARSE_ERROR_EXPECT_LPAREN_AFTER_NAME);
-        std::vector<ParameterDefinition> params; // Use ParameterDefinition
+        std::vector<ParameterDefinition> params;
         if (!check(TokenType::RPAREN)) {
             do {
                 if (params.size() >= 255) throw std::runtime_error(PyRiteMessages::PARSE_ERROR_TOO_MANY_PARAMS);
-                params.push_back(parse_parameter()); // Call parse_parameter
+                params.push_back(parse_parameter());
             } while (match({TokenType::COMMA}));
         }
         consume(TokenType::RPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_RPAREN_AFTER_PARAMS);
         consume(TokenType::DO, PyRiteMessages::PARSE_ERROR_EXPECT_DO_BEFORE_BODY);
         std::vector<AstNodePtr> body;
-        while (!check(TokenType::ENDDEF) && !check(TokenType::END_OF_FILE)) {
+        while (!check(TokenType::ENDFN) && !check(TokenType::END_OF_FILE)) {
             body.push_back(declaration());
         }
-        consume(TokenType::ENDDEF, PyRiteMessages::PARSE_ERROR_EXPECT_ENDDEF_AFTER_BODY);
+        consume(TokenType::ENDFN, "Expect 'endfn' after function body.");
         if (DEBUG) std::cout << (kind == "function" ? PyRiteMessages::DEBUG_PARSER_DONE_PARSING_FUNC : PyRiteMessages::DEBUG_PARSER_DONE_PARSING_METHOD) << name << "'." << std::endl;
-        return std::make_shared<FunctionDefNode>(line, name, params, body);
+        return std::make_shared<FnDefNode>(line, name, params, body);
     }
-    // --- New Parser method for Class Definition ---
     AstNodePtr class_definition() {
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_CLASS_DEF << std::endl;
         int line = previous_token.line;
@@ -736,7 +790,7 @@ private:
             if (!check(TokenType::RPAREN)) {
                 do {
                     if (fields.size() >= 255) throw std::runtime_error(PyRiteMessages::PARSE_ERROR_TOO_MANY_FIELDS);
-                    fields.push_back(parse_parameter()); // Reuse parse_parameter for fields
+                    fields.push_back(parse_parameter());
                 } while (match({TokenType::COMMA}));
             }
             consume(TokenType::RPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_RPAREN_AFTER_FIELDS);
@@ -744,8 +798,8 @@ private:
         consume(TokenType::CONTAINS, PyRiteMessages::PARSE_ERROR_EXPECT_CONTAINS_AFTER_CLASS_DEF);
         std::vector<AstNodePtr> methods;
         while (!check(TokenType::ENDINS) && !check(TokenType::END_OF_FILE)) {
-            if (match({TokenType::DEF})) {
-                methods.push_back(function_definition("method")); // Reuse function_definition for methods
+            if (match({TokenType::FN})) {
+                methods.push_back(fn_definition("method"));
             } else {
                  throw std::runtime_error(PyRiteMessages::PARSE_ERROR_ONLY_METHODS_IN_CLASS);
             }
@@ -754,14 +808,44 @@ private:
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_DONE_PARSING_CLASS << name << "'." << std::endl;
         return std::make_shared<ClassDefNode>(line, name, fields, methods);
     }
-    // --- End of new Parser method ---
+    AstNodePtr using_statement() {
+        int line = previous_token.line;
+        consume(TokenType::IDENTIFIER, "Expect variable name after 'using'.");
+        std::string original = previous_token.lexeme;
+        consume(TokenType::AS, "Expect 'as' after variable name in 'using' statement.");
+        consume(TokenType::IDENTIFIER, "Expect alias name after 'as'.");
+        std::string alias = previous_token.lexeme;
+        return std::make_shared<UsingNode>(line, original, alias);
+    }
     AstNodePtr if_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::THEN, PyRiteMessages::PARSE_ERROR_EXPECT_THEN_AFTER_IF); std::vector<AstNodePtr> then_branch; while(!check(TokenType::ELSE) && !check(TokenType::ENDIF) && !check(TokenType::END_OF_FILE)) { then_branch.push_back(declaration()); } std::vector<AstNodePtr> else_branch; if (match({TokenType::ELSE})) { while(!check(TokenType::ENDIF) && !check(TokenType::END_OF_FILE)) { else_branch.push_back(declaration()); } } consume(TokenType::ENDIF, PyRiteMessages::PARSE_ERROR_EXPECT_ENDIF_AFTER_IF); return std::make_shared<IfStatementNode>(line, condition, then_branch, else_branch); }
     AstNodePtr while_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::DO, PyRiteMessages::PARSE_ERROR_EXPECT_DO_AFTER_WHILE); std::vector<AstNodePtr> do_branch; while(!check(TokenType::FINALLY) && !check(TokenType::ENDWHILE) && !check(TokenType::END_OF_FILE)) { do_branch.push_back(declaration()); } std::vector<AstNodePtr> finally_branch; if (match({TokenType::FINALLY})) { while(!check(TokenType::ENDWHILE) && !check(TokenType::END_OF_FILE)) { finally_branch.push_back(declaration()); } } consume(TokenType::ENDWHILE, PyRiteMessages::PARSE_ERROR_EXPECT_ENDWHILE_AFTER_WHILE); return std::make_shared<WhileStatementNode>(line, condition, do_branch, finally_branch); }
+    AstNodePtr repeat_statement() {
+        int line = previous_token.line;
+        std::vector<AstNodePtr> body;
+        while(!check(TokenType::FOR) && !check(TokenType::UNTIL) && !check(TokenType::ENDREP) && !check(TokenType::END_OF_FILE)) {
+             body.push_back(declaration());
+        }
+        if (match({TokenType::FOR})) {
+             AstNodePtr count_expr = expression();
+             consume(TokenType::TIMES, "Expect 'times' after 'for' loop count.");
+             return std::make_shared<RepeatForNode>(line, body, count_expr);
+        } else if (match({TokenType::UNTIL})) {
+             AstNodePtr condition = expression();
+             return std::make_shared<RepeatUntilNode>(line, body, condition);
+        } else if (match({TokenType::ENDREP})) {
+             return std::make_shared<RepeatUntilNode>(line, body, nullptr);
+        } else {
+             throw std::runtime_error("Unterminated 'repeat' block. Expect 'for', 'until', or 'endrep'.");
+        }
+    }
+    AstNodePtr break_statement() {
+        return std::make_shared<BreakNode>(previous_token.line);
+    }
     AstNodePtr await_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::THEN, PyRiteMessages::PARSE_ERROR_EXPECT_THEN_AFTER_AWAIT); std::vector<AstNodePtr> then_branch; while (!check(TokenType::ENDAWAIT) && !check(TokenType::END_OF_FILE)) { then_branch.push_back(declaration()); } consume(TokenType::ENDAWAIT, PyRiteMessages::PARSE_ERROR_EXPECT_ENDAWAIT_AFTER_AWAIT); return std::make_shared<AwaitStatementNode>(line, condition, then_branch); }
     AstNodePtr try_statement() { int line = previous_token.line; std::vector<AstNodePtr> try_branch; while (!check(TokenType::CATCH) && !check(TokenType::END_OF_FILE)) { try_branch.push_back(declaration()); } consume(TokenType::CATCH, PyRiteMessages::PARSE_ERROR_EXPECT_CATCH_AFTER_TRY); consume(TokenType::IDENTIFIER, PyRiteMessages::PARSE_ERROR_EXPECT_VAR_AFTER_CATCH); std::string exception_var = previous_token.lexeme; std::vector<AstNodePtr> catch_branch; while (!check(TokenType::FINALLY) && !check(TokenType::ENDTRY) && !check(TokenType::END_OF_FILE)) { catch_branch.push_back(declaration()); } std::vector<AstNodePtr> finally_branch; if (match({TokenType::FINALLY})) { while (!check(TokenType::ENDTRY) && !check(TokenType::END_OF_FILE)) { finally_branch.push_back(declaration()); } } consume(TokenType::ENDTRY, PyRiteMessages::PARSE_ERROR_EXPECT_ENDTRY_AFTER_TRY); return std::make_shared<TryCatchNode>(line, try_branch, exception_var, catch_branch, finally_branch); }
     AstNodePtr raise_statement() { int line = previous_token.line; AstNodePtr expr = expression(); return std::make_shared<RaiseNode>(line, expr); }
     AstNodePtr say_statement() { int line = previous_token.line; consume(TokenType::LPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_LPAREN_AFTER_SAY); AstNodePtr value = expression(); consume(TokenType::RPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_RPAREN_AFTER_EXPR); return std::make_shared<SayNode>(line, value); }
-    AstNodePtr return_statement() { int line = previous_token.line; ValuePtr v = std::make_shared<NullValue>(); AstNodePtr val_node = std::make_shared<LiteralNode>(line, v); if (!check(TokenType::ENDDEF) && !check(TokenType::ENDIF) && !check(TokenType::ENDWHILE) && !check(TokenType::ENDTRY)) { val_node = expression(); } return std::make_shared<ReturnNode>(line, val_node); }
+    AstNodePtr return_statement() { int line = previous_token.line; ValuePtr v = std::make_shared<NullValue>(); AstNodePtr val_node = std::make_shared<LiteralNode>(line, v); if (!check(TokenType::ENDFN) && !check(TokenType::ENDIF) && !check(TokenType::ENDWHILE) && !check(TokenType::ENDTRY)) { val_node = expression(); } return std::make_shared<ReturnNode>(line, val_node); }
     AstNodePtr expression_statement() { 
         int line = current_token.line;
         AstNodePtr expr = expression();
@@ -773,9 +857,8 @@ private:
         if (match({TokenType::EQUAL})) {
             if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_ASSIGNMENT << std::endl;
             int line = previous_token.line;
-            AstNodePtr value = assignment(); // Right-associative
-            // Check if the left-hand side is a valid assignment target
-            if (dynamic_cast<VariableNode*>(expr.get()) || dynamic_cast<SubscriptNode*>(expr.get()) || dynamic_cast<GetNode*>(expr.get())) { // Add GetNode check
+            AstNodePtr value = assignment();
+            if (dynamic_cast<VariableNode*>(expr.get()) || dynamic_cast<SubscriptNode*>(expr.get()) || dynamic_cast<GetNode*>(expr.get())) {
                 return std::make_shared<AssignmentNode>(line, expr, value);
             }
             throw std::runtime_error(PyRiteMessages::RUNTIME_ERROR_INVALID_ASSIGNMENT_TARGET);
@@ -786,7 +869,20 @@ private:
     AstNodePtr comparison() { AstNodePtr expr = term(); while (match({TokenType::GREATER, TokenType::GREATER_EQUAL, TokenType::LESS, TokenType::LESS_EQUAL})) { Token op = previous_token; AstNodePtr right = term(); expr = std::make_shared<BinaryOpNode>(op.line, expr, op, right); } return expr; }
     AstNodePtr term() { AstNodePtr expr = factor(); while (match({TokenType::PLUS, TokenType::MINUS})) { Token op = previous_token; AstNodePtr right = factor(); expr = std::make_shared<BinaryOpNode>(op.line, expr, op, right); } return expr; }
     AstNodePtr factor() { AstNodePtr expr = power(); while (match({TokenType::STAR, TokenType::SLASH})) { Token op = previous_token; AstNodePtr right = power(); expr = std::make_shared<BinaryOpNode>(op.line, expr, op, right); } return expr; }
-    AstNodePtr power() { AstNodePtr expr = unary(); while(match({TokenType::CARET})) { Token op = previous_token; AstNodePtr right = unary(); expr = std::make_shared<BinaryOpNode>(op.line, expr, op, right); } return expr; }
+    AstNodePtr power() { AstNodePtr expr = typecast(); while(match({TokenType::CARET})) { Token op = previous_token; AstNodePtr right = typecast(); expr = std::make_shared<BinaryOpNode>(op.line, expr, op, right); } return expr; }
+    AstNodePtr typecast() {
+        AstNodePtr expr = unary();
+        if (match({TokenType::AS})) {
+            int line = previous_token.line;
+            if (match({TokenType::DEC, TokenType::STR, TokenType::BIN})) {
+                Token type_keyword = previous_token;
+                return std::make_shared<TypeConversionNode>(line, expr, type_keyword);
+            } else {
+                throw std::runtime_error("Expect 'dec', 'str', or 'bin' after 'as' for type conversion.");
+            }
+        }
+        return expr;
+    }
     AstNodePtr unary() { if (match({TokenType::MINUS})) { Token op = previous_token; AstNodePtr right = unary(); AstNodePtr left = std::make_shared<LiteralNode>(op.line, std::make_shared<NumberValue>(0)); return std::make_shared<BinaryOpNode>(op.line, left, op, right); } return call(); }
     AstNodePtr call() {
         AstNodePtr expr = primary();
@@ -797,11 +893,11 @@ private:
             } else if (match({TokenType::LBRACKET})) {
                 if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_SUBSCRIPT << std::endl;
                 expr = finish_subscript(expr);
-            } else if (match({TokenType::DOT})) { // Handle property/method access
+            } else if (match({TokenType::DOT})) {
                 if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_GET << std::endl;
                 consume(TokenType::IDENTIFIER, PyRiteMessages::PARSE_ERROR_EXPECT_PROP_NAME);
                 std::string name = previous_token.lexeme;
-                expr = std::make_shared<GetNode>(previous_token.line, expr, name); // Create GetNode
+                expr = std::make_shared<GetNode>(previous_token.line, expr, name);
             } else {
                 break;
             }
@@ -825,7 +921,14 @@ private:
             consume(TokenType::LPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_LPAREN_AFTER_ASK);
             AstNodePtr prompt = expression(); 
             consume(TokenType::RPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_RPAREN_AFTER_PROMPT);
-            return std::make_shared<InpNode>(line, prompt); 
+            auto ask_node = std::make_shared<InpNode>(line, prompt);
+            if (match({TokenType::AS})) {
+                consume(TokenType::IDENTIFIER, "Expect variable name for assignment after 'as'.");
+                std::string var_name = previous_token.lexeme;
+                auto var_node = std::make_shared<VariableNode>(previous_token.line, var_name);
+                return std::make_shared<AssignmentNode>(line, var_node, ask_node);
+            }
+            return ask_node;
         } 
         if (match({TokenType::LPAREN})) { 
             AstNodePtr expr = expression(); 
@@ -838,7 +941,7 @@ private:
 // --- Interpreter ---
 class Interpreter {
 public:
-    Interpreter(); // Constructor defined after helper methods
+    Interpreter();
     std::string base_path;
     void interpret(const std::vector<AstNodePtr>& statements) {
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_INTERP_START << statements.size() << PyRiteMessages::DEBUG_INTERP_STATEMENTS << std::endl;
@@ -879,7 +982,6 @@ public:
         this->environment = previous;
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_INTERP_BLOCK_EXIT << previous.get() << std::endl;
     }
-    // Timeout check related
     void check_timeout(int line) {
         if (time_limit_ms > 0) {
             auto now = std::chrono::high_resolution_clock::now();
@@ -893,7 +995,7 @@ public:
     long long time_limit_ms;
     struct CallInfo { std::string function_name; int call_site_line; }; std::vector<CallInfo> call_stack;
     std::shared_ptr<Environment> globals; std::shared_ptr<Environment> environment;
-    std::string repl_buffer; // For REPL buffer compilation
+    std::string repl_buffer;
 private:
     void define_native_functions();
     void print_stack_trace() { if (call_stack.empty()) return; std::cerr << PyRiteMessages::RUNTIME_ERROR_STACK_TRACE_HEADER << std::endl; for (auto it = call_stack.rbegin(); it != call_stack.rend(); ++it) { std::cerr << PyRiteMessages::RUNTIME_ERROR_STACK_TRACE_ENTRY_PREFIX << it->function_name << PyRiteMessages::RUNTIME_ERROR_STACK_TRACE_ENTRY_SUFFIX << it->call_site_line << ")" << std::endl; } call_stack.clear(); }
@@ -902,7 +1004,7 @@ private:
 bool is_type_compatible(TokenType expected_type, const ValuePtr& value) {
     switch (expected_type) {
         case TokenType::ANY:
-            return true;  // ANY type accepts any value
+            return true;
         case TokenType::DEC:
             return dynamic_cast<NumberValue*>(value.get()) != nullptr;
         case TokenType::STR:
@@ -912,7 +1014,7 @@ bool is_type_compatible(TokenType expected_type, const ValuePtr& value) {
         case TokenType::LIST:
             return dynamic_cast<ListValue*>(value.get()) != nullptr;
         default:
-            return true; // Should not happen for parameter types
+            return true;
     }
 }
 std::string token_type_to_string(TokenType type) {
@@ -957,7 +1059,6 @@ ValuePtr AssignmentNode::accept(Interpreter& visitor) {
         }
     } else if (auto get_node = dynamic_cast<GetNode*>(target.get())) {
          if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_ASSIGN_TARGET_GET << get_node->name << "'." << std::endl;
-         // This handles `instance.property = value`
          try {
              auto object = visitor.evaluate(get_node->object);
              if (auto instance = std::dynamic_pointer_cast<Instance>(object)) {
@@ -1001,6 +1102,15 @@ ValuePtr VarDeclarationNode::accept(Interpreter& visitor) {
     visitor.environment->define(name, val);
     return std::make_shared<NullValue>();
 }
+ValuePtr UsingNode::accept(Interpreter& visitor) {
+    try {
+        ValuePtr val = visitor.environment->get(original_name);
+        visitor.environment->define(alias_name, val);
+    } catch (RuntimeError& e) {
+        throw RuntimeError(line, e.what());
+    }
+    return std::make_shared<NullValue>();
+}
 ValuePtr BinaryOpNode::accept(Interpreter& visitor) { 
     if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_BINARY_OP << op.lexeme << ")." << std::endl;
     auto left_val = visitor.evaluate(left); 
@@ -1022,6 +1132,24 @@ ValuePtr BinaryOpNode::accept(Interpreter& visitor) {
     } catch(const std::runtime_error& e) { throw RuntimeError(op.line, e.what()); }
     return std::make_shared<NullValue>();
 }
+ValuePtr TypeConversionNode::accept(Interpreter& visitor) {
+    ValuePtr val = visitor.evaluate(expression);
+    switch (type_keyword.type) {
+        case TokenType::DEC:
+            if (dynamic_cast<NumberValue*>(val.get())) return val;
+            if (auto s_val = dynamic_cast<StringValue*>(val.get())) { try { return std::make_shared<NumberValue>(BigNumber(s_val->value)); } catch (const std::invalid_argument&) { throw RuntimeError(line, std::string("Cannot convert string '") + s_val->value + "' to a number."); } }
+            if (auto b_val = dynamic_cast<BinaryValue*>(val.get())) { return std::make_shared<NumberValue>(b_val->toBigNumber()); }
+            throw RuntimeError(line, "Unsupported conversion to 'dec'.");
+        case TokenType::STR:
+            return std::make_shared<StringValue>(val->toString());
+        case TokenType::BIN:
+            if (dynamic_cast<BinaryValue*>(val.get())) return val;
+            if (auto s_val = dynamic_cast<StringValue*>(val.get())) { try { return std::make_shared<BinaryValue>(s_val->value); } catch (...) { throw RuntimeError(line, std::string("Cannot convert string '") + s_val->value + "' to binary. Expected '0x...' format."); } }
+            throw RuntimeError(line, "Unsupported conversion to 'bin'.");
+        default:
+            throw RuntimeError(line, "Invalid type for 'as' conversion.");
+    }
+}
 ValuePtr SubscriptNode::accept(Interpreter& visitor) {
     if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_SUBSCRIPT_NODE << std::endl;
     try {
@@ -1033,29 +1161,23 @@ ValuePtr SubscriptNode::accept(Interpreter& visitor) {
         throw RuntimeError(line, e.what());
     }
 }
-// --- New AST Node accept methods for Classes ---
 ValuePtr ClassDefNode::accept(Interpreter& visitor) {
     if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CLASS_DEF_NODE << name << "'." << std::endl;
-    // Parse methods from AST nodes into Function objects
     std::map<std::string, std::shared_ptr<Function>> methods_map;
     for (const auto& method_ast : methods) {
-        // The parser ensures these are FunctionDefNode
-        auto func_def_node = std::dynamic_pointer_cast<FunctionDefNode>(method_ast);
+        auto func_def_node = std::dynamic_pointer_cast<FnDefNode>(method_ast);
         if (func_def_node) {
             if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CLASS_DEF_PROCESSING_METHOD << func_def_node->name << "'." << std::endl;
-            // Create the Function object for the method
             auto method_func = std::make_shared<Function>(
                 func_def_node->name,
                 func_def_node->params,
                 func_def_node->body,
-                visitor.environment // Capture the environment where the class is defined
+                visitor.environment
             );
             methods_map[func_def_node->name] = method_func;
         }
     }
-    // Create the Class object
     auto klass = std::make_shared<Class>(name, fields, methods_map, visitor.environment);
-    // Define the class in the current environment
     visitor.environment->define(name, klass);
     return std::make_shared<NullValue>();
 }
@@ -1065,7 +1187,6 @@ ValuePtr GetNode::accept(Interpreter& visitor) {
     if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_GET_NODE_OBJECT_EVAL << object_val->repr() << std::endl;
     if (auto instance = std::dynamic_pointer_cast<Instance>(object_val)) {
         try {
-            // Call the simplified get() method without the interpreter reference
             return instance->get(name);
         } catch (const std::runtime_error& e) {
             throw RuntimeError(line, e.what());
@@ -1074,11 +1195,8 @@ ValuePtr GetNode::accept(Interpreter& visitor) {
     throw RuntimeError(line, std::string(PyRiteMessages::RUNTIME_ERROR_ONLY_INSTANCES_HAVE_PROPERTIES_PREFIX) + name + PyRiteMessages::RUNTIME_ERROR_ONLY_INSTANCES_HAVE_PROPERTIES_SUFFIX);
 }
 ValuePtr SetNode::accept(Interpreter& visitor) {
-    // This node is primarily handled in AssignmentNode now.
-    // But if needed directly, it would evaluate object, value, and call instance->set().
     throw RuntimeError(line, PyRiteMessages::RUNTIME_ERROR_SET_NODE_HANDLED_BY_ASSIGNMENT);
 }
-// --- End of new AST Node accept methods ---
 ValuePtr IfStatementNode::accept(Interpreter& visitor) { 
     visitor.check_timeout(line);
     if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_IF_NODE << std::endl;
@@ -1102,7 +1220,11 @@ ValuePtr WhileStatementNode::accept(Interpreter& visitor) {
         if (!condition_val->isTruthy()) break;
 
         visitor.check_timeout(line); 
-        visitor.execute_block(do_branch, std::make_shared<Environment>(visitor.environment)); 
+        try {
+            visitor.execute_block(do_branch, std::make_shared<Environment>(visitor.environment)); 
+        } catch (const BreakException&) {
+            break;
+        }
     } 
     if (!finally_branch.empty()) {
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_WHILE_FINALLY << std::endl;
@@ -1110,11 +1232,54 @@ ValuePtr WhileStatementNode::accept(Interpreter& visitor) {
     } 
     return std::make_shared<NullValue>(); 
 }
+ValuePtr RepeatForNode::accept(Interpreter& visitor) {
+    ValuePtr count_val = visitor.evaluate(count_expr);
+    auto num_val = dynamic_cast<NumberValue*>(count_val.get());
+    if (!num_val) {
+        throw RuntimeError(line, "Loop count for 'repeat...for' must be a number.");
+    }
+    long long count = 0;
+    try {
+        count = num_val->value.toLongLong();
+    } catch (...) {
+        throw RuntimeError(line, "Loop count for 'repeat...for' is too large.");
+    }
+
+    for (long long i = 0; i < count; ++i) {
+        visitor.check_timeout(line);
+        try {
+            visitor.execute_block(body, std::make_shared<Environment>(visitor.environment));
+        } catch (const BreakException&) {
+            break;
+        }
+    }
+    return std::make_shared<NullValue>();
+}
+ValuePtr RepeatUntilNode::accept(Interpreter& visitor) {
+    do {
+        visitor.check_timeout(line);
+        try {
+            visitor.execute_block(body, std::make_shared<Environment>(visitor.environment));
+        } catch (const BreakException&) {
+            break;
+        }
+        if (condition) {
+            ValuePtr condition_val = visitor.evaluate(condition);
+            if (condition_val->isTruthy()) {
+                break;
+            }
+        }
+    } while (true);
+    return std::make_shared<NullValue>();
+}
+ValuePtr BreakNode::accept(Interpreter& visitor) {
+    throw BreakException();
+}
 ValuePtr AwaitStatementNode::accept(Interpreter& visitor) {
     if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_AWAIT_NODE << std::endl;
     while(!visitor.evaluate(condition)->isTruthy()) {
         visitor.check_timeout(line);
-        std::this_thread::sleep_for(std::chrono::milliseconds(20)); // Prevent busy-waiting
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_AWAIT_SATISFIED << std::endl;
     visitor.execute_block(then_branch, std::make_shared<Environment>(visitor.environment));
@@ -1128,7 +1293,7 @@ ValuePtr SayNode::accept(Interpreter& visitor) {
     return std::make_shared<NullValue>(); 
 }
 ValuePtr InpNode::accept(Interpreter& visitor) { auto prompt = visitor.evaluate(expression); std::cout << prompt->toString(); std::string input; std::getline(std::cin, input); return std::make_shared<StringValue>(input); }
-ValuePtr FunctionDefNode::accept(Interpreter& visitor) {
+ValuePtr FnDefNode::accept(Interpreter& visitor) {
     if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_FUNC_DEF_NODE << name << "'." << std::endl;
     auto function = std::make_shared<Function>(name, params, body, visitor.environment); 
     visitor.environment->define(name, std::make_shared<FunctionValue>(function)); 
@@ -1187,7 +1352,6 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
         arg_values.push_back(visitor.evaluate(arg_expr)); 
     }
 
-    // 1. Handle native functions
     if (auto native_fn = dynamic_cast<NativeFnValue*>(callee_val.get())) {
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_NATIVE << native_fn->name << "'." << std::endl;
         visitor.call_stack.push_back({native_fn->name, line});
@@ -1195,23 +1359,20 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
             ValuePtr result = native_fn->call(arg_values);
             visitor.call_stack.pop_back();
             return result;
-        } catch(const std::exception& e) { // Catch more generic exception types
+        } catch(const std::exception& e) {
             visitor.call_stack.pop_back();
             throw RuntimeError(line, e.what());
         }
     }
 
-    // 2. Handle bound instance methods
     if (auto bound_method = dynamic_cast<BoundMethodValue*>(callee_val.get())) {
         auto function = bound_method->method;
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_BOUND_METHOD << bound_method->instance->klass->name << "." << function->name << PyRiteMessages::DEBUG_EXEC_CALL_NODE_ON_INSTANCE << bound_method->instance->repr() << "." << std::endl;
         auto call_env = std::make_shared<Environment>(function->closure);
         
-        // Crucial step: define 'this' in the method environment
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_DEFINE_THIS << std::endl;
         call_env->define("this", bound_method->instance);
 
-        // --- Argument binding and type checking ---
         const auto& param_defs = function->params;
         size_t num_provided_args = arg_values.size();
         size_t num_required_params = 0;
@@ -1253,7 +1414,6 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
             }
             call_env->define(param_defs[i].name, current_arg_value);
         }
-        // --- End of argument binding ---
 
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_PUSH_STACK << function->name << PyRiteMessages::DEBUG_EXEC_CALL_NODE_TO_STACK << std::endl;
         visitor.call_stack.push_back({function->name, line});
@@ -1268,13 +1428,11 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
         return return_val;
     }
 
-    // 3. Handle regular functions
     if (auto func_val = dynamic_cast<FunctionValue*>(callee_val.get())) {
         auto function = func_val->value;
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_USER << function->name << "'." << std::endl;
         auto call_env = std::make_shared<Environment>(function->closure);
 
-        // --- Argument binding and type checking (same logic as methods, but no 'this') ---
         const auto& param_defs = function->params;
         size_t num_provided_args = arg_values.size();
         size_t num_required_params = 0;
@@ -1316,7 +1474,6 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
             }
             call_env->define(param_defs[i].name, current_arg_value);
         }
-        // --- End of argument binding ---
 
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_CALL_NODE_PUSH_STACK << function->name << PyRiteMessages::DEBUG_EXEC_CALL_NODE_TO_STACK << std::endl;
         visitor.call_stack.push_back({function->name, line});
@@ -1382,7 +1539,7 @@ ValuePtr TryCatchNode::accept(Interpreter& visitor) {
 ValuePtr ExpressionStatementNode::accept(Interpreter& visitor) {
     if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_EXPR_STMT_NODE << std::endl;
     visitor.evaluate(expression);
-    return std::make_shared<NullValue>(); // Expression statements themselves do not return a value
+    return std::make_shared<NullValue>();
 }
 
 // --- Interpreter Constructor and Native Function Definitions ---
@@ -1395,12 +1552,10 @@ void Interpreter::define_native_functions() {
     #define GET_NUM(val, var_name) auto var_name = dynamic_cast<NumberValue*>(val.get()); if(!var_name) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_ARG_MUST_BE_NUMBER);
     #define GET_LIST(val, var_name) auto var_name = dynamic_cast<ListValue*>(val.get()); if(!var_name) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_ARG_MUST_BE_LIST);
     #define GET_STR(val, var_name) auto var_name = dynamic_cast<StringValue*>(val.get()); if(!var_name) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_ARG_MUST_BE_STRING);
-    // --- Exception Factory ---
     globals->define("Exception", std::make_shared<NativeFnValue>("Exception", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("Exception", 1);
         return std::make_shared<ExceptionValue>(args[0]);
     }));
-    // --- Math Functions ---
     globals->define("abs", std::make_shared<NativeFnValue>("abs", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("abs", 1);
         GET_NUM(args[0], num_val);
@@ -1416,11 +1571,10 @@ void Interpreter::define_native_functions() {
         }
         return std::make_shared<NumberValue>(BigNumber::root(num_val->value, n));
     }));
-    // --- List Functions ---
     globals->define("sort", std::make_shared<NativeFnValue>("sort", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("sort", 1);
         GET_LIST(args[0], list_val);
-        auto new_list = std::make_shared<ListValue>(list_val->elements); // Create a copy
+        auto new_list = std::make_shared<ListValue>(list_val->elements);
         std::sort(new_list->elements.begin(), new_list->elements.end(),
             [](const ValuePtr& a, const ValuePtr& b){
                 try { return a->isLessThan(*b); } catch(...) { return false; }
@@ -1443,7 +1597,6 @@ void Interpreter::define_native_functions() {
         }
         return std::make_shared<ListValue>(unique_elements);
     }));
-    // --- Aggregate Functions ---
     auto min_max_logic = [](const std::vector<ValuePtr>& args, bool is_max) {
         if (args.empty()) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_MIN_MAX_EMPTY);
         const std::vector<ValuePtr>* values_to_compare;
@@ -1509,7 +1662,6 @@ void Interpreter::define_native_functions() {
         REQUIRE_ARGS("log", 1); GET_NUM(args[0], x); if(x->value <= BigNumber(0)) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_LOG_POSITIVE);
         return std::make_shared<NumberValue>(BigNumber(std::to_string(log(x->value.toLongLong()))));
     }));
-    // Built-in function to create a new instance
     globals->define("new", std::make_shared<NativeFnValue>("new", [](const std::vector<ValuePtr>& args) -> ValuePtr {
          REQUIRE_ARGS("new", 1);
          auto class_val = std::dynamic_pointer_cast<Class>(args[0]);
@@ -1550,16 +1702,13 @@ void run_file(const char* filename, Interpreter& interpreter) {
     }
     interpreter.interpret(statements);
 }
-// Helper to check if a string starts with a prefix
 bool starts_with(const std::string& str, const std::string& prefix) {
     return str.size() >= prefix.size() && str.compare(0, prefix.size(), prefix) == 0;
 }
-// Helper to check if a string ends with a suffix
 bool ends_with(const std::string& str, const std::string& suffix) {
     return str.size() >= suffix.size() && str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-// run(...) compile(...) 
 std::map<std::string, std::string> parse_function_call(const std::string& call_str) {
     std::map<std::string, std::string> result;
     size_t open_paren = call_str.find('(');
@@ -1571,13 +1720,12 @@ std::map<std::string, std::string> parse_function_call(const std::string& call_s
     std::string args_str = call_str.substr(open_paren + 1, close_paren - open_paren - 1);
     args_str = trim(args_str);
     if (args_str.empty()) {
-        return result; // No arguments
+        return result;
     }
-    // Simple parser for key=value arguments, handling quoted strings
     size_t pos = 0;
     bool in_quotes = false;
     size_t arg_start = 0;
-    int paren_level = 0; // Handle nested parentheses if needed, though not strictly required here
+    int paren_level = 0;
     for (size_t i = 0; i <= args_str.length(); ++i) {
         char c = (i < args_str.length()) ? args_str[i] : ',';
         if (c == '"') {
@@ -1594,13 +1742,11 @@ std::map<std::string, std::string> parse_function_call(const std::string& call_s
                 if (eq_pos != std::string::npos) {
                     std::string key = trim(pair.substr(0, eq_pos));
                     std::string value = trim(pair.substr(eq_pos + 1));
-                    // Remove surrounding quotes if present
                     if (value.length() >= 2 && ((value.front() == '"' && value.back() == '"') || (value.front() == '\'' && value.back() == '\''))) {
                         value = value.substr(1, value.length() - 2);
                     }
                     result[key] = value;
                 } else {
-                    // Positional argument or error. We'll treat it as an error for named args.
                     result["error"] = PyRiteMessages::COMPILE_ARG_SYNTAX_ERROR;
                     return result;
                 }
@@ -1608,7 +1754,6 @@ std::map<std::string, std::string> parse_function_call(const std::string& call_s
             }
         }
     }
-    // Handle last argument if there's no trailing comma
     if (arg_start < args_str.length()) {
         std::string pair = args_str.substr(arg_start);
         pair = trim(pair);
@@ -1627,12 +1772,11 @@ std::map<std::string, std::string> parse_function_call(const std::string& call_s
     return result;
 }
 
-// -- Start!!  --
 void run_repl(Interpreter& interpreter) {
     interpreter.repl_buffer.clear();
     int line_number = 1;
     std::vector<std::string> env_stack = {"void"};
-    std::cout << PyRiteMessages::REPL_WELCOME_BANNER_1
+    std::cout << PyRiteMessages::REPL_WELCOME_BANNER_1 << VERSION
               << (DEBUG ? PyRiteMessages::REPL_WELCOME_BANNER_DEBUG : "") << PyRiteMessages::REPL_WELCOME_BANNER_2;
     std::cout << PyRiteMessages::REPL_WELCOME_BANNER_3;
     std::cout << std::endl;
@@ -1654,7 +1798,7 @@ void run_repl(Interpreter& interpreter) {
         if (trimmed_line == "halt()") break;
         if (trimmed_line == "about()") {
             std::cout << PyRiteMessages::ABOUT_HEADER_FOOTER
-                      << PyRiteMessages::ABOUT_LINE_1 << (DEBUG ? PyRiteMessages::REPL_WELCOME_BANNER_DEBUG : "")
+                      << PyRiteMessages::ABOUT_LINE_1 << VERSION << (DEBUG ? PyRiteMessages::REPL_WELCOME_BANNER_DEBUG : "")
                       << PyRiteMessages::ABOUT_LINE_2
                       << PyRiteMessages::ABOUT_LINE_3
                       << PyRiteMessages::ABOUT_HEADER_FOOTER;
@@ -1668,17 +1812,12 @@ void run_repl(Interpreter& interpreter) {
                 #else
                 const char PATH_SEPARATOR = '/';
                 #endif
-                // 1. Parse arguments
                 auto parsed_args = parse_function_call(trimmed_line);
                 if (parsed_args.count("error")) {
                     throw std::runtime_error(parsed_args.at("error"));
                 }
                 std::string src_path_arg = parsed_args.count("route") ? parsed_args.at("route") : "";
                 std::string extra_flags_arg = parsed_args.count("args") ? parsed_args.at("args") : "";
-                // Validate types for 'route' and 'args'
-                // In this context, they are strings passed from the REPL, so we just check if they exist.
-                // The parsing above ensures they are strings.
-                // 2. Determine source code, paths, and output names
                 std::string source_code;
                 std::string output_dir = interpreter.base_path;
                 std::string output_stem = "buffer";
@@ -1701,19 +1840,16 @@ void run_repl(Interpreter& interpreter) {
                     size_t last_dot = filename.find_last_of(".");
                     output_stem = (last_dot == std::string::npos) ? filename : filename.substr(0, last_dot);
                 }
-                // Step 4: Read template.cpp
                 std::string template_content;
                 std::string template_path = interpreter.base_path + PATH_SEPARATOR + "template.cpp";
                 std::ifstream template_file(template_path);
                 if (!template_file.is_open()) throw std::runtime_error(std::string(PyRiteMessages::COMPILE_CANNOT_OPEN_TEMPLATE) + template_path);
                 template_content.assign((std::istreambuf_iterator<char>(template_file)), std::istreambuf_iterator<char>());
                 template_file.close();
-                // Step 5: Replace placeholder in template
                 std::string placeholder = "WRITE_SRC_CODE_HERE";
                 size_t pos = template_content.find(placeholder);
                 if (pos == std::string::npos) throw std::runtime_error(PyRiteMessages::COMPILE_TEMPLATE_PLACEHOLDER_MISSING);
                 template_content.replace(pos, placeholder.length(), source_code);
-                // Step 6: Write temporary C++ file and VERIFY the write operation
                 std::string temp_cpp_path = output_dir + PATH_SEPARATOR + output_stem + ".cpp";
                 std::cout << PyRiteMessages::COMPILE_TRANSLATION_TARGET << temp_cpp_path << std::endl;
                 std::ofstream temp_cpp_file(temp_cpp_path);
@@ -1725,7 +1861,6 @@ void run_repl(Interpreter& interpreter) {
                 if (temp_cpp_file.fail()) {
                     throw std::runtime_error(std::string(PyRiteMessages::COMPILE_WRITE_TEMP_FAILED) + temp_cpp_path);
                 }
-                // Step 7: Construct and execute compile command
                 std::string output_exe_name = output_stem;
                 #ifdef _WIN32
                 output_exe_name += ".exe";
@@ -1739,9 +1874,7 @@ void run_repl(Interpreter& interpreter) {
                     << " -I. -std=c++11 -O2 " << extra_flags_arg;
                 std::cout << PyRiteMessages::COMPILE_COMMAND_INFO << cmd.str() << std::endl;
                 int result = system(("\"" + cmd.str() + "\"").c_str());
-                // Step 8: Clean up
                 remove(temp_cpp_path.c_str());
-                // Step 9: Report result
                 auto end_time_compile = std::chrono::high_resolution_clock::now();
                 double duration = std::chrono::duration_cast<std::chrono::duration<double>>(end_time_compile - start_time_compile).count();
                 if (result == 0) {
@@ -1769,7 +1902,6 @@ void run_repl(Interpreter& interpreter) {
             }
             bool tick_enabled = false;
             long long time_limit = 0;
-            // Parse run arguments
             auto parsed_args = parse_function_call(trimmed_line);
             if (parsed_args.count("error")) {
                 std::cerr << PyRiteMessages::RUNTIME_ERROR_PREFIX << parsed_args.at("error") << std::endl;
@@ -1787,11 +1919,9 @@ void run_repl(Interpreter& interpreter) {
             if (parsed_args.count("limit")) {
                 try {
                     std::string limit_str = parsed_args.at("limit");
-                    // Check if it's a valid number literal
                     if (!limit_str.empty() && std::all_of(limit_str.begin(), limit_str.end(), [](char c){ return std::isdigit(c) || c == '-'; })) {
                         time_limit = std::stoll(limit_str);
                     } else {
-                        // It might be an expression or variable. For simplicity in REPL, we require a literal number.
                          std::cerr << PyRiteMessages::REPL_LIMIT_ARG_ERROR_LITERAL << std::endl;
                          continue;
                     }
@@ -1822,20 +1952,22 @@ void run_repl(Interpreter& interpreter) {
         std::string first_word;
         size_t word_end = trimmed_line.find_first_of(" \t\n\r(");
         first_word = (word_end == std::string::npos) ? trimmed_line : trimmed_line.substr(0, word_end);
-        if (first_word == "if" || first_word == "while" || first_word == "def" || first_word == "await" || first_word == "try" || first_word == "ins") {
+        if (first_word == "if" || first_word == "while" || first_word == "fn" || first_word == "await" || first_word == "try" || first_word == "ins" || first_word == "repeat") {
             env_stack.push_back(first_word);
         } else if (first_word == "endif") {
             if (env_stack.size() > 1 && env_stack.back() == "if") env_stack.pop_back();
         } else if (first_word == "endwhile") {
             if (env_stack.size() > 1 && env_stack.back() == "while") env_stack.pop_back();
-        } else if (first_word == "enddef") {
-            if (env_stack.size() > 1 && env_stack.back() == "def") env_stack.pop_back();
+        } else if (first_word == "endfn") {
+            if (env_stack.size() > 1 && env_stack.back() == "fn") env_stack.pop_back();
         } else if (first_word == "endawait") {
              if (env_stack.size() > 1 && env_stack.back() == "await") env_stack.pop_back();
         } else if (first_word == "endtry") {
              if (env_stack.size() > 1 && env_stack.back() == "try") env_stack.pop_back();
         } else if (first_word == "endins") {
              if (env_stack.size() > 1 && env_stack.back() == "ins") env_stack.pop_back();
+        } else if (first_word == "endrep" || starts_with(first_word, "until") || starts_with(trimmed_line, "for")) {
+             if (env_stack.size() > 1 && env_stack.back() == "repeat") env_stack.pop_back();
         }
         if (!trimmed_line.empty() && trimmed_line.front() == '$') {
             std::string code_to_run;
@@ -1863,9 +1995,10 @@ void run_repl(Interpreter& interpreter) {
     std::cout << PyRiteMessages::REPL_HALTED << std::endl;
 }
 
-// -- main entrance -- 
 int main(int argc, char* argv[]) {
-    Interpreter interpreter;
+	std::ios_base::sync_with_stdio(false);
+    
+	Interpreter interpreter;
     std::string executable_path = argv[0];
     size_t last_slash_pos = executable_path.find_last_of("/\\");
     std::string executable_dir = ".";

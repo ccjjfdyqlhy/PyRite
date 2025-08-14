@@ -256,7 +256,7 @@ namespace PyRiteMessages {
     constexpr const char* DEBUG_INSTANCE_TYPE_CHECK_OK = "  型チェックに合格しました。フィールド値を設定中。";
 
     // --- REPL と Main ---
-    constexpr const char* REPL_WELCOME_BANNER_1 = "PyRite インタプリタ 0.19.0 (tags/v0.19.0, compilers/TDM-GCC 4.9.2 64-bit Release)";
+    constexpr const char* REPL_WELCOME_BANNER_1 = "PyRite インタプリタ ";
     constexpr const char* REPL_WELCOME_BANNER_DEBUG = " [デバッグ]";
     constexpr const char* REPL_WELCOME_BANNER_2 = ".\n";
     constexpr const char* REPL_WELCOME_BANNER_3 = "'run()' でバッファされたコードを実行、'compile()' でコンパイル、'halt()' で終了、'about()' でバージョン情報を表示します。\n";
@@ -268,7 +268,7 @@ namespace PyRiteMessages {
     constexpr const char* REPL_EXECUTION_TIME_PREFIX = "コード実行時間: ";
     constexpr const char* REPL_EXECUTION_TIME_SUFFIX = "ms。";
     constexpr const char* ABOUT_HEADER_FOOTER = "----------------------------------------\n";
-    constexpr const char* ABOUT_LINE_1 = " PyRite 言語インタプリタ v0.19.0";
+    constexpr const char* ABOUT_LINE_1 = " PyRite 言語インタプリタ ";
     constexpr const char* ABOUT_LINE_2 = "\n (c) 2024-2025. DarkstarXD. All Rights Reserved.\n";
     constexpr const char* ABOUT_LINE_3 = " 魔法のようにシンプルなプログラミング言語?!\n";
     constexpr const char* MAIN_USAGE_ERROR = "使用法: ";
