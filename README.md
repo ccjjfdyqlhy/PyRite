@@ -1,6 +1,8 @@
 ![cover](https://github.com/ccjjfdyqlhy/PyRite/blob/main/cover.png)
 # PyRite: 一套简洁到神奇的编程语言！！
 
+怎么用？参考[指导文件](https://github.com/ccjjfdyqlhy/PyRite/blob/main/docs/guide_cn.md)。
+
 **现在支持中日英三种语言！** 日语特供一版超可爱的版本~~
 
 其他语言版本的 **README** 正在编纂中~
@@ -77,7 +79,7 @@ PyRite 解释器支持两种操作模式：
 
 开发该语法旨在能用极为通俗而简洁的语言编写程序。
 
-**注意：下面的内容仅会在大版本更新时同步编辑。** 请以实际程序功能为准。
+**这里只介绍基本的 PyRite 用法。** 详细文档请看[指导文件](https://github.com/ccjjfdyqlhy/PyRite/blob/main/docs/guide_cn.md)。
 
 ### 1. 数据类型
 
@@ -213,47 +215,6 @@ endtry
 *   `about()`: 显示版本信息。
 *   `$ <expression>`: 立即执行单行代码并将其添加到缓冲区。
 *   `$# <expression>`: 立即执行单行代码但不将其添加到缓冲区（用于临时调试）。
-
-#### 常用函数
-
-*   `say(...)`: 打印一个或多个值到控制台。
-*   `ask(prompt)`: 显示提示并从用户处读取一行输入。
-*   `abs(number)`: 返回数字的绝对值。
-*   `rt(number, n=2)`: 计算 `number` 的 n 次方根（默认为平方根）。
-*   `sort(list)`: 返回一个排序后的新列表。
-*   `setify(list)`: 返回一个移除了重复元素的新列表。
-*   `min(a, b, ...)` 或 `min(list)`: 返回最小值。
-*   `max(a, b, ...)` 或 `max(list)`: 返回最大值。
-*   `hash(data, key)`: 计算数据的哈希值。
-*   `countdown(seconds)`: 返回一个计时器函数，`await` 该函数可实现延时。
-*   `new(class)`: 创建一个类的新实例。
-*   `Exception(payload)`: 创建一个异常对象，用于 `raise`。
-
-## ⚙️ `compile()` 功能
-
-这是 PyRite 最具实验性的功能。它不是一个真正的编译器，而是一个**转译器**。
-**注意：转译模板尚未适配一些REPL中的功能，因此使用这些功能进行代码转译会在输出二进制文件之后报错。**
-
-**工作原理**:
-1.  当你调用 `compile()` 时，PyRite 会读取一份名为 `template.cpp` 的 C++ 模板文件。
-2.  它将你的 PyRite 源代码作为一个巨大的原始字符串，注入到 `template.cpp` 文件中。
-3.  这个 `template.cpp` 文件本身包含一个完整的 PyRite 解释器。当生成的可执行文件运行时，它会立即执行被注入的 PyRite 脚本。
-4.  PyRite 调用其内置的 C++ 编译器（`compilers/MinGW64/bin/g++.exe`）来编译这个新生成的 C++ 文件。
-5.  最终产物是一个独立的可执行文件，它打包了你的脚本和运行它所需的所有逻辑。
-
-**如何使用**:
-
-1.  确保 `PyRite.exe` 的同级目录下有 `template.cpp` 文件和 `compilers` 文件夹。
-2.  在 REPL 中编写或加载你的代码。
-3.  调用 `compile()`:
-
-    ```python
-    # 编译 REPL 缓冲区中的代码，输出为 buffer.exe
-    compile()
-    
-    # 编译指定文件，并添加链接库
-    compile(route="C:/Users/Admin/Desktop/my_game.src", args="-lwinmm")
-    ```
 
 ## 🤝 贡献
 
