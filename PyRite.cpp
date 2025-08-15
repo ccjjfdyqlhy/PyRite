@@ -1,3 +1,4 @@
+
 #pragma GCC optimize(3)
 #pragma GCC target("avx")
 #pragma GCC optimize("Ofast")
@@ -94,6 +95,8 @@ struct Value {
     virtual ValuePtr add(const Value& other) const; virtual ValuePtr subtract(const Value& other) const; virtual ValuePtr multiply(const Value& other) const; virtual ValuePtr divide(const Value& other) const; virtual ValuePtr power(const Value& other) const;
     virtual bool isEqualTo(const Value& other) const; virtual bool isLessThan(const Value& other) const;
     virtual ValuePtr getSubscript(const Value& index) const; virtual void setSubscript(const Value& index, ValuePtr value);
+    virtual ValuePtr getSlice(const ValuePtr& start, const ValuePtr& end, const ValuePtr& step) const;
+    virtual void setSlice(const ValuePtr& start, const ValuePtr& end, const ValuePtr& step, ValuePtr value);
 };
 class NullValue : public Value {
 public:
@@ -137,6 +140,7 @@ public:
     ValuePtr clone() const override { return std::make_shared<StringValue>(value); }
     ValuePtr add(const Value& other) const override;
     bool isEqualTo(const Value& other) const override; bool isLessThan(const Value& other) const override;
+    ValuePtr getSlice(const ValuePtr& start, const ValuePtr& end, const ValuePtr& step) const override;
 };
 class ListValue : public Value {
 public:
@@ -151,6 +155,8 @@ public:
     bool isEqualTo(const Value& other) const override;
     ValuePtr getSubscript(const Value& index) const override;
     void setSubscript(const Value& index, ValuePtr value) override;
+    ValuePtr getSlice(const ValuePtr& start, const ValuePtr& end, const ValuePtr& step) const override;
+    void setSlice(const ValuePtr& start, const ValuePtr& end, const ValuePtr& step, ValuePtr value) override;
 };
 class FunctionValue : public Value {
 public:
@@ -199,6 +205,41 @@ public:
     bool isEqualTo(const Value& other) const override { if (const ExceptionValue* o = dynamic_cast<const ExceptionValue*>(&other)) { return payload->isEqualTo(*(o->payload)); } return false; }
 };
 
+// --- Slicing Helper Functions ---
+long long value_to_long(const ValuePtr& val_ptr, long long default_val) {
+    if (!val_ptr || dynamic_cast<NullValue*>(val_ptr.get())) {
+        return default_val;
+    }
+    if (auto num_val = dynamic_cast<NumberValue*>(val_ptr.get())) {
+        try {
+            return num_val->value.toLongLong();
+        } catch (...) {
+            throw std::runtime_error("Slice index is too large.");
+        }
+    }
+    throw std::runtime_error("Slice indices must be numbers.");
+}
+
+struct SliceParams { long long start; long long stop; long long step; };
+SliceParams calculate_slice_indices(long long start_val, long long stop_val, long long step_val, long long len) {
+    if (step_val == 0) {
+        throw std::runtime_error("Slice step cannot be zero.");
+    }
+
+    if (step_val > 0) {
+        if (start_val < 0) start_val += len;
+        if (stop_val < 0) stop_val += len;
+        start_val = std::max(0LL, std::min(len, start_val));
+        stop_val = std::max(0LL, std::min(len, stop_val));
+    } else { // step_val < 0
+        if (start_val < 0) start_val += len;
+        if (stop_val < 0) stop_val += len;
+        start_val = std::max(-1LL, std::min(len - 1, start_val));
+        stop_val = std::max(-1LL, std::min(len - 1, stop_val));
+    }
+    return {start_val, stop_val, step_val};
+}
+
 // --- Operator and Conversion Implementations ---
 ValuePtr Value::add(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_UNSUPPORTED_OPERAND_ADD); }
 ValuePtr Value::subtract(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_UNSUPPORTED_OPERAND_SUB); }
@@ -209,6 +250,9 @@ bool Value::isEqualTo(const Value&) const { return false; }
 bool Value::isLessThan(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_UNSUPPORTED_COMPARISON); }
 ValuePtr Value::getSubscript(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_OBJECT_NOT_SUBSCRIPTABLE); }
 void Value::setSubscript(const Value&, ValuePtr) { throw std::runtime_error(PyRiteMessages::ERROR_OBJECT_ITEM_ASSIGNMENT_UNSUPPORTED); }
+ValuePtr Value::getSlice(const ValuePtr&, const ValuePtr&, const ValuePtr&) const { throw std::runtime_error("This object type does not support slicing."); }
+void Value::setSlice(const ValuePtr&, const ValuePtr&, const ValuePtr&, ValuePtr) { throw std::runtime_error("This object type does not support slice assignment."); }
+
 ValuePtr NumberValue::add(const Value& other) const {
     if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return std::make_shared<NumberValue>(this->value + o->value);
     if (const BinaryValue* o = dynamic_cast<const BinaryValue*>(&other)) return std::make_shared<NumberValue>(this->value + o->toBigNumber());
@@ -259,6 +303,26 @@ bool BinaryValue::isEqualTo(const Value& other) const {
 ValuePtr StringValue::add(const Value& other) const { return std::make_shared<StringValue>(this->value + other.toString()); }
 bool StringValue::isEqualTo(const Value& other) const { if (const StringValue* o = dynamic_cast<const StringValue*>(&other)) return this->value == o->value; return false; }
 bool StringValue::isLessThan(const Value& other) const { if (const StringValue* o = dynamic_cast<const StringValue*>(&other)) return this->value < o->value; return Value::isLessThan(other); }
+ValuePtr StringValue::getSlice(const ValuePtr& start_val, const ValuePtr& end_val, const ValuePtr& step_val) const {
+    long long len = this->value.length();
+    long long step = value_to_long(step_val, 1);
+    long long start = value_to_long(start_val, (step > 0) ? 0 : len - 1);
+    long long end = value_to_long(end_val, (step > 0) ? len : -1);
+
+    SliceParams params = calculate_slice_indices(start, end, step, len);
+
+    std::string result_str = "";
+    if (params.step > 0) {
+        for (long long i = params.start; i < params.stop; i += params.step) {
+            result_str += this->value[i];
+        }
+    } else { // step < 0
+        for (long long i = params.start; i > params.stop; i += params.step) {
+            result_str += this->value[i];
+        }
+    }
+    return std::make_shared<StringValue>(result_str);
+}
 std::string ListValue::toString() const {
     std::stringstream ss;
     ss << "[";
@@ -334,6 +398,68 @@ void ListValue::setSubscript(const Value& index, ValuePtr value) {
         throw std::runtime_error(PyRiteMessages::ERROR_INVALID_LIST_INDEX);
     }
 }
+ValuePtr ListValue::getSlice(const ValuePtr& start_val, const ValuePtr& end_val, const ValuePtr& step_val) const {
+    long long len = this->elements.size();
+    long long step = value_to_long(step_val, 1);
+    long long start = value_to_long(start_val, (step > 0) ? 0 : len - 1);
+    long long end = value_to_long(end_val, (step > 0) ? len : -1);
+
+    SliceParams params = calculate_slice_indices(start, end, step, len);
+
+    std::vector<ValuePtr> result_elements;
+    if (params.step > 0) {
+        for (long long i = params.start; i < params.stop; i += params.step) {
+            result_elements.push_back(this->elements[i]);
+        }
+    } else { // step < 0
+        for (long long i = params.start; i > params.stop; i += params.step) {
+            result_elements.push_back(this->elements[i]);
+        }
+    }
+    return std::make_shared<ListValue>(result_elements);
+}
+void ListValue::setSlice(const ValuePtr& start_val, const ValuePtr& end_val, const ValuePtr& step_val, ValuePtr value) {
+    const ListValue* values_to_assign = dynamic_cast<const ListValue*>(value.get());
+    if (!values_to_assign) {
+        throw std::runtime_error("Can only assign a list to a slice.");
+    }
+
+    long long len = this->elements.size();
+    long long step = value_to_long(step_val, 1);
+    long long start = value_to_long(start_val, (step > 0) ? 0 : len - 1);
+    long long end = value_to_long(end_val, (step > 0) ? len : -1);
+
+    if (step != 1) {
+        // For extended slicing, figure out the indices to replace
+        std::vector<long long> indices;
+        SliceParams params = calculate_slice_indices(start, end, step, len);
+        if (params.step > 0) {
+            for (long long i = params.start; i < params.stop; i += params.step) indices.push_back(i);
+        } else {
+            for (long long i = params.start; i > params.stop; i += params.step) indices.push_back(i);
+        }
+
+        if (indices.size() != values_to_assign->elements.size()) {
+            std::stringstream ss;
+            ss << "Attempt to assign sequence of size " << values_to_assign->elements.size()
+               << " to extended slice of size " << indices.size();
+            throw std::runtime_error(ss.str());
+        }
+
+        for(size_t i = 0; i < indices.size(); ++i) {
+            this->elements[indices[i]] = values_to_assign->elements[i];
+        }
+    } else {
+        // Simple slice assignment (step = 1)
+        SliceParams params = calculate_slice_indices(start, end, 1, len);
+        auto it_start = this->elements.begin() + params.start;
+        auto it_end = this->elements.begin() + params.stop;
+        this->elements.erase(it_start, it_end);
+        this->elements.insert(this->elements.begin() + params.start,
+                              values_to_assign->elements.begin(),
+                              values_to_assign->elements.end());
+    }
+}
 // --- Function Parameter Definition ---
 // 1. Move TokenType enum class definition here to ensure ParameterDefinition can see it
 enum class TokenType {
@@ -348,7 +474,7 @@ enum class TokenType {
     EQUAL, EQUAL_EQUAL, BANG_EQUAL, LESS, LESS_EQUAL, GREATER, GREATER_EQUAL,
     PLUS, MINUS, STAR, SLASH, LPAREN, RPAREN, COMMA, CARET,
     LBRACKET, RBRACKET,
-    DOT,
+    DOT, COLON,
     NULL_LITERAL,
     END_OF_FILE, UNKNOWN
 };
@@ -589,7 +715,7 @@ public:
             case '<': return make_token(match('=') ? TokenType::LESS_EQUAL : TokenType::LESS); case '>': return make_token(match('=') ? TokenType::GREATER_EQUAL : TokenType::GREATER);
             case '"': case '\'': return string(c);
             case '[': return make_token(TokenType::LBRACKET); case ']': return make_token(TokenType::RBRACKET);
-            case '.': return make_token(TokenType::DOT);
+            case '.': return make_token(TokenType::DOT); case ':': return make_token(TokenType::COLON);
         }
         return make_token(TokenType::UNKNOWN, PyRiteMessages::PARSE_ERROR_UNEXPECTED_CHAR);
     }
@@ -635,7 +761,7 @@ struct SayNode : AstNode { AstNodePtr expression; SayNode(int l, AstNodePtr e) :
 struct InpNode : AstNode { AstNodePtr expression; InpNode(int l, AstNodePtr e) : AstNode(l), expression(e) {} ValuePtr accept(Interpreter& visitor) override; };
 struct FnDefNode : AstNode { std::string name; std::vector<ParameterDefinition> params; std::vector<AstNodePtr> body; FnDefNode(int l, std::string n, std::vector<ParameterDefinition> p, std::vector<AstNodePtr> b) : AstNode(l), name(n), params(p), body(b) {} ValuePtr accept(Interpreter& visitor) override; };
 struct CallNode : AstNode { AstNodePtr callee; std::vector<AstNodePtr> arguments; CallNode(int l, AstNodePtr c, std::vector<AstNodePtr> a) : AstNode(l), callee(c), arguments(a) {} ValuePtr accept(Interpreter& visitor) override; };
-struct SubscriptNode : AstNode { AstNodePtr object; AstNodePtr index; SubscriptNode(int l, AstNodePtr o, AstNodePtr i) : AstNode(l), object(o), index(i) {} ValuePtr accept(Interpreter& visitor) override; };
+struct SubscriptNode : AstNode { AstNodePtr object; AstNodePtr start; AstNodePtr end; AstNodePtr step; bool is_slice; SubscriptNode(int l, AstNodePtr o, AstNodePtr s, AstNodePtr e, AstNodePtr st, bool slice) : AstNode(l), object(o), start(s), end(e), step(st), is_slice(slice) {} ValuePtr accept(Interpreter& visitor) override; };
 struct ReturnNode : AstNode { AstNodePtr value; ReturnNode(int l, AstNodePtr v) : AstNode(l), value(v) {} ValuePtr accept(Interpreter& visitor) override; };
 struct RaiseNode : AstNode { AstNodePtr expression; RaiseNode(int l, AstNodePtr e) : AstNode(l), expression(e) {} ValuePtr accept(Interpreter& visitor) override; };
 struct TryCatchNode : AstNode { std::vector<AstNodePtr> try_branch; std::string exception_var; std::vector<AstNodePtr> catch_branch; std::vector<AstNodePtr> finally_branch; TryCatchNode(int l, std::vector<AstNodePtr> t, std::string ev, std::vector<AstNodePtr> c, std::vector<AstNodePtr> f) : AstNode(l), try_branch(t), exception_var(ev), catch_branch(c), finally_branch(f) {} ValuePtr accept(Interpreter& visitor) override; };
@@ -905,7 +1031,30 @@ private:
         return expr;
     }
     AstNodePtr finish_call(AstNodePtr callee) { int line = previous_token.line; std::vector<AstNodePtr> arguments; if (!check(TokenType::RPAREN)) { do { if (arguments.size() >= 255) throw std::runtime_error(PyRiteMessages::PARSE_ERROR_TOO_MANY_ARGS); arguments.push_back(expression()); } while (match({TokenType::COMMA})); } consume(TokenType::RPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_RPAREN_AFTER_PARAMS); return std::make_shared<CallNode>(line, callee, arguments); }
-    AstNodePtr finish_subscript(AstNodePtr object) { int line = previous_token.line; AstNodePtr index = expression(); consume(TokenType::RBRACKET, PyRiteMessages::PARSE_ERROR_EXPECT_RBRACKET_AFTER_INDEX); return std::make_shared<SubscriptNode>(line, object, index); }
+    AstNodePtr finish_subscript(AstNodePtr object) {
+        int line = previous_token.line;
+        AstNodePtr part1 = nullptr, part2 = nullptr, part3 = nullptr;
+
+        if (!check(TokenType::COLON) && !check(TokenType::RBRACKET)) {
+            part1 = expression();
+        }
+
+        if (match({TokenType::COLON})) {
+            if (!check(TokenType::COLON) && !check(TokenType::RBRACKET)) {
+                part2 = expression();
+            }
+            if (match({TokenType::COLON})) {
+                if (!check(TokenType::RBRACKET)) {
+                    part3 = expression();
+                }
+            }
+            consume(TokenType::RBRACKET, PyRiteMessages::PARSE_ERROR_EXPECT_RBRACKET_AFTER_INDEX);
+            return std::make_shared<SubscriptNode>(line, object, part1, part2, part3, true);
+        } else {
+            consume(TokenType::RBRACKET, PyRiteMessages::PARSE_ERROR_EXPECT_RBRACKET_AFTER_INDEX);
+            return std::make_shared<SubscriptNode>(line, object, part1, nullptr, nullptr, false);
+        }
+    }
     AstNodePtr list_literal() { int line = previous_token.line; std::vector<AstNodePtr> elements; if (!check(TokenType::RBRACKET)) { do { elements.push_back(expression()); } while (match({TokenType::COMMA})); } consume(TokenType::RBRACKET, PyRiteMessages::PARSE_ERROR_EXPECT_RBRACKET_AFTER_LIST); return std::make_shared<ListLiteralNode>(line, elements); }
     AstNodePtr primary() { 
         int line = current_token.line; 
@@ -1052,8 +1201,15 @@ ValuePtr AssignmentNode::accept(Interpreter& visitor) {
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_ASSIGN_TARGET_SUBSCRIPT << std::endl;
         try {
             auto object = visitor.evaluate(sub_node->object);
-            auto index = visitor.evaluate(sub_node->index);
-            object->setSubscript(*index, val);
+            if (!sub_node->is_slice) {
+                auto index = visitor.evaluate(sub_node->start);
+                object->setSubscript(*index, val);
+            } else {
+                ValuePtr start_v = sub_node->start ? visitor.evaluate(sub_node->start) : std::make_shared<NullValue>();
+                ValuePtr end_v = sub_node->end ? visitor.evaluate(sub_node->end) : std::make_shared<NullValue>();
+                ValuePtr step_v = sub_node->step ? visitor.evaluate(sub_node->step) : std::make_shared<NullValue>();
+                object->setSlice(start_v, end_v, step_v, val);
+            }
         } catch (const std::runtime_error& e) {
             throw RuntimeError(line, e.what());
         }
@@ -1151,12 +1307,20 @@ ValuePtr TypeConversionNode::accept(Interpreter& visitor) {
     }
 }
 ValuePtr SubscriptNode::accept(Interpreter& visitor) {
-    if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_SUBSCRIPT_NODE << std::endl;
+    if (DEBUG) std::cout << (is_slice ? "Executing SliceNode" : "Executing SubscriptNode") << std::endl;
     try {
         auto object = visitor.evaluate(this->object);
-        auto index = visitor.evaluate(this->index);
-        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_SUBSCRIPT_NODE_OBJ << object->repr() << PyRiteMessages::DEBUG_EXEC_SUBSCRIPT_NODE_IDX << index->repr() << std::endl;
-        return object->getSubscript(*index);
+        if (!is_slice) {
+            auto index = visitor.evaluate(this->start);
+            if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_SUBSCRIPT_NODE_OBJ << object->repr() << PyRiteMessages::DEBUG_EXEC_SUBSCRIPT_NODE_IDX << index->repr() << std::endl;
+            return object->getSubscript(*index);
+        } else {
+            ValuePtr start_v = this->start ? visitor.evaluate(this->start) : std::make_shared<NullValue>();
+            ValuePtr end_v = this->end ? visitor.evaluate(this->end) : std::make_shared<NullValue>();
+            ValuePtr step_v = this->step ? visitor.evaluate(this->step) : std::make_shared<NullValue>();
+            if (DEBUG) std::cout << "Slice object: " << object->repr() << ", start: " << start_v->repr() << ", end: " << end_v->repr() << ", step: " << step_v->repr() << std::endl;
+            return object->getSlice(start_v, end_v, step_v);
+        }
     } catch (const std::runtime_error& e) {
         throw RuntimeError(line, e.what());
     }
@@ -1560,6 +1724,16 @@ void Interpreter::define_native_functions() {
         REQUIRE_ARGS("abs", 1);
         GET_NUM(args[0], num_val);
         return std::make_shared<NumberValue>(num_val->value.abs());
+    }));
+    globals->define("len", std::make_shared<NativeFnValue>("len", [](const std::vector<ValuePtr>& args) {
+        REQUIRE_ARGS("len", 1);
+        if (auto str_val = dynamic_cast<StringValue*>(args[0].get())) {
+            return std::make_shared<NumberValue>(BigNumber(std::to_string(str_val->value.length())));
+        }
+        if (auto list_val = dynamic_cast<ListValue*>(args[0].get())) {
+            return std::make_shared<NumberValue>(BigNumber(std::to_string(list_val->elements.size())));
+        }
+        throw std::runtime_error("Argument to len() must be a string or a list.");
     }));
     globals->define("rt", std::make_shared<NativeFnValue>("rt", [](const std::vector<ValuePtr>& args){
         if (args.size() < 1 || args.size() > 2) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_RT_ARGS);
