@@ -51,6 +51,8 @@ PyRite 是一种解释型编程语言，其语法设计融合了 Python、C++ �
 
 ### 2. 核心语法与概念
 
+与其他编程语言最大的不同是，PyRite 完全不在乎你写的代码是否有严格的缩进或者一行的表达是否完整，它把代码当作一个整体看待。其自由的语法允许你把所有语句压缩到一行，甚至可以在上一行忘了加反括号的时候在下一行单独补上。
+
 #### 注释
 
 PyRite 使用 `#` 作为块注释的开始和结束符。
@@ -82,17 +84,17 @@ PyRite 有五种基本数据类型：
 
 **语法:**
 ```python
-# 声明变量
+# 声明变量 #
 dec my_number
 str my_string
 list my_list
 
-# 声明并初始化
+# 声明并初始化 #
 dec age = 25
 str name = "PyRite"
 list items = [10, 20, 30]
 
-# 赋值
+# 赋值 #
 age = 26
 ```
 
@@ -115,13 +117,18 @@ age = 26
 
 使用 `as` 关键字可以显式地将一个值转换为另一种类型。
 
+同时，PyRite 也不介意你直接定义一个不同类型的新变量。
+
 **语法:**
 ```python
-dec d = "123" as dec   # 字符串转数字
-str s = 456 as str     # 数字转字符串
-bin b = "0xAF" as bin  # 字符串转二进制
+str d = "123" # 字符串转数字 #
+say(d as dec + 1) # 输出: 124 #
 
-say(d + 1) # 输出: 124
+dec a = 456
+str s = a
+say(len(s)) # 输出：3 #
+
+bin b = "0xAF" as bin  # 字符串转二进制 #
 ```
 
 ### 3. 控制流
@@ -133,9 +140,9 @@ say(d + 1) # 输出: 124
 **语法:**
 ```python
 if condition then
-  # 如果条件为真，执行这里的代码
+  # 如果条件为真，执行这里的代码 #
 else
-  # (可选) 如果条件为假，执行这里的代码
+  # (可选) 如果条件为假，执行这里的代码 #
 endif
 ```
 **示例:**
@@ -161,9 +168,9 @@ endif
 **语法:**
 ```python
 while condition do
-  # 循环体
+  # 循环体 #
 finally
-  # (可选) 循环结束后执行
+  # (可选) 循环结束后执行 #
 endwhile
 ```
 **示例:**
@@ -187,24 +194,24 @@ endwhile
 
 **语法:**
 ```python
-# 计数循环
+# 计数循环 #
 repeat
-  # 循环体
+  # 循环体 #
 for count_expression times
 
-# 条件循环
+# 条件循环 #
 repeat
-  # 循环体
+  # 循环体 #
 until condition_expression
 ```
 **示例:**
 ```python
-# 重复5次
+# 重复5次 #
 repeat
   say("Hello")
 for 5 times
 
-# 倒计时
+# 倒计时 #
 dec counter = 10
 repeat
   say(counter)
@@ -218,7 +225,7 @@ until counter < 0
 
 ```python
 dec i = 0
-while 1 do # 无限循环
+while 1 do # 无限循环 #
   say(i)
   if i >= 10 then
     break
@@ -231,14 +238,15 @@ endwhile
 
 暂停执行，直到某个条件表达式为真，然后执行 `then` 块内的代码。这在等待异步操作或定时任务时非常有用。
 
-**语法:**```python
+**语法:**
+```python
 await condition then
-  # 条件满足后执行
+  # 条件满足后执行 #
 endawait
 ```
 **示例:**
 ```python
-# countdown(秒数) 返回一个函数，该函数在倒计时结束后返回1
+# countdown(秒数) 返回一个函数，该函数在倒计时结束后返回1 #
 dec timer_is_done = countdown(3)
 say("等待3秒...")
 await timer_is_done() then
@@ -255,8 +263,8 @@ endawait
 **语法:**
 ```python
 fn function_name(parameter_list) do
-  # 函数体
-  return return_value # (可选)
+  # 函数体 #
+  return return_value # (可选) #
 endfn
 ```
 
@@ -267,7 +275,7 @@ endfn
 
 **示例:**
 ```python
-# 带有类型和默认值的参数
+# 带有类型和默认值的参数 #
 fn greet(str name, str greeting = "Hello") do
   say(greeting + ", " + name + "!")
 endfn
@@ -290,8 +298,8 @@ dec result = add(10, 20) # result is 30
 使用函数名后跟括号 `()` 来调用函数，并传入参数。
 
 ```python
-greet("Alice")          # 输出: Hello, Alice!
-greet("Bob", "Hi")      # 输出: Hi, Bob!
+greet("Alice")          # 输出: Hello, Alice! #
+greet("Bob", "Hi")      # 输出: Hi, Bob! #
 ```
 
 ### 5. 面向对象编程 (OOP)
@@ -303,7 +311,7 @@ greet("Bob", "Hi")      # 输出: Hi, Bob!
 **语法:**
 ```python
 ins ClassName(field_definitions) contains
-  # 方法定义
+  # 方法定义 #
 endins
 ```
 
@@ -323,12 +331,12 @@ dec my_object = new(ClassName)
 
 **示例:**
 ```python
-# 定义一个简单的计数器类
+# 定义一个简单的计数器类 #
 ins Counter(dec initial_value = 0) contains
-  # 字段: initial_value 在实例化时被设置
+  # 字段: initial_value 在实例化时被设置 #
 
   fn increment() do
-    # 'this' 关键字用于引用实例自身
+    # 'this' 关键字用于引用实例自身 #
     this.initial_value = this.initial_value + 1
   endfn
 
@@ -337,11 +345,11 @@ ins Counter(dec initial_value = 0) contains
   endfn
 endins
 
-# 实例化
+# 实例化 #
 dec c = new(Counter)
 c.increment()
 c.increment()
-say(c.get_value()) # 输出: 2
+say(c.get_value()) # 输出: 2 #
 ```
 
 #### `this` 关键字
@@ -361,11 +369,11 @@ PyRite 提供了一套完整的结构化异常处理机制。
 **语法:**
 ```python
 try
-  # 可能出错的代码
+  # 可能出错的代码 #
 catch exception_variable
-  # 异常处理代码
+  # 异常处理代码 #
 finally
-  # (可选) 总是执行的代码
+  # (可选) 总是执行的代码 #
 endtry
 ```
 **示例:**
@@ -414,11 +422,11 @@ endtry
 ```python
 say("你好, PyRite!")
 
-# 传统用法
+# 传统用法 #
 str user_name = ask("请输入你的名字: ")
 say("你好, " + user_name)
 
-# 使用 as 关键字
+# 使用 as 关键字 #
 ask("请输入你的年龄: ") as str user_age
 say("你 " + user_age + " 岁了。")
 ```
@@ -430,13 +438,14 @@ say("你 " + user_age + " 岁了。")
 **语法:**
 ```python
 swap(variable1, variable2)
-```**示例:**
+```
+**示例:**
 ```python
 dec a = 10
 dec b = 20
 swap(a, b)
-say(a) # 输出: 20
-say(b) # 输出: 10
+say(a) # 输出: 20 #
+say(b) # 输出: 10 #
 ```
 
 #### 变量别名 `using-as`
@@ -451,7 +460,7 @@ using original_variable as alias_name
 ```python
 dec long_variable_name = 123
 using long_variable_name as lvn
-say(lvn) # 输出: 123
+say(lvn) # 输出: 123 #
 ```
 
 ### 8. 内置函数库
@@ -493,7 +502,7 @@ say(lvn) # 输出: 123
 #### 例程1：阶乘 (递归与迭代)
 
 ```python
-# 迭代实现
+# 迭代实现 #
 fn factorial_iter(dec n) do
   dec result = 1
   dec i = 1
@@ -504,7 +513,7 @@ fn factorial_iter(dec n) do
   return result
 endfn
 
-# 递归实现
+# 递归实现 #
 fn factorial_rec(dec n) do
   if n == 0 then
     return 1
@@ -572,11 +581,11 @@ fn linear_search(list arr, any target) do
   dec i = 0
   while i < len(arr) do
     if arr[i] == target then
-      return i # 返回索引
+      return i # 返回索引 #
     endif
     i = i + 1
   endwhile
-  return -1 # 未找到
+  return -1 # 未找到 #
 endfn
 
 list items = ["apple", "banana", "cherry"]
@@ -587,7 +596,7 @@ say("'banana' 的索引是: " + (index as str))
 #### 例程5：二分搜索
 
 ```python
-# 注意：二分搜索要求列表已排序
+# 注意：二分搜索要求列表已排序 #
 fn binary_search(list sorted_arr, dec target) do
   dec low = 0
   dec high = len(sorted_arr) - 1
@@ -604,7 +613,7 @@ fn binary_search(list sorted_arr, dec target) do
     endif
   endwhile
 
-  return -1 # 未找到
+  return -1 # 未找到 #
 endfn
 
 list data = [2, 5, 8, 12, 16, 23, 38, 56, 72, 91]
@@ -629,7 +638,7 @@ ins Stack() contains
     endif
     dec last_index = len(this.items) - 1
     dec last_item = this.items[last_index]
-    this.items = this.items[0:last_index] # 切片以移除最后一个元素
+    this.items = this.items[0:last_index] # 切片以移除最后一个元素 #
     return last_item
   endfn
 
@@ -648,9 +657,9 @@ endins
 dec s = new(Stack)
 s.push(10)
 s.push(20)
-say("栈顶元素: " + (s.peek() as str)) # 20
-say("弹出: " + (s.pop() as str))     # 20
-say("栈是否为空: " + (s.is_empty() as str)) # 0 (false)
+say("栈顶元素: " + (s.peek() as str)) # 20 #
+say("弹出: " + (s.pop() as str))     # 20 #
+say("栈是否为空: " + (s.is_empty() as str)) # 0 (false) #
 ```
 
 #### 例程7：队列 (Queue) 的实现
@@ -668,7 +677,7 @@ ins Queue() contains
       raise("无法从空队列中出队")
     endif
     dec first_item = this.items[0]
-    this.items = this.items[1:] # 切片以移除第一个元素
+    this.items = this.items[1:] # 切片以移除第一个元素 #
     return first_item
   endfn
 
@@ -699,7 +708,7 @@ say("队首元素: " + q.front()) # B
 ins Node(dec key, any left = nul, any right = nul) contains
 endins
 
-# 二叉搜索树类
+# 二叉搜索树类 #
 ins BinarySearchTree() contains
   dec root = nul
 
