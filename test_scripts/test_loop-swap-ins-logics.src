@@ -1,0 +1,109 @@
+# ---------------------------------------------------- #
+# PyRite 新功能综合测试脚本 #
+# #
+# 本脚本旨在测试以下新功能： #
+# 1. 增强的 swap() 函数 #
+# 2. 'ins' (类) 的初始化代码块 #
+# 3. 'loop' 关键字 (替代 'repeat') #
+# 4. 带索引变量的 'loop' 循环，例如 loop(i) #
+# 5. 逻辑运算符 'not', 'and', 'or' #
+# ---------------------------------------------------- #
+
+say("--- 1. 'loop' 关键字与循环索引测试 ---")
+
+# 测试 loop(i) for X times #
+say("loop(i) for 3 times:")
+loop(i)
+    say("循环索引 i = " + (i as str))
+for 3 times
+
+# 测试 loop(j) until #
+say("\nloop(j) until j >= 3:")
+dec j = 0
+loop(j) 
+    say("循环索引 j = " + (j as str))
+    j = j + 1
+until j >= 3
+
+say("\n--- 2. 'ins' 初始化代码块测试 ---")
+
+ins TestIns (dec a, str b = "default")
+    # 这是在字段定义之后、contains之前的初始化代码块 #
+    # 它会在 'new()' 创建实例时自动执行 #
+    # 'this' 关键字可用于引用当前实例 #
+    say("TestIns 初始化代码块正在执行...")
+    this.a = 100
+    this.b = "由初始化块设置"
+contains
+    fn get_a() do
+        return this.a
+    endfn
+endins
+
+say("创建 TestIns 的实例...")
+dec my_instance = new(TestIns)
+say("实例创建完毕.")
+
+say("访问实例属性 a: " + (my_instance.a as str))
+say("访问实例属性 b: " + my_instance.b)
+
+
+say("\n--- 3. 增强的 swap() 功能测试 ---")
+
+list my_list = [10, "twenty", 30.5]
+dec my_var = 99
+say("初始状态:")
+say("my_list = " + (my_list as str))
+say("my_var = " + (my_var as str))
+
+# 3.1: 交换列表中的两个元素 #
+say("\n交换 my_list[0] 和 my_list[2]...")
+swap(my_list[0], my_list[2])
+say("交换后 my_list = " + (my_list as str))
+
+# 3.2: 交换列表元素和变量 #
+say("\n交换 my_var 和 my_list[1]...")
+swap(my_var, my_list[1])
+say("交换后 my_list = " + (my_list as str))
+say("交换后 my_var = " + (my_var as str))
+
+# 3.3: 交换回原样以展示双向工作正常 #
+say("\n再次交换 my_var 和 my_list[1]...")
+swap(my_var, my_list[1])
+say("再次交换后 my_list = " + (my_list as str))
+say("再次交换后 my_var = " + (my_var as str))
+
+
+say("\n--- 4. 逻辑运算符 'not', 'and', 'or' 测试 ---")
+
+# 4.1: 测试 'not' #
+say("not 1 (真) 的结果是: " + ((not 1) as str))
+say("not 0 (假) 的结果是: " + ((not 0) as str))
+say("not nul (假) 的结果是: " + ((not nul) as str))
+say("not 'hello' (真) 的结果是: " + ((not "hello") as str))
+
+# 4.2: 测试 'and' (短路求值) #
+say("\n测试 'and':")
+say("1 and 'yes' 的结果是: " + (1 and "yes")) # 应返回 'yes' #
+say("0 and 'yes' 的结果是: " + ((0 and "yes") as str)) # 应返回 0 #
+say("nul and 'yes' 的结果是: " + ((nul and "yes") as str)) # 应返回 nul #
+
+# 4.3: 测试 'or' (短路求值) #
+say("\n测试 'or':")
+say("'hello' or 'no' 的结果是: " + ('hello' or 'no')) # 应返回 'hello' #
+say("'' or 'yes' 的结果是: " + ('' or 'yes')) # 应返回 'yes' #
+say("0 or 'yes' 的结果是: " + (0 or 'yes')) # 应返回 'yes' #
+
+# 4.4: 在 if 语句中组合使用 #
+say("\n在 if 语句中组合使用:")
+dec x = 10
+dec y = 5
+dec z = 0
+
+if (x > 5 and y < 10) or not z then
+    say("组合逻辑条件 '(x > 5 and y < 10) or not z' 为真")
+else
+    say("组合逻辑条件 '(x > 5 and y < 10) or not z' 为假")
+endif
+
+say("\n--- 所有新功能测试完毕 ---")
