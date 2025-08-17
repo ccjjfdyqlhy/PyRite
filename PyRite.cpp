@@ -1,4 +1,3 @@
-
 #pragma GCC optimize(3)
 #pragma GCC target("avx")
 #pragma GCC optimize("Ofast")
@@ -469,13 +468,14 @@ enum class TokenType {
     AWAIT, ENDAWAIT,
     INS, CONTAINS, ENDINS,
     USING, AS,
-    REPEAT, FOR, TIMES, UNTIL, ENDREP, BREAK,
+    LOOP, FOR, TIMES, UNTIL, ENDLOOP, BREAK,
     IDENTIFIER, NUMBER, STRING, HEX_LITERAL,
     EQUAL, EQUAL_EQUAL, BANG_EQUAL, LESS, LESS_EQUAL, GREATER, GREATER_EQUAL,
     PLUS, MINUS, STAR, SLASH, LPAREN, RPAREN, COMMA, CARET,
     LBRACKET, RBRACKET,
     DOT, COLON,
     NULL_LITERAL,
+    NOT, AND, OR,
     END_OF_FILE, UNKNOWN
 };
 // 2. Modify ParameterDefinition struct definition
@@ -564,10 +564,11 @@ std::string token_type_to_string(TokenType type);
 struct Class : public Value {
     std::string name;
     std::vector<ParameterDefinition> fields; // Field definitions with types and defaults
+    std::vector<AstNodePtr> initializer_body; // Initializer code
     std::map<std::string, std::shared_ptr<Function>> methods; // Method definitions
     std::shared_ptr<Environment> closure; // Environment where the class was defined
-    Class(const std::string& n, const std::vector<ParameterDefinition>& f, const std::map<std::string, std::shared_ptr<Function>>& m, const std::shared_ptr<Environment>& c)
-        : name(n), fields(f), methods(m), closure(c) {}
+    Class(const std::string& n, const std::vector<ParameterDefinition>& f, const std::vector<AstNodePtr>& ib, const std::map<std::string, std::shared_ptr<Function>>& m, const std::shared_ptr<Environment>& c)
+        : name(n), fields(f), initializer_body(ib), methods(m), closure(c) {}
     std::string toString() const override { return "<class " + name + ">"; }
     std::string repr() const override { return toString(); }
     bool isTruthy() const override { return true; }
@@ -698,8 +699,9 @@ public:
         keywords["try"] = TokenType::TRY; keywords["catch"] = TokenType::CATCH; keywords["endtry"] = TokenType::ENDTRY; keywords["raise"] = TokenType::RAISE;
         keywords["ins"] = TokenType::INS; keywords["contains"] = TokenType::CONTAINS; keywords["endins"] = TokenType::ENDINS;
         keywords["as"] = TokenType::AS; keywords["using"] = TokenType::USING;
-        keywords["repeat"] = TokenType::REPEAT; keywords["for"] = TokenType::FOR; keywords["times"] = TokenType::TIMES;
-        keywords["until"] = TokenType::UNTIL; keywords["endrep"] = TokenType::ENDREP; keywords["break"] = TokenType::BREAK;
+        keywords["loop"] = TokenType::LOOP; keywords["for"] = TokenType::FOR; keywords["times"] = TokenType::TIMES;
+        keywords["until"] = TokenType::UNTIL; keywords["endloop"] = TokenType::ENDLOOP; keywords["break"] = TokenType::BREAK;
+        keywords["not"] = TokenType::NOT; keywords["and"] = TokenType::AND; keywords["or"] = TokenType::OR;
     }
     Token next_token() {
         skip_whitespace(); start = current; if (is_at_end()) return make_token(TokenType::END_OF_FILE);
@@ -746,15 +748,17 @@ struct AstNode { int line; AstNode(int l) : line(l) {} virtual ~AstNode() = defa
 struct LiteralNode : AstNode { ValuePtr value; LiteralNode(int l, ValuePtr v) : AstNode(l), value(v) {} ValuePtr accept(Interpreter& visitor) override; };
 struct ListLiteralNode : AstNode { std::vector<AstNodePtr> elements; ListLiteralNode(int l, std::vector<AstNodePtr> e) : AstNode(l), elements(e) {} ValuePtr accept(Interpreter& visitor) override; };
 struct VariableNode : AstNode { std::string name; VariableNode(int l, std::string n) : AstNode(l), name(n) {} ValuePtr accept(Interpreter& visitor) override; };
+struct UnaryOpNode : AstNode { Token op; AstNodePtr right; UnaryOpNode(int l, Token o, AstNodePtr r) : AstNode(l), op(o), right(r) {} ValuePtr accept(Interpreter& visitor) override; };
 struct BinaryOpNode : AstNode { AstNodePtr left; Token op; AstNodePtr right; BinaryOpNode(int l, AstNodePtr lt, Token o, AstNodePtr rt) : AstNode(l), left(lt), op(o), right(rt) {} ValuePtr accept(Interpreter& visitor) override; };
+struct LogicalOpNode : AstNode { AstNodePtr left; Token op; AstNodePtr right; LogicalOpNode(int l, AstNodePtr lt, Token o, AstNodePtr rt) : AstNode(l), left(lt), op(o), right(rt) {} ValuePtr accept(Interpreter& visitor) override; };
 struct TypeConversionNode : AstNode { AstNodePtr expression; Token type_keyword; TypeConversionNode(int l, AstNodePtr e, Token tk) : AstNode(l), expression(e), type_keyword(tk) {} ValuePtr accept(Interpreter& visitor) override; };
 struct AssignmentNode : AstNode { AstNodePtr target; AstNodePtr value; AssignmentNode(int l, AstNodePtr t, AstNodePtr v) : AstNode(l), target(t), value(v) {} ValuePtr accept(Interpreter& visitor) override; };
 struct VarDeclarationNode : AstNode { Token keyword; std::string name; AstNodePtr initializer; VarDeclarationNode(int l, Token kw, std::string n, AstNodePtr init) : AstNode(l), keyword(kw), name(n), initializer(init) {} ValuePtr accept(Interpreter& visitor) override; };
 struct UsingNode : AstNode { std::string original_name; std::string alias_name; UsingNode(int l, std::string o, std::string a) : AstNode(l), original_name(o), alias_name(a) {} ValuePtr accept(Interpreter& visitor) override; };
 struct IfStatementNode : AstNode { AstNodePtr condition; std::vector<AstNodePtr> then_branch, else_branch; IfStatementNode(int l, AstNodePtr c, std::vector<AstNodePtr> t, std::vector<AstNodePtr> e) : AstNode(l), condition(c), then_branch(t), else_branch(e) {} ValuePtr accept(Interpreter& visitor) override; };
 struct WhileStatementNode : AstNode { AstNodePtr condition; std::vector<AstNodePtr> do_branch, finally_branch; WhileStatementNode(int l, AstNodePtr c, std::vector<AstNodePtr> d, std::vector<AstNodePtr> f) : AstNode(l), condition(c), do_branch(d), finally_branch(f) {} ValuePtr accept(Interpreter& visitor) override; };
-struct RepeatForNode : AstNode { std::vector<AstNodePtr> body; AstNodePtr count_expr; RepeatForNode(int l, std::vector<AstNodePtr> b, AstNodePtr c) : AstNode(l), body(b), count_expr(c) {} ValuePtr accept(Interpreter& visitor) override; };
-struct RepeatUntilNode : AstNode { std::vector<AstNodePtr> body; AstNodePtr condition; RepeatUntilNode(int l, std::vector<AstNodePtr> b, AstNodePtr c) : AstNode(l), body(b), condition(c) {} ValuePtr accept(Interpreter& visitor) override; };
+struct LoopForNode : AstNode { std::string index_var_name; std::vector<AstNodePtr> body; AstNodePtr count_expr; LoopForNode(int l, std::string ivn, std::vector<AstNodePtr> b, AstNodePtr c) : AstNode(l), index_var_name(ivn), body(b), count_expr(c) {} ValuePtr accept(Interpreter& visitor) override; };
+struct LoopUntilNode : AstNode { std::string index_var_name; std::vector<AstNodePtr> body; AstNodePtr condition; LoopUntilNode(int l, std::string ivn, std::vector<AstNodePtr> b, AstNodePtr c) : AstNode(l), index_var_name(ivn), body(b), condition(c) {} ValuePtr accept(Interpreter& visitor) override; };
 struct BreakNode : AstNode { BreakNode(int l) : AstNode(l) {} ValuePtr accept(Interpreter& visitor) override; };
 struct AwaitStatementNode : AstNode { AstNodePtr condition; std::vector<AstNodePtr> then_branch; AwaitStatementNode(int l, AstNodePtr c, std::vector<AstNodePtr> t) : AstNode(l), condition(c), then_branch(t) {} ValuePtr accept(Interpreter& visitor) override; };
 struct SayNode : AstNode { AstNodePtr expression; SayNode(int l, AstNodePtr e) : AstNode(l), expression(e) {} ValuePtr accept(Interpreter& visitor) override; };
@@ -768,9 +772,10 @@ struct TryCatchNode : AstNode { std::vector<AstNodePtr> try_branch; std::string 
 struct ClassDefNode : AstNode {
     std::string name;
     std::vector<ParameterDefinition> fields;
+    std::vector<AstNodePtr> initializer_body;
     std::vector<AstNodePtr> methods;
-    ClassDefNode(int l, const std::string& n, const std::vector<ParameterDefinition>& f, const std::vector<AstNodePtr>& m)
-        : AstNode(l), name(n), fields(f), methods(m) {}
+    ClassDefNode(int l, const std::string& n, const std::vector<ParameterDefinition>& f, const std::vector<AstNodePtr>& ib, const std::vector<AstNodePtr>& m)
+        : AstNode(l), name(n), fields(f), initializer_body(ib), methods(m) {}
     ValuePtr accept(Interpreter& visitor) override;
 };
 struct GetNode : AstNode {
@@ -819,7 +824,7 @@ private:
     AstNodePtr statement() {
         if (match({TokenType::IF})) return if_statement();
         if (match({TokenType::WHILE})) return while_statement();
-        if (match({TokenType::REPEAT})) return repeat_statement();
+        if (match({TokenType::LOOP})) return loop_statement();
         if (match({TokenType::BREAK})) return break_statement();
         if (match({TokenType::AWAIT})) return await_statement();
         if (match({TokenType::SAY})) return say_statement();
@@ -921,6 +926,10 @@ private:
             }
             consume(TokenType::RPAREN, PyRiteMessages::PARSE_ERROR_EXPECT_RPAREN_AFTER_FIELDS);
         }
+        std::vector<AstNodePtr> initializer_body;
+        while (!check(TokenType::CONTAINS) && !check(TokenType::ENDINS) && !check(TokenType::END_OF_FILE)) {
+            initializer_body.push_back(declaration());
+        }
         consume(TokenType::CONTAINS, PyRiteMessages::PARSE_ERROR_EXPECT_CONTAINS_AFTER_CLASS_DEF);
         std::vector<AstNodePtr> methods;
         while (!check(TokenType::ENDINS) && !check(TokenType::END_OF_FILE)) {
@@ -932,7 +941,7 @@ private:
         }
         consume(TokenType::ENDINS, PyRiteMessages::PARSE_ERROR_EXPECT_ENDINS_AFTER_CLASS_BODY);
         if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_DONE_PARSING_CLASS << name << "'." << std::endl;
-        return std::make_shared<ClassDefNode>(line, name, fields, methods);
+        return std::make_shared<ClassDefNode>(line, name, fields, initializer_body, methods);
     }
     AstNodePtr using_statement() {
         int line = previous_token.line;
@@ -945,23 +954,29 @@ private:
     }
     AstNodePtr if_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::THEN, PyRiteMessages::PARSE_ERROR_EXPECT_THEN_AFTER_IF); std::vector<AstNodePtr> then_branch; while(!check(TokenType::ELSE) && !check(TokenType::ENDIF) && !check(TokenType::END_OF_FILE)) { then_branch.push_back(declaration()); } std::vector<AstNodePtr> else_branch; if (match({TokenType::ELSE})) { while(!check(TokenType::ENDIF) && !check(TokenType::END_OF_FILE)) { else_branch.push_back(declaration()); } } consume(TokenType::ENDIF, PyRiteMessages::PARSE_ERROR_EXPECT_ENDIF_AFTER_IF); return std::make_shared<IfStatementNode>(line, condition, then_branch, else_branch); }
     AstNodePtr while_statement() { int line = previous_token.line; AstNodePtr condition = expression(); consume(TokenType::DO, PyRiteMessages::PARSE_ERROR_EXPECT_DO_AFTER_WHILE); std::vector<AstNodePtr> do_branch; while(!check(TokenType::FINALLY) && !check(TokenType::ENDWHILE) && !check(TokenType::END_OF_FILE)) { do_branch.push_back(declaration()); } std::vector<AstNodePtr> finally_branch; if (match({TokenType::FINALLY})) { while(!check(TokenType::ENDWHILE) && !check(TokenType::END_OF_FILE)) { finally_branch.push_back(declaration()); } } consume(TokenType::ENDWHILE, PyRiteMessages::PARSE_ERROR_EXPECT_ENDWHILE_AFTER_WHILE); return std::make_shared<WhileStatementNode>(line, condition, do_branch, finally_branch); }
-    AstNodePtr repeat_statement() {
+    AstNodePtr loop_statement() {
         int line = previous_token.line;
+        std::string index_var_name;
+        if (match({TokenType::LPAREN})) {
+            consume(TokenType::IDENTIFIER, "Expect loop index variable name in parentheses.");
+            index_var_name = previous_token.lexeme;
+            consume(TokenType::RPAREN, "Expect ')' after loop index variable name.");
+        }
         std::vector<AstNodePtr> body;
-        while(!check(TokenType::FOR) && !check(TokenType::UNTIL) && !check(TokenType::ENDREP) && !check(TokenType::END_OF_FILE)) {
+        while(!check(TokenType::FOR) && !check(TokenType::UNTIL) && !check(TokenType::ENDLOOP) && !check(TokenType::END_OF_FILE)) {
              body.push_back(declaration());
         }
         if (match({TokenType::FOR})) {
              AstNodePtr count_expr = expression();
              consume(TokenType::TIMES, "Expect 'times' after 'for' loop count.");
-             return std::make_shared<RepeatForNode>(line, body, count_expr);
+             return std::make_shared<LoopForNode>(line, index_var_name, body, count_expr);
         } else if (match({TokenType::UNTIL})) {
              AstNodePtr condition = expression();
-             return std::make_shared<RepeatUntilNode>(line, body, condition);
-        } else if (match({TokenType::ENDREP})) {
-             return std::make_shared<RepeatUntilNode>(line, body, nullptr);
+             return std::make_shared<LoopUntilNode>(line, index_var_name, body, condition);
+        } else if (match({TokenType::ENDLOOP})) {
+             return std::make_shared<LoopUntilNode>(line, index_var_name, body, nullptr);
         } else {
-             throw std::runtime_error("Unterminated 'repeat' block. Expect 'for', 'until', or 'endrep'.");
+             throw std::runtime_error("Unterminated 'loop' block. Expect 'for', 'until', or 'endloop'.");
         }
     }
     AstNodePtr break_statement() {
@@ -979,7 +994,7 @@ private:
     }
     AstNodePtr expression() { return assignment(); }
     AstNodePtr assignment() {
-        AstNodePtr expr = equality();
+        AstNodePtr expr = logical_or();
         if (match({TokenType::EQUAL})) {
             if (DEBUG) std::cout << PyRiteMessages::DEBUG_PARSER_PARSING_ASSIGNMENT << std::endl;
             int line = previous_token.line;
@@ -988,6 +1003,24 @@ private:
                 return std::make_shared<AssignmentNode>(line, expr, value);
             }
             throw std::runtime_error(PyRiteMessages::RUNTIME_ERROR_INVALID_ASSIGNMENT_TARGET);
+        }
+        return expr;
+    }
+    AstNodePtr logical_or() {
+        AstNodePtr expr = logical_and();
+        while (match({TokenType::OR})) {
+            Token op = previous_token;
+            AstNodePtr right = logical_and();
+            expr = std::make_shared<LogicalOpNode>(op.line, expr, op, right);
+        }
+        return expr;
+    }
+    AstNodePtr logical_and() {
+        AstNodePtr expr = equality();
+        while (match({TokenType::AND})) {
+            Token op = previous_token;
+            AstNodePtr right = equality();
+            expr = std::make_shared<LogicalOpNode>(op.line, expr, op, right);
         }
         return expr;
     }
@@ -1009,7 +1042,14 @@ private:
         }
         return expr;
     }
-    AstNodePtr unary() { if (match({TokenType::MINUS})) { Token op = previous_token; AstNodePtr right = unary(); AstNodePtr left = std::make_shared<LiteralNode>(op.line, std::make_shared<NumberValue>(0)); return std::make_shared<BinaryOpNode>(op.line, left, op, right); } return call(); }
+    AstNodePtr unary() {
+        if (match({TokenType::NOT, TokenType::MINUS})) {
+            Token op = previous_token;
+            AstNodePtr right = unary();
+            return std::make_shared<UnaryOpNode>(op.line, op, right);
+        }
+        return call();
+    }
     AstNodePtr call() {
         AstNodePtr expr = primary();
         while (true) {
@@ -1140,6 +1180,32 @@ public:
             }
         }
     }
+    void assignToLValue(AstNodePtr target, ValuePtr val, int line) {
+        if (auto var_node = dynamic_cast<VariableNode*>(target.get())) {
+            try {
+                this->environment->assign(var_node->name, val);
+            } catch (RuntimeError& e) {
+                throw RuntimeError(line, e.what());
+            }
+        } else if (auto sub_node = dynamic_cast<SubscriptNode*>(target.get())) {
+            try {
+                auto object = this->evaluate(sub_node->object);
+                if (!sub_node->is_slice) {
+                    auto index = this->evaluate(sub_node->start);
+                    object->setSubscript(*index, val);
+                } else {
+                    ValuePtr start_v = sub_node->start ? this->evaluate(sub_node->start) : std::make_shared<NullValue>();
+                    ValuePtr end_v = sub_node->end ? this->evaluate(sub_node->end) : std::make_shared<NullValue>();
+                    ValuePtr step_v = sub_node->step ? this->evaluate(sub_node->step) : std::make_shared<NullValue>();
+                    object->setSlice(start_v, end_v, step_v, val);
+                }
+            } catch (const std::runtime_error& e) {
+                throw RuntimeError(line, e.what());
+            }
+        } else {
+            throw RuntimeError(line, "Invalid assignment target.");
+        }
+    }
     std::chrono::time_point<std::chrono::high_resolution_clock> start_time;
     long long time_limit_ms;
     struct CallInfo { std::string function_name; int call_site_line; }; std::vector<CallInfo> call_stack;
@@ -1192,28 +1258,8 @@ ValuePtr VariableNode::accept(Interpreter& visitor) {
 ValuePtr AssignmentNode::accept(Interpreter& visitor) {
     auto val = visitor.evaluate(value);
     if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_ASSIGN_NODE << val->repr() << std::endl;
-
-    if (auto var_node = dynamic_cast<VariableNode*>(target.get())) {
-        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_ASSIGN_TARGET_VAR << var_node->name << "'." << std::endl;
-        try { visitor.environment->assign(var_node->name, val); }
-        catch (RuntimeError& e) { throw RuntimeError(line, e.what()); }
-    } else if (auto sub_node = dynamic_cast<SubscriptNode*>(target.get())) {
-        if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_ASSIGN_TARGET_SUBSCRIPT << std::endl;
-        try {
-            auto object = visitor.evaluate(sub_node->object);
-            if (!sub_node->is_slice) {
-                auto index = visitor.evaluate(sub_node->start);
-                object->setSubscript(*index, val);
-            } else {
-                ValuePtr start_v = sub_node->start ? visitor.evaluate(sub_node->start) : std::make_shared<NullValue>();
-                ValuePtr end_v = sub_node->end ? visitor.evaluate(sub_node->end) : std::make_shared<NullValue>();
-                ValuePtr step_v = sub_node->step ? visitor.evaluate(sub_node->step) : std::make_shared<NullValue>();
-                object->setSlice(start_v, end_v, step_v, val);
-            }
-        } catch (const std::runtime_error& e) {
-            throw RuntimeError(line, e.what());
-        }
-    } else if (auto get_node = dynamic_cast<GetNode*>(target.get())) {
+    
+    if (auto get_node = dynamic_cast<GetNode*>(target.get())) {
          if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_ASSIGN_TARGET_GET << get_node->name << "'." << std::endl;
          try {
              auto object = visitor.evaluate(get_node->object);
@@ -1226,7 +1272,8 @@ ValuePtr AssignmentNode::accept(Interpreter& visitor) {
              throw RuntimeError(line, e.what());
          }
     } else {
-        throw RuntimeError(line, PyRiteMessages::RUNTIME_ERROR_INVALID_ASSIGNMENT_TARGET);
+        // Fallback for VariableNode and SubscriptNode
+        visitor.assignToLValue(target, val, line);
     }
     return val;
 }
@@ -1267,6 +1314,23 @@ ValuePtr UsingNode::accept(Interpreter& visitor) {
     }
     return std::make_shared<NullValue>();
 }
+ValuePtr UnaryOpNode::accept(Interpreter& visitor) {
+    ValuePtr right_val = visitor.evaluate(right);
+    switch(op.type) {
+        case TokenType::MINUS: {
+            auto zero = std::make_shared<NumberValue>(0);
+            try {
+                return zero->subtract(*right_val);
+            } catch (const std::runtime_error& e) {
+                throw RuntimeError(op.line, e.what());
+            }
+        }
+        case TokenType::NOT:
+            return std::make_shared<NumberValue>(right_val->isTruthy() ? 0 : 1);
+        default:
+             throw RuntimeError(op.line, "Invalid unary operator.");
+    }
+}
 ValuePtr BinaryOpNode::accept(Interpreter& visitor) { 
     if (DEBUG) std::cout << PyRiteMessages::DEBUG_EXEC_BINARY_OP << op.lexeme << ")." << std::endl;
     auto left_val = visitor.evaluate(left); 
@@ -1287,6 +1351,15 @@ ValuePtr BinaryOpNode::accept(Interpreter& visitor) {
         }
     } catch(const std::runtime_error& e) { throw RuntimeError(op.line, e.what()); }
     return std::make_shared<NullValue>();
+}
+ValuePtr LogicalOpNode::accept(Interpreter& visitor) {
+    ValuePtr left_val = visitor.evaluate(left);
+    if (op.type == TokenType::OR) {
+        if (left_val->isTruthy()) return left_val;
+    } else { // AND
+        if (!left_val->isTruthy()) return left_val;
+    }
+    return visitor.evaluate(right);
 }
 ValuePtr TypeConversionNode::accept(Interpreter& visitor) {
     ValuePtr val = visitor.evaluate(expression);
@@ -1341,7 +1414,7 @@ ValuePtr ClassDefNode::accept(Interpreter& visitor) {
             methods_map[func_def_node->name] = method_func;
         }
     }
-    auto klass = std::make_shared<Class>(name, fields, methods_map, visitor.environment);
+    auto klass = std::make_shared<Class>(name, fields, initializer_body, methods_map, visitor.environment);
     visitor.environment->define(name, klass);
     return std::make_shared<NullValue>();
 }
@@ -1396,44 +1469,73 @@ ValuePtr WhileStatementNode::accept(Interpreter& visitor) {
     } 
     return std::make_shared<NullValue>(); 
 }
-ValuePtr RepeatForNode::accept(Interpreter& visitor) {
+ValuePtr LoopForNode::accept(Interpreter& visitor) {
     ValuePtr count_val = visitor.evaluate(count_expr);
     auto num_val = dynamic_cast<NumberValue*>(count_val.get());
     if (!num_val) {
-        throw RuntimeError(line, "Loop count for 'repeat...for' must be a number.");
+        throw RuntimeError(line, "Loop count for 'loop...for' must be a number.");
     }
     long long count = 0;
     try {
         count = num_val->value.toLongLong();
     } catch (...) {
-        throw RuntimeError(line, "Loop count for 'repeat...for' is too large.");
+        throw RuntimeError(line, "Loop count for 'loop...for' is too large.");
     }
 
     for (long long i = 0; i < count; ++i) {
         visitor.check_timeout(line);
         try {
-            visitor.execute_block(body, std::make_shared<Environment>(visitor.environment));
+            auto block_env = std::make_shared<Environment>(visitor.environment);
+            if (!index_var_name.empty()) {
+                block_env->define(index_var_name, std::make_shared<NumberValue>(BigNumber(std::to_string(i))));
+            }
+            visitor.execute_block(body, block_env);
         } catch (const BreakException&) {
             break;
         }
     }
     return std::make_shared<NullValue>();
 }
-ValuePtr RepeatUntilNode::accept(Interpreter& visitor) {
-    do {
+ValuePtr LoopUntilNode::accept(Interpreter& visitor) {
+    long long i = 0;
+    while(true) {
         visitor.check_timeout(line);
+        auto block_env = std::make_shared<Environment>(visitor.environment);
+
+        // 如果使用了 loop(i) 语法，则在每次迭代的新作用域中定义循环索引变量
+        if (!index_var_name.empty()) {
+            block_env->define(index_var_name, std::make_shared<NumberValue>(BigNumber(std::to_string(i++))));
+        }
+
+        // 手动管理环境，以确保循环体和until条件在同一作用域内评估
+        std::shared_ptr<Environment> previous = visitor.environment;
         try {
-            visitor.execute_block(body, std::make_shared<Environment>(visitor.environment));
-        } catch (const BreakException&) {
-            break;
-        }
-        if (condition) {
-            ValuePtr condition_val = visitor.evaluate(condition);
-            if (condition_val->isTruthy()) {
-                break;
+            visitor.environment = block_env; // 切换到循环迭代的作用域
+
+            // 执行循环体中的语句
+            for(const auto& stmt : body) {
+                visitor.execute(stmt);
             }
+
+            // 在执行完循环体后，立即在相同的（内部）作用域中评估until条件
+            if (condition) {
+                ValuePtr condition_val = visitor.evaluate(condition);
+                if (condition_val->isTruthy()) {
+                    visitor.environment = previous; // 在跳出前恢复环境
+                    break;
+                }
+            }
+            // 对于没有until的无限循环 (loop...endloop)，除非遇到break，否则不会跳出
+
+            visitor.environment = previous; // 正常完成一次迭代后恢复环境
+        } catch (const BreakException&) {
+            visitor.environment = previous; // 捕获到break后恢复环境
+            break;
+        } catch (...) {
+            visitor.environment = previous; // 发生任何其他异常时恢复环境
+            throw;
         }
-    } while (true);
+    }
     return std::make_shared<NullValue>();
 }
 ValuePtr BreakNode::accept(Interpreter& visitor) {
@@ -1470,39 +1572,22 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
     if (auto callee_var = dynamic_cast<VariableNode*>(callee.get())) {
         if (callee_var->name == "swap") {
             if (arguments.size() != 2) throw RuntimeError(line, PyRiteMessages::ERROR_SWAP_REQUIRES_TWO_VARS);
-            auto arg1 = dynamic_cast<VariableNode*>(arguments[0].get());
-            auto arg2 = dynamic_cast<VariableNode*>(arguments[1].get());
-            if (!arg1 || !arg2) throw RuntimeError(line, PyRiteMessages::ERROR_SWAP_ARGS_MUST_BE_VARS);
-            try {
-                std::string name1 = arg1->name; std::string name2 = arg2->name;
-                ValuePtr val1 = visitor.environment->get(name1); ValuePtr val2 = visitor.environment->get(name2);
-                ValuePtr type1_str_val = visitor.environment->get_type(name1); std::string type1_str = dynamic_cast<StringValue*>(type1_str_val.get())->value;
-                ValuePtr type2_str_val = visitor.environment->get_type(name2); std::string type2_str = dynamic_cast<StringValue*>(type2_str_val.get())->value;
-                ValuePtr new_val1;
-                if(type1_str == "dec") {
-                    try { new_val1 = std::make_shared<NumberValue>(BigNumber(val2->toString())); } catch (...) { new_val1 = std::make_shared<StringValue>(val2->toString()); }
-                } else if (type1_str == "str") {
-                    new_val1 = std::make_shared<StringValue>(val2->toString());
-                } else if (type1_str == "bin") {
-                    try { new_val1 = std::make_shared<BinaryValue>(val2->toString()); } catch (...) { new_val1 = std::make_shared<StringValue>(val2->toString()); }
-                } else {
-                    new_val1 = val2->clone();
-                }
-                ValuePtr new_val2;
-                if(type2_str == "dec") {
-                    try { new_val2 = std::make_shared<NumberValue>(BigNumber(val1->toString())); } catch (...) { new_val2 = std::make_shared<StringValue>(val1->toString()); }
-                } else if (type2_str == "str") {
-                    new_val2 = std::make_shared<StringValue>(val1->toString());
-                } else if (type2_str == "bin") {
-                    try { new_val2 = std::make_shared<BinaryValue>(val1->toString()); } catch (...) { new_val2 = std::make_shared<StringValue>(val1->toString()); }
-                } else {
-                    new_val2 = val1->clone();
-                }
-                visitor.environment->assign(name1, new_val1);
-                visitor.environment->assign(name2, new_val2);
-            } catch(const RuntimeError& e) {
-                throw RuntimeError(line, e.what());
+            auto arg1_node = arguments[0];
+            auto arg2_node = arguments[1];
+
+            if (!dynamic_cast<VariableNode*>(arg1_node.get()) && !dynamic_cast<SubscriptNode*>(arg1_node.get())) {
+                throw RuntimeError(line, "First argument to swap must be an assignable variable or list element.");
             }
+            if (!dynamic_cast<VariableNode*>(arg2_node.get()) && !dynamic_cast<SubscriptNode*>(arg2_node.get())) {
+                throw RuntimeError(line, "Second argument to swap must be an assignable variable or list element.");
+            }
+            
+            ValuePtr val1 = visitor.evaluate(arg1_node);
+            ValuePtr val2 = visitor.evaluate(arg2_node);
+
+            visitor.assignToLValue(arg1_node, val2, line);
+            visitor.assignToLValue(arg2_node, val1, line);
+            
             return std::make_shared<NullValue>();
         }
     }
@@ -1523,8 +1608,12 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
             ValuePtr result = native_fn->call(arg_values);
             visitor.call_stack.pop_back();
             return result;
-        } catch(const std::exception& e) {
+        } catch (const RuntimeError& re) { // 优先捕获已包含精确行号的RuntimeError
             visitor.call_stack.pop_back();
+            throw; // 直接重新抛出，保留原始行号和信息
+        } catch(const std::exception& e) { // 其他标准异常
+            visitor.call_stack.pop_back();
+            // 将其他异常包装成RuntimeError，并使用当前调用的行号
             throw RuntimeError(line, e.what());
         }
     }
@@ -1836,13 +1925,22 @@ void Interpreter::define_native_functions() {
         REQUIRE_ARGS("log", 1); GET_NUM(args[0], x); if(x->value <= BigNumber(0)) throw std::runtime_error(PyRiteMessages::NATIVE_ERROR_LOG_POSITIVE);
         return std::make_shared<NumberValue>(BigNumber(std::to_string(log(x->value.toLongLong()))));
     }));
-    globals->define("new", std::make_shared<NativeFnValue>("new", [](const std::vector<ValuePtr>& args) -> ValuePtr {
-         REQUIRE_ARGS("new", 1);
+    globals->define("new", std::make_shared<NativeFnValue>("new", [this](const std::vector<ValuePtr>& args) -> ValuePtr {
+         REQUIRE_MIN_ARGS("new", 1);
          auto class_val = std::dynamic_pointer_cast<Class>(args[0]);
          if (!class_val) {
              throw std::runtime_error(PyRiteMessages::ERROR_NEW_REQUIRES_CLASS);
          }
-         return std::make_shared<Instance>(class_val);
+         auto instance = std::make_shared<Instance>(class_val);
+         instance->instance_env->define("this", instance); // REFERS TO THE INSTANCE ITSELF
+         if (!class_val->initializer_body.empty()) {
+             try {
+                 this->execute_block(class_val->initializer_body, instance->instance_env);
+             } catch (const ReturnValueException&) {
+                 throw std::runtime_error("Cannot return a value from an instance initializer.");
+             }
+         }
+         return instance;
      }));
 }
 
@@ -2126,7 +2224,7 @@ void run_repl(Interpreter& interpreter) {
         std::string first_word;
         size_t word_end = trimmed_line.find_first_of(" \t\n\r(");
         first_word = (word_end == std::string::npos) ? trimmed_line : trimmed_line.substr(0, word_end);
-        if (first_word == "if" || first_word == "while" || first_word == "fn" || first_word == "await" || first_word == "try" || first_word == "ins" || first_word == "repeat") {
+        if (first_word == "if" || first_word == "while" || first_word == "fn" || first_word == "await" || first_word == "try" || first_word == "ins" || first_word == "loop") {
             env_stack.push_back(first_word);
         } else if (first_word == "endif") {
             if (env_stack.size() > 1 && env_stack.back() == "if") env_stack.pop_back();
@@ -2140,8 +2238,8 @@ void run_repl(Interpreter& interpreter) {
              if (env_stack.size() > 1 && env_stack.back() == "try") env_stack.pop_back();
         } else if (first_word == "endins") {
              if (env_stack.size() > 1 && env_stack.back() == "ins") env_stack.pop_back();
-        } else if (first_word == "endrep" || starts_with(first_word, "until") || starts_with(trimmed_line, "for")) {
-             if (env_stack.size() > 1 && env_stack.back() == "repeat") env_stack.pop_back();
+        } else if (first_word == "endloop" || starts_with(first_word, "until") || starts_with(trimmed_line, "for")) {
+             if (env_stack.size() > 1 && env_stack.back() == "loop") env_stack.pop_back();
         }
         if (!trimmed_line.empty() && trimmed_line.front() == '$') {
             std::string code_to_run;

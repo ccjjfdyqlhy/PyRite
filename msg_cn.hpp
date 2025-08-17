@@ -84,8 +84,8 @@ namespace PyRiteMessages {
 
 
     // --- 解析器错误 ---
-    constexpr const char* PARSE_ERROR_PREFIX = "[解析错误] 第 ";
-    constexpr const char* PARSE_ERROR_SUFFIX = "行。\n";
+    constexpr const char* PARSE_ERROR_PREFIX = "[解析错误] 在 行 ";
+    constexpr const char* PARSE_ERROR_SUFFIX = "\n";
     constexpr const char* PARSE_ERROR_UNEXPECTED_CHAR = "意外的字符。";
     constexpr const char* PARSE_ERROR_UNTERMINATED_STRING = "未终止的字符串。";
     constexpr const char* PARSE_ERROR_EXPECT_EXPRESSION = "缺少表达式。";
