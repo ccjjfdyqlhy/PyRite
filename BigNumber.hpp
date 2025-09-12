@@ -57,7 +57,7 @@ namespace BigNumberDetail {
         UnsignedDigit operator/(const UnsignedDigit& rhs) const;
         UnsignedDigit operator/(int v) const;
 
-        // Equivalent to multiplication by 10^k
+        // Equivalent to multiplication by MOD^k
         UnsignedDigit move(int k) const;
 
         friend UnsignedDigit DivHelper::quasiInv(const UnsignedDigit& v);
@@ -72,7 +72,7 @@ namespace BigNumberDetail {
         void fft(cd* a, int lgn, int d) {
             int n = 1 << lgn;
             static std::vector<int> brev;
-            if (n != brev.size()) {
+            if (n != (int)brev.size()) {
                 brev.resize(n);
                 for (int i = 0; i < n; ++i)
                     brev[i] = (brev[i >> 1] >> 1) | ((i & 1) << (lgn - 1));
@@ -177,12 +177,12 @@ namespace BigNumberDetail {
         if (isZero()) return UnsignedDigit();
 
         if (k < 0) {
-            if (-k >= digits.size()) return UnsignedDigit();
-            return std::vector<int>(digits.data() - k, digits.data() + digits.size());
+            if (-k >= (int)digits.size()) return UnsignedDigit();
+            return std::vector<int>(digits.begin() - k, digits.end());
         }
         
         UnsignedDigit ret;
-        ret.digits.resize(k + digits.size(), 0);
+        ret.digits.assign(k + digits.size(), 0);
         std::copy(digits.begin(), digits.end(), ret.digits.begin() + k);
         return ret;
     }
@@ -314,6 +314,10 @@ namespace BigNumberDetail {
     }
 
     UnsignedDigit::UnsignedDigit(std::string str) {
+        if (str.empty() || std::any_of(str.begin(), str.end(), [](char c){ return !isdigit(c); })) {
+            digits.assign(1, 0);
+            return;
+        }
         reverse(str.begin(), str.end());
         digits.resize((str.size() + BASE - 1) / BASE, 0);
         int cur = 1;
@@ -374,9 +378,13 @@ private:
 
         BigNumberDetail::UnsignedDigit a_mag = this->magnitude;
         BigNumberDetail::UnsignedDigit b_mag = other.magnitude;
+        
         int diff = this->decimal_pos - other.decimal_pos;
-        if (diff > 0) b_mag = b_mag.move((diff + BigNumberDetail::BASE -1) / BigNumberDetail::BASE);
-        if (diff < 0) a_mag = a_mag.move((-diff + BigNumberDetail::BASE -1) / BigNumberDetail::BASE);
+        if (diff > 0) {
+            b_mag = b_mag * BigNumberDetail::pow(BigNumberDetail::UnsignedDigit(10), diff);
+        } else if (diff < 0) {
+            a_mag = a_mag * BigNumberDetail::pow(BigNumberDetail::UnsignedDigit(10), -diff);
+        }
 
         if (a_mag < b_mag) return -1;
         if (b_mag < a_mag) return 1;
@@ -392,19 +400,23 @@ public:
         if (s.empty()) { *this = BigNumber(); return; }
         if (s[0] == '-') { is_negative = true; s.erase(0, 1); } else { is_negative = false; }
         
+        std::string s_digits = s;
         size_t dot_pos = s.find('.');
         if (dot_pos == std::string::npos) {
             decimal_pos = 0;
-            magnitude = BigNumberDetail::UnsignedDigit(s);
         } else {
             decimal_pos = s.length() - dot_pos - 1;
-            s.erase(dot_pos, 1);
-            magnitude = BigNumberDetail::UnsignedDigit(s);
+            s_digits.erase(dot_pos, 1);
+        }
+
+        if (s_digits.empty()) { // Handle cases like "." or "-."
+            s_digits = "0";
         }
         
-        if (s.empty() || std::any_of(s.begin(), s.end(), [](char c){ return !isdigit(c); })) {
+        if (std::any_of(s_digits.begin(), s_digits.end(), [](char c){ return !isdigit(c); })) {
             throw std::invalid_argument("Invalid character in number string.");
         }
+        magnitude = BigNumberDetail::UnsignedDigit(s_digits);
         normalize();
     }
     // Internal constructor for performance
@@ -420,16 +432,34 @@ public:
     BigNumber operator+(const BigNumber& other) const {
         if (this->is_negative == other.is_negative) {
             int max_dec = std::max(this->decimal_pos, other.decimal_pos);
-            BigNumberDetail::UnsignedDigit a = this->magnitude, b = other.magnitude;
-            a = a.move((max_dec - this->decimal_pos + BigNumberDetail::BASE - 1) / BigNumberDetail::BASE);
-            b = b.move((max_dec - other.decimal_pos + BigNumberDetail::BASE - 1) / BigNumberDetail::BASE);
+            BigNumberDetail::UnsignedDigit a = this->magnitude;
+            BigNumberDetail::UnsignedDigit b = other.magnitude;
+            
+            int a_shift = max_dec - this->decimal_pos;
+            int b_shift = max_dec - other.decimal_pos;
+            if (a_shift > 0) {
+                a = a * BigNumberDetail::pow(BigNumberDetail::UnsignedDigit(10), a_shift);
+            }
+            if (b_shift > 0) {
+                b = b * BigNumberDetail::pow(BigNumberDetail::UnsignedDigit(10), b_shift);
+            }
+
             return BigNumber(a + b, this->is_negative, max_dec);
         }
         if (this->compare_abs(other) >= 0) {
             int max_dec = std::max(this->decimal_pos, other.decimal_pos);
-            BigNumberDetail::UnsignedDigit a = this->magnitude, b = other.magnitude;
-            a = a.move((max_dec - this->decimal_pos + BigNumberDetail::BASE - 1) / BigNumberDetail::BASE);
-            b = b.move((max_dec - other.decimal_pos + BigNumberDetail::BASE - 1) / BigNumberDetail::BASE);
+            BigNumberDetail::UnsignedDigit a = this->magnitude;
+            BigNumberDetail::UnsignedDigit b = other.magnitude;
+            
+            int a_shift = max_dec - this->decimal_pos;
+            int b_shift = max_dec - other.decimal_pos;
+            if (a_shift > 0) {
+                a = a * BigNumberDetail::pow(BigNumberDetail::UnsignedDigit(10), a_shift);
+            }
+            if (b_shift > 0) {
+                b = b * BigNumberDetail::pow(BigNumberDetail::UnsignedDigit(10), b_shift);
+            }
+
             return BigNumber(a - b, this->is_negative, max_dec);
         }
         return other + *this;
@@ -447,20 +477,26 @@ public:
     BigNumber operator/(const BigNumber& other) const {
         if (other.magnitude.isZero()) throw std::runtime_error("Division by zero.");
         
-        BigNumber a = *this;
-        BigNumber b = other;
-        bool result_is_negative = a.is_negative != b.is_negative;
+        bool result_is_negative = this->is_negative != other.is_negative;
         
         int precision = get_default_precision();
-        int desired_decimal_shift = precision + b.decimal_pos + 1;
-        int limb_shift = (desired_decimal_shift + BigNumberDetail::BASE - 1) / BigNumberDetail::BASE;
+        int scale_factor = precision + other.decimal_pos - this->decimal_pos + 5; // +5 for rounding buffer
+        
+        BigNumberDetail::UnsignedDigit num = this->magnitude;
+        if (scale_factor > 0) {
+            num = num * BigNumberDetail::pow(BigNumberDetail::UnsignedDigit(10), scale_factor);
+        }
+        
+        BigNumberDetail::UnsignedDigit quotient;
+        if (scale_factor < 0) {
+            quotient = num / (other.magnitude * BigNumberDetail::pow(BigNumberDetail::UnsignedDigit(10), -scale_factor));
+        } else {
+            quotient = num / other.magnitude;
+        }
 
-        int actual_decimal_shift = limb_shift * BigNumberDetail::BASE;
-
-        BigNumberDetail::UnsignedDigit scaled_num = a.magnitude.move(limb_shift);
-        BigNumberDetail::UnsignedDigit quotient = scaled_num / b.magnitude;
-        int new_decimal_pos = a.decimal_pos + actual_decimal_shift - b.decimal_pos;
-        return BigNumber(quotient, result_is_negative, new_decimal_pos);
+        int new_decimal_pos = precision + 5;
+        BigNumber result(quotient, result_is_negative, new_decimal_pos);
+        return result.approx(precision);
     }
     BigNumber operator%(const BigNumber& other) const {
         if (!this->isInteger() || !other.isInteger()) {
@@ -528,11 +564,18 @@ public:
         // Scale the number to treat it as a large integer
         int scale_factor = calc_precision * m - current_dec_pos;
         if (scale_factor > 0) {
-             n_val = n_val.move((scale_factor + BigNumberDetail::BASE - 1) / BigNumberDetail::BASE);
+             // ================= FIX START =================
+             // Correctly scope UnsignedDigit with its namespace
+             n_val = n_val * BigNumberDetail::pow(BigNumberDetail::UnsignedDigit(10), scale_factor);
+             // ================= FIX END ===================
         }
 
-        BigNumberDetail::UnsignedDigit x(BigNumberDetail::MOD - 1);
-        x = x.move((n_val.size() + m - 1) / m - 1);
+        // Improved initial guess
+        std::string n_str = n_val.toString();
+        // ================= FIX START =================
+        // Correctly scope UnsignedDigit with its namespace
+        BigNumberDetail::UnsignedDigit x = BigNumberDetail::pow(BigNumberDetail::UnsignedDigit(10), (n_str.length() + m -1) / m);
+        // ================= FIX END ===================
 
         BigNumberDetail::UnsignedDigit xx = (x * (m - 1) + n_val / BigNumberDetail::pow(x, m - 1)) / m;
         while (xx < x) {
@@ -558,7 +601,7 @@ public:
 
         std::string s = magnitude.toString();
         int digits_to_cut = decimal_pos - precision;
-        if (digits_to_cut >= s.length()) return BigNumber(0);
+        if (digits_to_cut >= (int)s.length()) return BigNumber(0);
 
         char round_digit = s[s.length() - digits_to_cut];
         std::string new_digits_str = s.substr(0, s.length() - digits_to_cut);
@@ -577,7 +620,7 @@ public:
         std::string s = magnitude.toString();
         if (decimal_pos > 0) {
             if ((int)s.length() <= decimal_pos) {
-                s.insert(0, decimal_pos - s.length() + 1, '0');
+                s.insert(0, decimal_pos - s.length(), '0');
                 s.insert(0, "0.");
             } else {
                 s.insert(s.length() - decimal_pos, ".");
@@ -615,7 +658,7 @@ public:
     bool isInteger() const {
         std::string mag_str = magnitude.toString();
         if(decimal_pos == 0) return true;
-        if(decimal_pos >= mag_str.length()) return magnitude.isZero();
+        if(decimal_pos >= (int)mag_str.length()) return magnitude.isZero();
 
         for(int i = 0; i < decimal_pos; ++i){
             if(mag_str[mag_str.length() - 1 - i] != '0') return false;
