@@ -1,0 +1,21 @@
+﻿fn fib(dec n) do
+  list sequence = [0, 1]
+  if n <= 1 then
+    return n
+  endif
+
+  dec i = 2
+  while i <= n do
+    dec next_fib = sequence[i-1] + sequence[i-2]
+    list new_elements = sequence + [next_fib]
+    sequence = new_elements
+    i = i + 1
+  endwhile
+  
+  return sequence[n]
+endfn
+
+dec a = ask('要求第几项：')
+#say(fib(a))#
+say('求完了！')
+say('现在你知道这个傻逼终端输出有多慢了吧，所以不是解释器内核算法的锅。')

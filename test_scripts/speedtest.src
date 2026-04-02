@@ -1,0 +1,23 @@
+# copy these code blocks to the REPL for speed testing #
+
+say(2^100000)
+run(tick=1)
+# rev.1 : 13387 #
+# rev.2 : 48 #
+# rev.3 : 41 #
+# rev.4 : 8 #
+# Lamina bigint : 25779 #
+
+say(rt(4))
+run(tick=1)
+# rev.1 : 34 #
+# rev.2 : 7 #
+# rev.3 : 1 #
+
+say(rt(5))
+run(tick=1)
+# rev.4 : 2 #
+
+say(rt(1501674322828744,3))
+run(tick=1)
+# rev.4 : 0 #

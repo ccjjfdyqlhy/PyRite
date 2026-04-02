@@ -1,0 +1,21 @@
+
+say("--- 1. 'any' 类型提示和 'nul' 值测试 ---")
+def test_any_and_nul(any p1, any p2 = nul) do
+    say("test_any_and_nul: 收到的 p1 是: " + p1)
+    if p2 == nul then
+        say("test_any_and_nul: p2 是空值 (nul)。")
+    else
+        say("test_any_and_nul: 收到的 p2 是: " + p2)
+    endif
+enddef
+# 使用不同类型的参数调用该函数 #
+dec my_num = 123
+str my_str = "hello"
+bin my_bin = 0xDEADBEEF
+list my_list = [1, "two", 3]
+
+test_any_and_nul(my_num) 
+test_any_and_nul(my_str, my_num)
+test_any_and_nul(my_bin)
+test_any_and_nul(my_list, my_str)
+say("")
