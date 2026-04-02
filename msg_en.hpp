@@ -259,7 +259,7 @@ namespace PyRiteMessages {
     constexpr const char* REPL_WELCOME_BANNER_1 = "PyRite Interpreter ";
     constexpr const char* REPL_WELCOME_BANNER_DEBUG = " [DEBUG]";
     constexpr const char* REPL_WELCOME_BANNER_2 = ".\n";
-    constexpr const char* REPL_WELCOME_BANNER_3 = "Enter 'run()' to execute buffered code, 'compile()' to compile, 'halt()' to exit, 'about()' for version info.\n";
+    constexpr const char* REPL_WELCOME_BANNER_3 = "Enter 'run()' to execute buffered code, 'halt()' to exit, 'about()' for version info.\n";
     constexpr const char* REPL_HALTED = "Interpreter halted.";
     constexpr const char* REPL_NO_CODE_TO_RUN = "No code to execute.";
     constexpr const char* REPL_TICK_ARG_ERROR = "[Runtime Error] run() 'tick' argument must be a boolean (0/1, false/true).";
@@ -278,21 +278,6 @@ namespace PyRiteMessages {
     // --- Compilation ---
     constexpr const char* COMPILE_SYNTAX_ERROR = "Syntax Error: Call is missing '()'.";
     constexpr const char* COMPILE_ARG_SYNTAX_ERROR = "Syntax Error: Arguments must be in key=value format.";
-    constexpr const char* COMPILE_ERROR_PREFIX = "[Compile Error] ";
-    constexpr const char* COMPILE_ERROR_SUFFIX = ".";
-    constexpr const char* COMPILE_BUFFER_EMPTY = "Buffer is empty, cannot compile.";
-    constexpr const char* COMPILE_CANNOT_OPEN_SOURCE = "Cannot open source file: ";
-    constexpr const char* COMPILE_CANNOT_OPEN_TEMPLATE = "Cannot open compiler template file: ";
-    constexpr const char* COMPILE_TEMPLATE_PLACEHOLDER_MISSING = "Placeholder WRITE_SRC_CODE_HERE not found in template.cpp.";
-    constexpr const char* COMPILE_TRANSLATION_TARGET = "Translation target: ";
-    constexpr const char* COMPILE_CANNOT_OPEN_TEMP_WRITE = "Cannot open temporary compile file for writing (check permissions and path): ";
-    constexpr const char* COMPILE_WRITE_TEMP_FAILED = "Failed to write to temporary compile file (could be a permissions issue or disk full): ";
-    constexpr const char* COMPILE_COMMAND_INFO = "Using compile command: ";
-    constexpr const char* COMPILE_SUCCESS_PREFIX = "Successfully compiled ";
-    constexpr const char* COMPILE_SUCCESS_TOOK = " (took ";
-    constexpr const char* COMPILE_SUCCESS_SECONDS = " s) output to ";
-    constexpr const char* COMPILE_FAILURE_PREFIX = "Compilation of ";
-    constexpr const char* COMPILE_FAILURE_SUFFIX = " failed (compiler error)";
 }
 
 #endif // MESSAGES_HPP

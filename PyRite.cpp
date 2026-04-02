@@ -1,51 +1,7 @@
+
+// Note: Program using ISO:stdc++11 standard
+
 #pragma GCC optimize(3)
-#pragma GCC target("avx")
-#pragma GCC optimize("Ofast")
-#pragma GCC optimize("inline")
-#pragma GCC optimize("-fgcse")
-#pragma GCC optimize("-fgcse-lm")
-#pragma GCC optimize("-fipa-sra")
-#pragma GCC optimize("-ftree-pre")
-#pragma GCC optimize("-ftree-vrp")
-#pragma GCC optimize("-fpeephole2")
-#pragma GCC optimize("-ffast-math")
-#pragma GCC optimize("-fsched-spec")
-#pragma GCC optimize("unroll-loops")
-#pragma GCC optimize("-falign-jumps")
-#pragma GCC optimize("-falign-loops")
-#pragma GCC optimize("-falign-labels")
-#pragma GCC optimize("-fdevirtualize")
-#pragma GCC optimize("-fcaller-saves")
-#pragma GCC optimize("-fcrossjumping")
-#pragma GCC optimize("-fthread-jumps")
-#pragma GCC optimize("-funroll-loops")
-#pragma GCC optimize("-fwhole-program")
-#pragma GCC optimize("-freorder-blocks")
-#pragma GCC optimize("-fschedule-insns")
-#pragma GCC optimize("inline-functions")
-#pragma GCC optimize("-ftree-tail-merge")
-#pragma GCC optimize("-fschedule-insns2")
-#pragma GCC optimize("-fstrict-aliasing")
-#pragma GCC optimize("-fstrict-overflow")
-#pragma GCC optimize("-falign-functions")
-#pragma GCC optimize("-fcse-skip-blocks")
-#pragma GCC optimize("-fcse-follow-jumps")
-#pragma GCC optimize("-fsched-interblock")
-#pragma GCC optimize("-fpartial-inlining")
-#pragma GCC optimize("no-stack-protector")
-#pragma GCC optimize("-freorder-functions")
-#pragma GCC optimize("-findirect-inlining")
-#pragma GCC optimize("-fhoist-adjacent-loads")
-#pragma GCC optimize("-frerun-cse-after-loop")
-#pragma GCC optimize("inline-small-functions")
-#pragma GCC optimize("-finline-small-functions")
-#pragma GCC optimize("-ftree-switch-conversion")
-#pragma GCC optimize("-foptimize-sibling-calls")
-#pragma GCC optimize("-fexpensive-optimizations")
-#pragma GCC optimize("-funsafe-loop-optimizations")
-#pragma GCC optimize("inline-functions-called-once")
-#pragma GCC optimize("-fdelete-null-pointer-checks")
-#pragma GCC optimize(2)
 
 #include <iostream>
 #include <string>
@@ -69,7 +25,8 @@
 #include "BigNumber.hpp"
 #include "Tense.hpp"    // Matrix support
 #include "File.hpp"     // File operation support
-#include "msg_cn.hpp" // --- Import all string constants ---
+#include "msg_cn.hpp"
+#include "help_cn.hpp" // --- Import all string constants ---
 
 // --- Global DEBUG Switch ----
 // Be careful, do not use in release builds.
@@ -91,7 +48,8 @@ struct Value {
     virtual std::string repr() const = 0;
     virtual bool isTruthy() const = 0;
     virtual ValuePtr clone() const = 0;
-    virtual ValuePtr add(const Value& other) const; virtual ValuePtr subtract(const Value& other) const; virtual ValuePtr multiply(const Value& other) const; virtual ValuePtr divide(const Value& other) const; virtual ValuePtr power(const Value& other) const;
+    // MODIFIED: Added modulo operation
+    virtual ValuePtr add(const Value& other) const; virtual ValuePtr subtract(const Value& other) const; virtual ValuePtr multiply(const Value& other) const; virtual ValuePtr divide(const Value& other) const; virtual ValuePtr power(const Value& other) const; virtual ValuePtr modulo(const Value& other) const;
     virtual bool isEqualTo(const Value& other) const; virtual bool isLessThan(const Value& other) const;
     virtual ValuePtr getSubscript(const Value& index) const; virtual void setSubscript(const Value& index, ValuePtr value);
     virtual ValuePtr getSlice(const ValuePtr& start, const ValuePtr& end, const ValuePtr& step) const;
@@ -113,7 +71,8 @@ public:
     std::string repr() const override { return value.toString(); }
     bool isTruthy() const override { return value != BigNumber(0); }
     ValuePtr clone() const override { return std::make_shared<NumberValue>(value); }
-    ValuePtr add(const Value& other) const override; ValuePtr subtract(const Value& other) const override; ValuePtr multiply(const Value& other) const override; ValuePtr divide(const Value& other) const override; ValuePtr power(const Value& other) const override;
+    // MODIFIED: Added modulo operation
+    ValuePtr add(const Value& other) const override; ValuePtr subtract(const Value& other) const override; ValuePtr multiply(const Value& other) const override; ValuePtr divide(const Value& other) const override; ValuePtr power(const Value& other) const override; ValuePtr modulo(const Value& other) const override;
     bool isEqualTo(const Value& other) const override; bool isLessThan(const Value& other) const override;
 };
 class BinaryValue : public Value {
@@ -245,6 +204,8 @@ ValuePtr Value::subtract(const Value&) const { throw std::runtime_error(PyRiteMe
 ValuePtr Value::multiply(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_UNSUPPORTED_OPERAND_MUL); }
 ValuePtr Value::divide(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_UNSUPPORTED_OPERAND_DIV); }
 ValuePtr Value::power(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_UNSUPPORTED_OPERAND_POW); }
+// ADDED: Default implementation for modulo
+ValuePtr Value::modulo(const Value&) const { throw std::runtime_error("Unsupported operand types for modulo (%)."); }
 bool Value::isEqualTo(const Value&) const { return false; }
 bool Value::isLessThan(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_UNSUPPORTED_COMPARISON); }
 ValuePtr Value::getSubscript(const Value&) const { throw std::runtime_error(PyRiteMessages::ERROR_OBJECT_NOT_SUBSCRIPTABLE); }
@@ -261,6 +222,8 @@ ValuePtr NumberValue::subtract(const Value& other) const { if (const NumberValue
 ValuePtr NumberValue::multiply(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return std::make_shared<NumberValue>(this->value * o->value); return Value::multiply(other); }
 ValuePtr NumberValue::divide(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return std::make_shared<NumberValue>(this->value / o->value); return Value::divide(other); }
 ValuePtr NumberValue::power(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return std::make_shared<NumberValue>(this->value ^ o->value); return Value::power(other); }
+// ADDED: Implementation for NumberValue::modulo
+ValuePtr NumberValue::modulo(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return std::make_shared<NumberValue>(this->value % o->value); return Value::modulo(other); }
 bool NumberValue::isEqualTo(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return this->value == o->value; if (const BinaryValue* o = dynamic_cast<const BinaryValue*>(&other)) return this->value == o->toBigNumber(); return false; }
 bool NumberValue::isLessThan(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return this->value < o->value; return Value::isLessThan(other); }
 BinaryValue::BinaryValue(const std::string& hex_str) {
@@ -471,7 +434,8 @@ enum class TokenType {
     LOOP, FOR, TIMES, UNTIL, ENDLOOP, BREAK,
     IDENTIFIER, NUMBER, STRING, HEX_LITERAL,
     EQUAL, EQUAL_EQUAL, BANG_EQUAL, LESS, LESS_EQUAL, GREATER, GREATER_EQUAL,
-    PLUS, MINUS, STAR, SLASH, LPAREN, RPAREN, COMMA, CARET,
+    // MODIFIED: Added MODULO token type
+    PLUS, MINUS, STAR, SLASH, LPAREN, RPAREN, COMMA, CARET, MODULO,
     LBRACKET, RBRACKET,
     DOT, COLON,
     NULL_LITERAL,
@@ -712,7 +676,8 @@ public:
         }
         switch (c) {
             case '(': return make_token(TokenType::LPAREN); case ')': return make_token(TokenType::RPAREN); case ',': return make_token(TokenType::COMMA);
-            case '+': return make_token(TokenType::PLUS); case '-': return make_token(TokenType::MINUS); case '*': return make_token(TokenType::STAR); case '/': return make_token(TokenType::SLASH); case '^': return make_token(TokenType::CARET);
+            // MODIFIED: Added case for '%'
+            case '+': return make_token(TokenType::PLUS); case '-': return make_token(TokenType::MINUS); case '*': return make_token(TokenType::STAR); case '/': return make_token(TokenType::SLASH); case '^': return make_token(TokenType::CARET); case '%': return make_token(TokenType::MODULO);
             case '=': return make_token(match('=') ? TokenType::EQUAL_EQUAL : TokenType::EQUAL); case '!': return make_token(match('=') ? TokenType::BANG_EQUAL : TokenType::UNKNOWN);
             case '<': return make_token(match('=') ? TokenType::LESS_EQUAL : TokenType::LESS); case '>': return make_token(match('=') ? TokenType::GREATER_EQUAL : TokenType::GREATER);
             case '"': case '\'': return string(c);
@@ -1027,7 +992,8 @@ private:
     AstNodePtr equality() { AstNodePtr expr = comparison(); while (match({TokenType::EQUAL_EQUAL, TokenType::BANG_EQUAL})) { Token op = previous_token; AstNodePtr right = comparison(); expr = std::make_shared<BinaryOpNode>(op.line, expr, op, right); } return expr; }
     AstNodePtr comparison() { AstNodePtr expr = term(); while (match({TokenType::GREATER, TokenType::GREATER_EQUAL, TokenType::LESS, TokenType::LESS_EQUAL})) { Token op = previous_token; AstNodePtr right = term(); expr = std::make_shared<BinaryOpNode>(op.line, expr, op, right); } return expr; }
     AstNodePtr term() { AstNodePtr expr = factor(); while (match({TokenType::PLUS, TokenType::MINUS})) { Token op = previous_token; AstNodePtr right = factor(); expr = std::make_shared<BinaryOpNode>(op.line, expr, op, right); } return expr; }
-    AstNodePtr factor() { AstNodePtr expr = power(); while (match({TokenType::STAR, TokenType::SLASH})) { Token op = previous_token; AstNodePtr right = power(); expr = std::make_shared<BinaryOpNode>(op.line, expr, op, right); } return expr; }
+    // MODIFIED: Added MODULO to the list of operators
+    AstNodePtr factor() { AstNodePtr expr = power(); while (match({TokenType::STAR, TokenType::SLASH, TokenType::MODULO})) { Token op = previous_token; AstNodePtr right = power(); expr = std::make_shared<BinaryOpNode>(op.line, expr, op, right); } return expr; }
     AstNodePtr power() { AstNodePtr expr = typecast(); while(match({TokenType::CARET})) { Token op = previous_token; AstNodePtr right = typecast(); expr = std::make_shared<BinaryOpNode>(op.line, expr, op, right); } return expr; }
     AstNodePtr typecast() {
         AstNodePtr expr = unary();
@@ -1339,8 +1305,9 @@ ValuePtr BinaryOpNode::accept(Interpreter& visitor) {
     try {
         switch(op.type) {
             case TokenType::PLUS: return left_val->add(*right_val); case TokenType::MINUS: return left_val->subtract(*right_val);
+            // MODIFIED: Added case for MODULO
             case TokenType::STAR: return left_val->multiply(*right_val); case TokenType::SLASH: return left_val->divide(*right_val);
-            case TokenType::CARET: return left_val->power(*right_val);
+            case TokenType::CARET: return left_val->power(*right_val); case TokenType::MODULO: return left_val->modulo(*right_val);
             case TokenType::EQUAL_EQUAL: return std::make_shared<NumberValue>(left_val->isEqualTo(*right_val) ? 1 : 0);
             case TokenType::BANG_EQUAL: return std::make_shared<NumberValue>(!left_val->isEqualTo(*right_val) ? 1 : 0);
             case TokenType::LESS: return std::make_shared<NumberValue>(left_val->isLessThan(*right_val) ? 1 : 0);
@@ -1502,37 +1469,37 @@ ValuePtr LoopUntilNode::accept(Interpreter& visitor) {
         visitor.check_timeout(line);
         auto block_env = std::make_shared<Environment>(visitor.environment);
 
-        // »Áπ˚ π”√¡À loop(i) ”Ô∑®£¨‘Ú‘⁄√ø¥Œµ¸¥˙µƒ–¬◊˜”√”Ú÷–∂®“Â—≠ª∑À˜“˝±‰¡ø
+        // Â¶ÇÊûú‰ΩøÁî®‰∫Ü loop(i) ËØ≠Ê≥ïÔºåÂàôÂú®ÊØèÊ¨°Ëø≠‰ª£ÁöÑÊñ∞‰ΩúÁî®Âüü‰∏≠ÂÆö‰πâÂæ™ÁéØÁ¥¢ÂºïÂèòÈáè
         if (!index_var_name.empty()) {
             block_env->define(index_var_name, std::make_shared<NumberValue>(BigNumber(std::to_string(i++))));
         }
 
-        //  ÷∂Øπ‹¿Ìª∑æ≥£¨“‘»∑±£—≠ª∑ÃÂ∫ÕuntilÃıº˛‘⁄Õ¨“ª◊˜”√”Úƒ⁄∆¿π¿
+        // ÊâãÂä®ÁÆ°ÁêÜÁéØÂ¢ÉÔºå‰ª•Á°Æ‰øùÂæ™ÁéØ‰ΩìÂíåuntilÊù°‰ª∂Âú®Âêå‰∏Ä‰ΩúÁî®ÂüüÂÜÖËØÑ‰º∞
         std::shared_ptr<Environment> previous = visitor.environment;
         try {
-            visitor.environment = block_env; // «–ªªµΩ—≠ª∑µ¸¥˙µƒ◊˜”√”Ú
+            visitor.environment = block_env; // ÂàáÊç¢Âà∞Âæ™ÁéØËø≠‰ª£ÁöÑ‰ΩúÁî®Âüü
 
-            // ÷¥––—≠ª∑ÃÂ÷–µƒ”Ôæ‰
+            // ÊâßË°åÂæ™ÁéØ‰Ωì‰∏≠ÁöÑËØ≠Âè•
             for(const auto& stmt : body) {
                 visitor.execute(stmt);
             }
 
-            // ‘⁄÷¥––ÕÍ—≠ª∑ÃÂ∫Û£¨¡¢º¥‘⁄œ‡Õ¨µƒ£®ƒ⁄≤ø£©◊˜”√”Ú÷–∆¿π¿untilÃıº˛
+            // Âú®ÊâßË°åÂÆåÂæ™ÁéØ‰ΩìÂêéÔºåÁ´ãÂç≥Âú®Áõ∏ÂêåÁöÑÔºàÂÜÖÈÉ®Ôºâ‰ΩúÁî®Âüü‰∏≠ËØÑ‰º∞untilÊù°‰ª∂
             if (condition) {
                 ValuePtr condition_val = visitor.evaluate(condition);
                 if (condition_val->isTruthy()) {
-                    visitor.environment = previous; // ‘⁄Ã¯≥ˆ«∞ª÷∏¥ª∑æ≥
+                    visitor.environment = previous; // Âú®Ë∑≥Âá∫ÂâçÊÅ¢Â§çÁéØÂ¢É
                     break;
                 }
             }
-            // ∂‘”⁄√ª”–untilµƒŒﬁœﬁ—≠ª∑ (loop...endloop)£¨≥˝∑«”ˆµΩbreak£¨∑Ò‘Ú≤ªª·Ã¯≥ˆ
+            // ÂØπ‰∫éÊ≤°ÊúâuntilÁöÑÊó†ÈôêÂæ™ÁéØ (loop...endloop)ÔºåÈô§ÈùûÈÅáÂà∞breakÔºåÂê¶Âàô‰∏ç‰ºöË∑≥Âá∫
 
-            visitor.environment = previous; // ’˝≥£ÕÍ≥…“ª¥Œµ¸¥˙∫Ûª÷∏¥ª∑æ≥
+            visitor.environment = previous; // Ê≠£Â∏∏ÂÆåÊàê‰∏ÄÊ¨°Ëø≠‰ª£ÂêéÊÅ¢Â§çÁéØÂ¢É
         } catch (const BreakException&) {
-            visitor.environment = previous; // ≤∂ªÒµΩbreak∫Ûª÷∏¥ª∑æ≥
+            visitor.environment = previous; // ÊçïËé∑Âà∞breakÂêéÊÅ¢Â§çÁéØÂ¢É
             break;
         } catch (...) {
-            visitor.environment = previous; // ∑¢…˙»Œ∫Œ∆‰À˚“Ï≥£ ±ª÷∏¥ª∑æ≥
+            visitor.environment = previous; // ÂèëÁîü‰ªª‰ΩïÂÖ∂‰ªñÂºÇÂ∏∏Êó∂ÊÅ¢Â§çÁéØÂ¢É
             throw;
         }
     }
@@ -1608,12 +1575,12 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
             ValuePtr result = native_fn->call(arg_values);
             visitor.call_stack.pop_back();
             return result;
-        } catch (const RuntimeError& re) { // ”≈œ»≤∂ªÒ“—∞¸∫¨æ´»∑––∫≈µƒRuntimeError
+        } catch (const RuntimeError& re) { // ‰ºòÂÖàÊçïËé∑Â∑≤ÂåÖÂê´Á≤æÁ°ÆË°åÂè∑ÁöÑRuntimeError
             visitor.call_stack.pop_back();
-            throw; // ÷±Ω”÷ÿ–¬≈◊≥ˆ£¨±£¡Ù‘≠ º––∫≈∫Õ–≈œ¢
-        } catch(const std::exception& e) { // ∆‰À˚±Í◊º“Ï≥£
+            throw; // Áõ¥Êé•ÈáçÊñ∞ÊäõÂá∫Ôºå‰øùÁïôÂéüÂßãË°åÂè∑Âíå‰ø°ÊÅØ
+        } catch(const std::exception& e) { // ÂÖ∂‰ªñÊ†áÂáÜÂºÇÂ∏∏
             visitor.call_stack.pop_back();
-            // Ω´∆‰À˚“Ï≥£∞¸◊∞≥…RuntimeError£¨≤¢ π”√µ±«∞µ˜”√µƒ––∫≈
+            // Â∞ÜÂÖ∂‰ªñÂºÇÂ∏∏ÂåÖË£ÖÊàêRuntimeErrorÔºåÂπ∂‰ΩøÁî®ÂΩìÂâçË∞ÉÁî®ÁöÑË°åÂè∑
             throw RuntimeError(line, e.what());
         }
     }
@@ -1799,6 +1766,7 @@ ValuePtr ExpressionStatementNode::accept(Interpreter& visitor) {
 Interpreter::Interpreter() : globals(std::make_shared<Environment>()), environment(globals), time_limit_ms(0) {
     define_native_functions();
 }
+// MODIFIED: Added several new native functions
 void Interpreter::define_native_functions() {
     #define REQUIRE_ARGS(name, count) if(args.size() != count) throw std::runtime_error(name + std::string(PyRiteMessages::NATIVE_ERROR_REQUIRES_ARGS_SUFFIX) + #count + " arguments.");
     #define REQUIRE_MIN_ARGS(name, count) if(args.size() < count) throw std::runtime_error(name + std::string(PyRiteMessages::NATIVE_ERROR_REQUIRES_MIN_ARGS_SUFFIX) + #count + " arguments.");
@@ -1942,6 +1910,58 @@ void Interpreter::define_native_functions() {
          }
          return instance;
      }));
+
+    // ADDED: New native functions for BigNumber library
+    globals->define("set_precision", std::make_shared<NativeFnValue>("set_precision", [](const std::vector<ValuePtr>& args){
+        REQUIRE_ARGS("set_precision", 1);
+        GET_NUM(args[0], num_val);
+        try {
+            BigNumber::set_default_precision(num_val->value.toLongLong());
+        } catch(const std::exception& e) {
+            throw std::runtime_error(e.what());
+        }
+        return std::make_shared<NullValue>();
+    }));
+
+    globals->define("get_precision", std::make_shared<NativeFnValue>("get_precision", [](const std::vector<ValuePtr>& args){
+        REQUIRE_ARGS("get_precision", 0);
+        return std::make_shared<NumberValue>(BigNumber(BigNumber::get_default_precision()));
+    }));
+
+    globals->define("approx", std::make_shared<NativeFnValue>("approx", [](const std::vector<ValuePtr>& args){
+        REQUIRE_ARGS("approx", 2);
+        GET_NUM(args[0], num_to_approx);
+        GET_NUM(args[1], precision_val);
+        try {
+            int p = precision_val->value.toLongLong();
+            return std::make_shared<NumberValue>(num_to_approx->value.approx(p));
+        } catch(const std::exception& e) {
+            throw std::runtime_error(e.what());
+        }
+    }));
+
+    globals->define("is_int", std::make_shared<NativeFnValue>("is_int", [](const std::vector<ValuePtr>& args){
+        REQUIRE_ARGS("is_int", 1);
+        GET_NUM(args[0], num_val);
+        return std::make_shared<NumberValue>(num_val->value.isInteger() ? 1 : 0);
+    }));
+
+    globals->define("is_neg", std::make_shared<NativeFnValue>("is_neg", [](const std::vector<ValuePtr>& args){
+        REQUIRE_ARGS("is_neg", 1);
+        GET_NUM(args[0], num_val);
+        return std::make_shared<NumberValue>(num_val->value.isNegative() ? 1 : 0);
+    }));
+
+    globals->define("to_double", std::make_shared<NativeFnValue>("to_double", [](const std::vector<ValuePtr>& args){
+        REQUIRE_ARGS("to_double", 1);
+        GET_NUM(args[0], num_val);
+        try {
+            double d = num_val->value.toDouble();
+            return std::make_shared<NumberValue>(BigNumber(std::to_string(d)));
+        } catch (const std::exception& e) {
+            throw std::runtime_error(e.what());
+        }
+    }));
 }
 
 // --- Helper Functions ---
@@ -2076,87 +2096,30 @@ void run_repl(Interpreter& interpreter) {
                       << PyRiteMessages::ABOUT_HEADER_FOOTER;
             continue;
         }
-        if (starts_with(trimmed_line, "compile(") && ends_with(trimmed_line, ")")) {
-            try {
-                auto start_time_compile = std::chrono::high_resolution_clock::now();
-                #ifdef _WIN32
-                const char PATH_SEPARATOR = '\\';
-                #else
-                const char PATH_SEPARATOR = '/';
-                #endif
-                auto parsed_args = parse_function_call(trimmed_line);
-                if (parsed_args.count("error")) {
-                    throw std::runtime_error(parsed_args.at("error"));
+        if (trimmed_line == "help()") {
+            std::cout << HelpMessagesCN::get_all_functions() << std::endl;
+            continue;
+        }
+        if (starts_with(trimmed_line, "help(") && ends_with(trimmed_line, ")")) {
+            auto parsed_args = parse_function_call(trimmed_line);
+            if (parsed_args.count("error")) {
+                std::cerr << "ÈîôËØØ: " << parsed_args.at("error") << std::endl;
+                continue;
+            }
+            bool found = false;
+            for (const auto& pair : parsed_args) {
+                std::string func_name = pair.second;
+                if (func_name.length() >= 2 && ((func_name.front() == '"' && func_name.back() == '"') || (func_name.front() == '\'' && func_name.back() == '\''))) {
+                    func_name = func_name.substr(1, func_name.length() - 2);
                 }
-                std::string src_path_arg = parsed_args.count("route") ? parsed_args.at("route") : "";
-                std::string extra_flags_arg = parsed_args.count("args") ? parsed_args.at("args") : "";
-                std::string source_code;
-                std::string output_dir = interpreter.base_path;
-                std::string output_stem = "buffer";
-                std::string full_src_filename_for_msg = "buffer";
-                bool compile_from_buffer = src_path_arg.empty();
-                if (compile_from_buffer) {
-                    source_code = interpreter.repl_buffer;
-                    if (source_code.empty()) {
-                        throw std::runtime_error(PyRiteMessages::COMPILE_BUFFER_EMPTY);
-                    }
+                std::string help_text = HelpMessagesCN::get_help(func_name);
+                if (!help_text.empty()) {
+                    std::cout << help_text << std::endl;
+                    found = true;
                 } else {
-                    full_src_filename_for_msg = src_path_arg;
-                    std::ifstream src_file(src_path_arg);
-                    if (!src_file.is_open()) throw std::runtime_error(std::string(PyRiteMessages::COMPILE_CANNOT_OPEN_SOURCE) + src_path_arg);
-                    source_code.assign((std::istreambuf_iterator<char>(src_file)), std::istreambuf_iterator<char>());
-                    src_file.close();
-                    size_t last_slash = src_path_arg.find_last_of("/\\");
-                    output_dir = (last_slash == std::string::npos) ? "." : src_path_arg.substr(0, last_slash);
-                    std::string filename = (last_slash == std::string::npos) ? src_path_arg : src_path_arg.substr(last_slash + 1);
-                    size_t last_dot = filename.find_last_of(".");
-                    output_stem = (last_dot == std::string::npos) ? filename : filename.substr(0, last_dot);
+                    std::cout << "Êú™ÊâæÂà∞ÂáΩÊï∞ '" << func_name << "' ÁöÑÂ∏ÆÂä©‰ø°ÊÅØ„ÄÇ" << std::endl;
+                    std::cout << "ËæìÂÖ• help() Êü•ÁúãÊâÄÊúâÂèØÁî®ÂáΩÊï∞„ÄÇ" << std::endl;
                 }
-                std::string template_content;
-                std::string template_path = interpreter.base_path + PATH_SEPARATOR + "template.cpp";
-                std::ifstream template_file(template_path);
-                if (!template_file.is_open()) throw std::runtime_error(std::string(PyRiteMessages::COMPILE_CANNOT_OPEN_TEMPLATE) + template_path);
-                template_content.assign((std::istreambuf_iterator<char>(template_file)), std::istreambuf_iterator<char>());
-                template_file.close();
-                std::string placeholder = "WRITE_SRC_CODE_HERE";
-                size_t pos = template_content.find(placeholder);
-                if (pos == std::string::npos) throw std::runtime_error(PyRiteMessages::COMPILE_TEMPLATE_PLACEHOLDER_MISSING);
-                template_content.replace(pos, placeholder.length(), source_code);
-                std::string temp_cpp_path = output_dir + PATH_SEPARATOR + output_stem + ".cpp";
-                std::cout << PyRiteMessages::COMPILE_TRANSLATION_TARGET << temp_cpp_path << std::endl;
-                std::ofstream temp_cpp_file(temp_cpp_path);
-                if (!temp_cpp_file.is_open()) {
-                    throw std::runtime_error(std::string(PyRiteMessages::COMPILE_CANNOT_OPEN_TEMP_WRITE) + temp_cpp_path);
-                }
-                temp_cpp_file << template_content;
-                temp_cpp_file.close();
-                if (temp_cpp_file.fail()) {
-                    throw std::runtime_error(std::string(PyRiteMessages::COMPILE_WRITE_TEMP_FAILED) + temp_cpp_path);
-                }
-                std::string output_exe_name = output_stem;
-                #ifdef _WIN32
-                output_exe_name += ".exe";
-                #endif
-                std::string output_exe_path = output_dir + PATH_SEPARATOR + output_exe_name;
-                std::string compiler_path = interpreter.base_path + PATH_SEPARATOR + "compilers" + PATH_SEPARATOR + "MinGW64" + PATH_SEPARATOR + "bin" + PATH_SEPARATOR + "g++.exe";
-                std::stringstream cmd;
-                cmd << "\"" << compiler_path << "\""
-                    << " \"" << temp_cpp_path << "\""
-                    << " -o \"" << output_exe_path << "\""
-                    << " -I. -std=c++11 -O2 " << extra_flags_arg;
-                std::cout << PyRiteMessages::COMPILE_COMMAND_INFO << cmd.str() << std::endl;
-                int result = system(("\"" + cmd.str() + "\"").c_str());
-                remove(temp_cpp_path.c_str());
-                auto end_time_compile = std::chrono::high_resolution_clock::now();
-                double duration = std::chrono::duration_cast<std::chrono::duration<double>>(end_time_compile - start_time_compile).count();
-                if (result == 0) {
-                    std::cout << PyRiteMessages::COMPILE_SUCCESS_PREFIX << full_src_filename_for_msg << PyRiteMessages::COMPILE_SUCCESS_TOOK
-                              << std::fixed << std::setprecision(2) << duration << PyRiteMessages::COMPILE_SUCCESS_SECONDS << output_exe_path << std::endl;
-                } else {
-                    throw std::runtime_error(std::string(PyRiteMessages::COMPILE_FAILURE_PREFIX) + full_src_filename_for_msg + PyRiteMessages::COMPILE_FAILURE_SUFFIX);
-                }
-            } catch (const std::runtime_error& e) {
-                std::cerr << PyRiteMessages::COMPILE_ERROR_PREFIX << e.what() << PyRiteMessages::COMPILE_ERROR_SUFFIX << std::endl;
             }
             continue;
         }
