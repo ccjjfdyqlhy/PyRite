@@ -46,6 +46,14 @@ namespace BigNumberDetail {
         std::string toString() const;
         int size() const { return digits.size(); }
         bool isZero() const { return digits.size() == 1 && digits[0] == 0; }
+        int decimalDigitCount() const {
+            if (isZero()) return 0;
+            int count = (digits.size() - 1) * BASE;
+            int top = digits.back();
+            if (top == 0) return count;
+            while (top > 0) { count++; top /= 10; }
+            return count;
+        }
 
         bool operator<(const UnsignedDigit& rhs) const;
         bool operator<=(const UnsignedDigit& rhs) const;
@@ -69,7 +77,7 @@ namespace BigNumberDetail {
 
     namespace ConvHelper { // FFT-based convolution for fast multiplication
 
-        void fft(cd* a, int lgn, int d) {
+        inline void fft(cd* a, int lgn, int d) {
             int n = 1 << lgn;
             static std::vector<int> brev;
             if (n != (int)brev.size()) {
@@ -100,7 +108,7 @@ namespace BigNumberDetail {
             }
         }
 
-        std::vector<ll> conv(const std::vector<int>& a, const std::vector<int>& b) {
+        inline std::vector<ll> conv(const std::vector<int>& a, const std::vector<int>& b) {
             int n = a.size() - 1, m = b.size() - 1;
             if (n < 1000 / (m + 1) || n < 10 || m < 10) {
                 std::vector<ll> ret(n + m + 1);
@@ -130,7 +138,7 @@ namespace BigNumberDetail {
 
     namespace DivHelper { // Newton-Raphson division
 
-        UnsignedDigit quasiInv(const UnsignedDigit& v) {
+        inline UnsignedDigit quasiInv(const UnsignedDigit& v) {
             if (v.digits.size() == 1) {
                 UnsignedDigit tmp;
                 tmp.digits.assign(3, 0);
@@ -161,7 +169,7 @@ namespace BigNumberDetail {
 
     } // namespace DivHelper
 
-    UnsignedDigit::UnsignedDigit(ll x) {
+    inline UnsignedDigit::UnsignedDigit(ll x) {
         if (x == 0) {
             digits.push_back(0);
         } else {
@@ -172,7 +180,7 @@ namespace BigNumberDetail {
         }
     }
 
-    UnsignedDigit UnsignedDigit::move(int k) const {
+    inline UnsignedDigit UnsignedDigit::move(int k) const {
         if (k == 0) return *this;
         if (isZero()) return UnsignedDigit();
 
@@ -187,7 +195,7 @@ namespace BigNumberDetail {
         return ret;
     }
 
-    bool UnsignedDigit::operator<(const UnsignedDigit& rhs) const {
+    inline bool UnsignedDigit::operator<(const UnsignedDigit& rhs) const {
         int n = digits.size(), m = rhs.digits.size();
         if (n != m) return n < m;
         for (int i = n - 1; i >= 0; --i)
@@ -196,7 +204,7 @@ namespace BigNumberDetail {
         return false;
     }
 
-    bool UnsignedDigit::operator<=(const UnsignedDigit& rhs) const {
+    inline bool UnsignedDigit::operator<=(const UnsignedDigit& rhs) const {
         int n = digits.size(), m = rhs.digits.size();
         if (n != m) return n < m;
         for (int i = n - 1; i >= 0; --i)
@@ -205,11 +213,11 @@ namespace BigNumberDetail {
         return true;
     }
 
-    bool UnsignedDigit::operator==(const UnsignedDigit& rhs) const {
+    inline bool UnsignedDigit::operator==(const UnsignedDigit& rhs) const {
         return digits == rhs.digits;
     }
 
-    UnsignedDigit UnsignedDigit::operator+(const UnsignedDigit& rhs) const {
+    inline UnsignedDigit UnsignedDigit::operator+(const UnsignedDigit& rhs) const {
         int n = digits.size(), m = rhs.digits.size();
         std::vector<int> tmp(std::max(n, m) + 1, 0);
         const std::vector<int>& a = (n > m) ? digits : rhs.digits;
@@ -233,7 +241,7 @@ namespace BigNumberDetail {
         return tmp;
     }
 
-    UnsignedDigit UnsignedDigit::operator-(const UnsignedDigit& rhs) const {
+    inline UnsignedDigit UnsignedDigit::operator-(const UnsignedDigit& rhs) const {
         UnsignedDigit ret(*this);
         int n = rhs.digits.size();
         for (int i = 0; i < n; ++i) {
@@ -251,7 +259,7 @@ namespace BigNumberDetail {
         return ret;
     }
 
-    UnsignedDigit UnsignedDigit::operator*(const UnsignedDigit& rhs) const {
+    inline UnsignedDigit UnsignedDigit::operator*(const UnsignedDigit& rhs) const {
         std::vector<ll> tmp = ConvHelper::conv(digits, rhs.digits);
         for (size_t i = 0; i + 1 < tmp.size(); ++i) {
             tmp[i + 1] += tmp[i] / MOD;
@@ -266,7 +274,7 @@ namespace BigNumberDetail {
         return result;
     }
 
-    UnsignedDigit UnsignedDigit::operator/(const UnsignedDigit& rhs) const {
+    inline UnsignedDigit UnsignedDigit::operator/(const UnsignedDigit& rhs) const {
         int m = digits.size(), n = rhs.digits.size(), t = 0;
         if (m < n) return 0;
         if (m > n * 2) t = m - 2 * n;
@@ -279,7 +287,7 @@ namespace BigNumberDetail {
         return ret;
     }
 
-    UnsignedDigit UnsignedDigit::operator/(int k) const {
+    inline UnsignedDigit UnsignedDigit::operator/(int k) const {
         UnsignedDigit ret;
         int n = digits.size();
         ret.digits.resize(n);
@@ -293,18 +301,18 @@ namespace BigNumberDetail {
         return ret;
     }
 
-    UnsignedDigit::UnsignedDigit(const std::vector<int>& digits) : digits(digits) {
+    inline UnsignedDigit::UnsignedDigit(const std::vector<int>& digits) : digits(digits) {
         if (this->digits.empty())
             this->digits.assign(1, 0);
         trim();
     }
 
-    void UnsignedDigit::trim() {
+    inline void UnsignedDigit::trim() {
         while (digits.size() > 1 && digits.back() == 0)
             digits.pop_back();
     }
 
-    std::string UnsignedDigit::toString() const {
+    inline std::string UnsignedDigit::toString() const {
         std::stringstream ss;
         ss << digits.back();
         for (int i = (int)digits.size() - 2; i >= 0; --i) {
@@ -313,7 +321,7 @@ namespace BigNumberDetail {
         return ss.str();
     }
 
-    UnsignedDigit::UnsignedDigit(std::string str) {
+    inline UnsignedDigit::UnsignedDigit(std::string str) {
         if (str.empty() || std::any_of(str.begin(), str.end(), [](char c){ return !isdigit(c); })) {
             digits.assign(1, 0);
             return;
@@ -330,7 +338,7 @@ namespace BigNumberDetail {
         trim();
     }
 
-    UnsignedDigit pow(UnsignedDigit x, int k) {
+    inline UnsignedDigit pow(UnsignedDigit x, int k) {
         UnsignedDigit ret = 1;
         while (k) {
             if (k & 1) ret = ret * x;
@@ -369,8 +377,8 @@ private:
 
     // Compares absolute values: 1 (this > other), -1 (this < other), 0 (this == other)
     int compare_abs(const BigNumber& other) const {
-        int this_int_len = magnitude.toString().length() - decimal_pos;
-        int other_int_len = other.magnitude.toString().length() - other.decimal_pos;
+        int this_int_len = magnitude.decimalDigitCount() - decimal_pos;
+        int other_int_len = other.magnitude.decimalDigitCount() - other.decimal_pos;
 
         if (this_int_len != other_int_len) {
             return this_int_len > other_int_len ? 1 : -1;
@@ -505,9 +513,8 @@ public:
         if (other.magnitude.isZero()) {
             throw std::runtime_error("Modulo by zero.");
         }
-        BigNumber div_res = *this / other;
-        BigNumber integer_quotient(div_res.toString().substr(0, div_res.toString().find('.')));
-        return *this - (integer_quotient * other);
+        BigNumber quotient = this->exact_division(other);
+        return *this - (quotient * other);
     }
     
     BigNumber exact_division(const BigNumber& other) const; // to remove the extra zeros.
@@ -667,7 +674,7 @@ public:
     }
 };
 
-BigNumber BigNumber::exact_division(const BigNumber& other) const {
+inline BigNumber BigNumber::exact_division(const BigNumber& other) const {
     if (other.magnitude.isZero()) {
         throw std::runtime_error("Division by zero.");
     }

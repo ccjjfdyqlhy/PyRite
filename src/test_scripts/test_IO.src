@@ -1,0 +1,157 @@
+# --- PyRite v0.20+ 功能综合测试脚本 ---
+本脚本旨在测试以下新功能:
+1. 函数和类定义中的 'any' 类型提示。
+2. 'nul' 关键字作为空值。
+3. 文件I/O：open(), .read(), .write(), .close()。
+4. 新数据类型 'tense' (矩阵) 及其运算。
+5. 'tense' 到 'ln' 的隐式类型转换。
+----------------------------------------------- #
+
+say("--- 1. 'any' 类型提示和 'nul' 值测试 ---")
+
+# 定义一个函数，第一个参数接受任意类型，第二个参数默认为 nul #
+def test_any_and_nul(any p1, any p2 = nul) do
+    say("test_any_and_nul: 收到的 p1 是: " + p1)
+    if p2 == nul then
+        say("test_any_and_nul: p2 是空值 (nul)。")
+    else
+        say("test_any_and_nul: 收到的 p2 是: " + p2)
+    endif
+enddef
+
+# 使用不同类型的参数调用该函数 #
+dec my_num = 123
+str my_str = "hello"
+bin my_bin = 0xDEADBEEF
+ln my_list = [1, "two", 3]
+
+test_any_and_nul(my_num)          # 测试默认的 nul 参数 #
+test_any_and_nul(my_str, my_num)  # 测试 str 和 dec #
+test_any_and_nul(my_bin)          # 测试 bin #
+test_any_and_nul(my_list, my_str) # 测试 ln 和 str #
+
+say("") # 打印空行以分隔 #
+
+
+say("--- 2. 文件 I/O 接口测试 ---")
+str filename = "pyrite_test_output.txt"
+any file_obj = nul
+
+# 正常的文件读写流程 #
+try do
+    say("正在打开文件: " + filename)
+    # 使用 open() 内置函数 #
+    file_obj = open(filename)
+
+    say("正在写入内容...")
+    # .write() 接受 'any' 类型，会被转换为字符串写入 #
+    file_obj.write("第一行：这是一个 PyRite 测试文件。\n")
+    file_obj.write(98765) # 写入一个数字 #
+    file_obj.write("\n")
+    
+    # 使用 cursor_pos 参数在指定位置写入 #
+    file_obj.write("...这是插入的内容...", [2, 0])
+
+    say("写入完成。正在读取文件内容...")
+    
+    # .read() 不带参数，读取整个文件 #
+    str full_content = file_obj.read()
+    say("文件全部内容:\n---\n" + full_content + "---")
+    
+    # .read() 带参数，读取指定行 #
+    str first_line = file_obj.read(1)
+    say("仅读取第一行: " + first_line)
+
+catch e do
+    say("文件操作期间发生错误: " + e)
+finally do
+    # 确保文件被关闭 #
+    if file_obj != nul then
+        say("正在关闭文件...")
+        file_obj.close()
+    endif
+endtry
+
+# 测试写入时的错误情况（使用浮点数作为光标位置） #
+say("\n测试无效的文件写入操作...")
+try do
+    file_obj = open("error_test.txt")
+    # 这应该会触发一个运行时错误 #
+    file_obj.write("这段内容不应被写入", [1.5, 0]) 
+catch e do
+    say("成功捕获到预期的错误: " + e)
+finally do
+    if file_obj != nul then
+        file_obj.close()
+    endif
+endtry
+
+say("")
+
+
+say("--- 3. 'tense' (矩阵) 类型和运算测试 ---")
+
+# 定义两个矩阵 #
+tense T1 = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+tense T2 = [[9, 8, 7], [6, 5, 4], [3, 2, 1]]
+# 定义一个包含负数和小数的矩阵来测试符号处理 #
+tense T3 = [[-1.5, 2.2], [-3, 4.1]]
+
+say("T1 = " + T1)
+say("T2 = " + T2)
+say("T3 = " + T3)
+
+# 测试矩阵加法 #
+say("\n测试矩阵加法 T1 + T2:")
+tense T_add = T1 + T2
+say("结果: " + T_add)
+
+# 测试矩阵减法 #
+say("\n测试矩阵减法 T1 - T2:")
+tense T_sub = T1 - T2
+say("结果: " + T_sub)
+
+# 测试矩阵乘法 #
+say("\n测试矩阵乘法 T1 * T2:")
+tense T_mul = T1 * T2
+say("结果: " + T_mul)
+
+# 测试矩阵求逆 (假设使用 `^ -1` 语法) #
+say("\n测试矩阵求逆:")
+tense T_invertible = [[4, 7], [2, 6]]
+say("待求逆矩阵: " + T_invertible)
+tense T_inv = T_invertible ^ -1
+say("逆矩阵: " + T_inv)
+
+say("")
+
+
+say("--- 4. 'tense' 与其他类型的交互测试 ---")
+
+# a) 测试 tense 到 ln 的隐式转换 #
+say("将矩阵 T1 隐式转换为列表 L:")
+ln L = T1
+say("转换后的列表 L: " + L)
+say("L[1] 的值为: " + L[1]) # 应该输出 [4, 5, 6] #
+
+# b) 定义一个接受 ln 的函数 #
+def process_as_list(ln data) do
+    say("process_as_list: 接收到数据，类型表现为 ln。")
+    # 访问列表元素 #
+    say("  第一个子元素是: " + data[0])
+enddef
+
+# c) 将一个普通列表传递给它 #
+say("\n将普通 ln 传递给 process_as_list:")
+process_as_list([100, 200, 300])
+
+# d) 将一个 tense 对象传递给它，测试是否能被接受 #
+say("\n将 tense T1 传递给 process_as_list:")
+process_as_list(T1)
+
+# e) 将 tense 对象传递给之前定义的 test_any_and_nul 函数 #
+say("\n将 tense T1 传递给 test_any_and_nul:")
+test_any_and_nul(T1, "这是一个矩阵")
+
+
+say("\n--- 所有测试已成功完成 ---")

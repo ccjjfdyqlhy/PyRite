@@ -12,7 +12,7 @@ enddef
 dec my_num = 123
 str my_str = "hello"
 bin my_bin = 0xDEADBEEF
-list my_list = [1, "two", 3]
+ln my_list = [1, "two", 3]
 
 test_any_and_nul(my_num) 
 test_any_and_nul(my_str, my_num)

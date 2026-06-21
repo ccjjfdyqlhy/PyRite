@@ -1,221 +1,49 @@
-![cover](https://github.com/ccjjfdyqlhy/PyRite/blob/main/cover.png)
-# PyRite: 一套简洁到神奇的编程语言！！
+# PyRite
 
-怎么用？参考[指导文件](https://github.com/ccjjfdyqlhy/PyRite/blob/main/docs/guide_cn.md)。
+A lightweight interpreted scripting language with built-in arbitrary-precision arithmetic.
 
-**现在支持中日英三种语言！** 日语特供一版超可爱的版本~~
+## Features
 
-其他语言版本的 **README** 正在编纂中~
+- **BigNumber** — all numbers are arbitrary-precision by default
+- **C-like syntax** — if/elif/else/end, while/end, fn/end
+- **OOP** — classes (`ins`) and structs
+- **Modules** — lazy-loading `require` with single-file and directory support
+- **Lambdas** — `fn(x) -> x * 2`
+- **High-order functions**, closures, try/catch, and more
 
-![Language](https://img.shields.io/badge/language-C%2B%2B11-blue.svg)
-![Status](https://img.shields.io/badge/status-in--development-orange.svg)
-
-PyRite 是一个用 C++11 编写的、小巧的动态脚本语言解释器。它的设计目标是提供一个易于学习、语法简洁且可嵌入的现代化语言，实现不同编程语言间的无缝衔接互作。
-
-## ✨ 主要特性
-
-*   **简洁的语法**: 语法设计受到 Python 和 Lua 的启发，易于阅读和编写。
-*   **高精度整数**: 内置 `BigNumber` 支持，可以处理超出标准 64 位整数范围的巨大数字。
-*   **动态类型**: 声明时支持类型关键字（`dec`, `str`, `bin`, `list`）以增强可读性和进行隐式类型转换。
-*   **面向对象编程 (OOP)**: 支持类（`ins`）、实例、字段、方法和 `this` 关键字。
-*   **控制流**: 包含 `if/then/else`, `while/do/finally` 等完整的控制流结构。
-*   **函数与闭包**: 支持头等函数、参数类型提示、默认参数值和词法闭包。
-*   **异常处理**: 完整的 `try/catch/finally` 机制，用于健壮的错误处理。
-*   **丰富的内置函数**: 提供数学、列表操作、哈希、计时等常用功能。
-*   **交互式解释器 (REPL)**: 提供一个交互式环境，用于实时测试代码片段。
-*   **静态多语言支持**: 通过在编译时引入对应语言的头文件修改解释器语言。
-
-## ✨ 未来支持的特性
-
-*   **代码引用**: 使用 `require()` 与 `dump()` 实现向环境中导入/卸载库或代码。
-*   **与 C++ 混合开发**: 支持与底层C++代码共同编码、导入动态链接库等。
-*   **与 Python、Rust 混合开发**: 通过高速转译层将代码统一到共同环境中执行。
-*   **更好的I/O**: 支持内存修改和文件读写操作。
-*   **深度学习底层支持**: 支持张量、矩阵等基本系统。
-*   **更好的流程控制**: 完善 `mark()` 、 `jump()` 和 `await` 的逻辑。
-
-## 🔧 环境与构建
-
-### 先决条件
-
-*   只需要一个支持 C++11 的 C++ 编译器（例如 **g++** 或 **Clang**）。
-  
-### 构建解释器
-
-**注意：开发版解释器源代码中可能会启用 `DEBUG` ，这将会在终端里释放大量的内部调试信息。如果你不想看到这些额外的内容，请在编译前将 `SimPy.cpp` 中前面位置的 `debug` 设为 `false` 。**
-
-首先，转到解释器源代码 `PyRite.cpp` ，调整最后一条 `include` 为你想设置的语言的对应头文件。  
-
-然后在项目根目录中运行以下命令：
+## Build
 
 ```bash
-g++ PyRite.cpp -o PyRite -std=c++11 -O2
+make release    # optimized build
+make debug      # debug build with verbose output
+make clean      # remove build artifacts
 ```
 
-## 🚀 使用方法
+Requires a C++11 compiler (g++ or clang++).
 
-PyRite 解释器支持两种操作模式：
-
-### 1. 交互式解释器 (REPL)
-
-直接运行可执行文件以启动 REPL：
+## Run
 
 ```bash
-./PyRite
+./PyRite script.pr        # run a file
+./PyRite                  # start REPL
 ```
 
-你会看到一个提示符，可以在其中逐行输入代码。输入 `run()` 来执行缓冲区中的所有代码，或输入 `halt()` 退出。
+## Example
 
-### 2. 执行脚本文件
+```python
+fn fib(dec n) do
+  if n <= 1 then return n endif
+  return fib(n - 1) + fib(n - 2)
+end
 
-将你的 PyRite 代码保存到一个文件中，然后将其作为参数传递给解释器：
-
-```bash
-./PyRite your_script.src
+say(fib(20))  // 6765
 ```
 
-## 📜 PyRite 语法简介
+## REPL Commands
 
-开发该语法旨在能用极为通俗而简洁的语言编写程序。
-
-**这里只介绍基本的 PyRite 用法。** 详细文档请看[指导文件](https://github.com/ccjjfdyqlhy/PyRite/blob/main/docs/guide_cn.md)。
-
-### 1. 数据类型
-
-*   `dec`: 十进制数（高精度整数或小数）。
-*   `str`: 字符串。
-*   `bin`: 二进制数据（以 `0x` 开头的十六进制字面量）。
-*   `list`: 动态数组/列表。
-*   `null`: 表示空值。
-*   `function`: 函数对象。
-*   `class`: 类定义。
-*   `instance`: 类的实例。
-
-### 2. 变量
-
-使用类型关键字声明变量。如果未提供初始值，则默认为该类型的零值或空值。
-
-```src
-# 变量声明与赋值 #
-dec my_number = 123.456
-str greeting = "Hello"
-bin data = 0xdeadbeef
-list items = [1, "two", 3]
-my_number = my_number + 1
-```
-
-### 3. 运算符
-
-*   **算术**: `+`, `-`, `*`, `/`, `^` (乘方)
-*   **比较**: `==`, `!=`, `<`, `>`, `<=`, `>=`
-*   **逻辑**: 逻辑运算通过 `if` 和 `while` 的真值判断实现（0 和 null 为假，其他为真）。
-
-### 4. 控制流
-
-```src
-# If-Then-Else #
-if x > 10 then
-    say("x is large")
-else
-    say("x is small")
-endif
-
-# While-Do-Finally #
-dec i = 5
-while i > 0 do
-    say(i)
-    i = i - 1
-finally
-    say("Loop finished!")
-endwhile
-```
-
-### 5. 函数
-
-可以有类型和默认值。
-
-```src
-# 定义一个带默认参数的函数 #
-def greet(str name, str message = "Hello") do
-    return message + ", " + name + "!"
-enddef
-
-# 调用函数 #
-say(greet("Alice"))               # 输出: Hello, Alice! #
-say(greet("Bob", "Goodbye"))      # 输出: Goodbye, Bob! #
-```
-
-### 6. 类与对象 (OOP)
-
-使用 `ins` 关键字定义类，`contains` 块内定义方法。使用 `new()` 内置函数创建实例。
-
-```src
-# 定义一个 Counter 类 #
-ins Counter(dec initial = 0) contains
-    # 这是一个字段，在 ins(...) 中定义 #
-
-    # 'this' 关键字引用实例本身 #
-    dec value = this.initial
-
-    # 定义一个方法 #
-    def increment(dec amount) do
-        this.value = this.value + amount
-    enddef
-
-    def get_value() do
-        return this.value
-    enddef
-endins
-
-# 创建一个 Counter 实例 #
-dec my_counter = new(Counter)
-my_counter.increment(5)
-say(my_counter.get_value()) # 输出: 5 #
-
-# 创建一个带初始值的实例 #
-dec another_counter = new(Counter(100))
-say(another_counter.get_value()) # 输出: 100 #
-```
-
-### 7. 异常处理
-
-使用 `try/catch` 来处理运行时错误或手动抛出的异常。
-
-```src
-try
-    dec result = 10 / 0
-catch e
-    say("An error occurred: " + e)
-finally
-    say("This will always run.")
-endtry
-
-# 抛出自定义异常 #
-try
-    raise(Exception("Something went wrong!"))
-catch ex
-    say("Caught custom exception: " + ex.payload)
-endtry
-```
-
-### 8. 内置函数和命令
-
-*   使用 `#` 包括住的部分会被看作注释，不管是否跨越行。
-
-#### REPL 命令
-
-*   `run(tick=0, limit=0)`: 执行缓冲区中的代码。
-    *   `tick=1`: 显示执行耗时。
-    *   `limit=ms`: 设置执行超时时间（毫秒）。
-*   `halt()`: 退出 REPL。
-*   `about()`: 显示版本信息。
-*   `$ <expression>`: 立即执行单行代码并将其添加到缓冲区。
-*   `$# <expression>`: 立即执行单行代码但不将其添加到缓冲区（用于临时调试）。
-
-## 🤝 贡献
-
-欢迎对 PyRite 项目做出贡献！你可以通过以下方式参与：
-*   报告 Bug 或提出新功能建议。
-*   **提交更好的高精度实现的PR（紧急！！）**
-*   提交新建或修订语言文件的PR。
-*   撰写文档和示例。
+| Command | Description |
+|---------|-------------|
+| `run()` | Execute buffered code |
+| `halt()` | Exit |
+| `help()` | List built-in functions |
+| `$ code` | Execute and add to buffer |

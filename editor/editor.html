@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PyRite Pro Editor</title>
+    <style>
+        :root {
+            --toolbar-height: 48px;
+            --tab-height: 35px;
+            --statusbar-height: 28px;
+            --line-num-width: 60px;
+            --editor-font-family: 'Menlo', 'Monaco', 'Consolas', 'Courier New', monospace;
+            --base-font-size: 14px;
+            --line-height: 1.5;
+
+            /* 亮色主题 */
+            --bg-body: #ffffff;
+            --bg-editor: #ffffff;
+            --bg-gutter: #f5f5f5;
+            --bg-toolbar: #f8f9fa;
+            --bg-tabs: #eeeeee;
+            --bg-tab-active: #ffffff;
+            --border-color: #e0e0e0;
+            --text-primary: #24292e;
+            --text-secondary: #6a737d;
+            --caret-color: #0366d6;
+            --selection-bg: rgba(3, 102, 214, 0.2);
+            
+            /* 语法高亮 - Light */
+            --color-keyword: #d73a49;
+            --color-type: #005cc5;
+            --color-function: #6f42c1;
+            --color-string: #032f62;
+            --color-number: #005cc5;
+            --color-comment: #6a737d;
+            --color-operator: #d73a49;
+            --color-class: #e36209;
+            --color-builtin: #22863a;
+        }
+
+        [data-theme="dark"] {
+            --bg-body: #1e1e1e;
+            --bg-editor: #1e1e1e;
+            --bg-gutter: #252526;
+            --bg-toolbar: #333333;
+            --bg-tabs: #252526;
+            --bg-tab-active: #1e1e1e;
+            --border-color: #444444;
+            --text-primary: #d4d4d4;
+            --text-secondary: #858585;
+            --caret-color: #aeafad;
+            --selection-bg: rgba(255, 255, 255, 0.1);
+
+            /* 语法高亮 - Dark */
+            --color-keyword: #c586c0;
+            --color-type: #569cd6;
+            --color-function: #dcdcaa;
+            --color-string: #ce9178;
+            --color-number: #b5cea8;
+            --color-comment: #6a9955;
+            --color-operator: #d4d4d4;
+            --color-class: #4ec9b0;
+            --color-builtin: #4fc1ff;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            height: 100vh;
+            background-color: var(--bg-body);
+            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* --- 工具栏 --- */
+        .toolbar {
+            height: var(--toolbar-height);
+            background-color: var(--bg-toolbar);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            gap: 10px;
+            z-index: 10;
+        }
+        .brand { font-weight: 700; color: var(--color-type); margin-right: 15px; display: flex; align-items: center; gap: 8px; font-family: var(--editor-font-family);}
+        
+        .tool-btn {
+            width: 32px; height: 32px; border-radius: 4px; border: none; background: transparent;
+            color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center;
+            position: relative;
+        }
+        .tool-btn:hover { background-color: rgba(128, 128, 128, 0.1); }
+        .tool-btn svg { width: 18px; height: 18px; fill: currentColor; }
+        .tool-btn::after {
+            content: attr(data-tooltip); position: absolute; bottom: -30px; left: 50%; transform: translateX(-50%);
+            background: #000; color: #fff; padding: 4px 8px; font-size: 10px; border-radius: 4px;
+            white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 100;
+        }
+        .tool-btn:hover::after { opacity: 0.8; }
+
+        /* --- 标签栏 --- */
+        .tab-bar {
+            height: var(--tab-height);
+            background-color: var(--bg-tabs);
+            display: flex;
+            overflow-x: auto;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .tab-bar::-webkit-scrollbar { height: 2px; }
+        .tab {
+            min-width: 120px; max-width: 200px; height: 100%;
+            display: flex; align-items: center; padding: 0 10px;
+            background-color: var(--bg-tabs);
+            border-right: 1px solid var(--border-color);
+            cursor: pointer; font-size: 12px; position: relative;
+            user-select: none; color: var(--text-secondary);
+        }
+        .tab.active {
+            background-color: var(--bg-tab-active);
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--color-type);
+        }
+        .tab .tab-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .tab .tab-close {
+            margin-left: 8px; width: 16px; height: 16px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center; font-size: 14px;
+        }
+        .tab .tab-close:hover { background: rgba(128, 128, 128, 0.2); }
+        .tab.unsaved .tab-name::after { content: ' ●'; color: var(--color-type); font-size: 10px; }
+
+        /* --- 编辑器区域 --- */
+        .editor-container { flex: 1; display: flex; position: relative; overflow: hidden; }
+        .gutter {
+            width: var(--line-num-width); background-color: var(--bg-gutter);
+            color: var(--text-secondary); border-right: 1px solid var(--border-color);
+            text-align: right; padding: 10px 5px; font-family: var(--editor-font-family);
+            font-size: var(--base-font-size); line-height: var(--line-height);
+            overflow: hidden; user-select: none;
+        }
+        .code-area { position: relative; flex: 1; background-color: var(--bg-editor); overflow: hidden; }
+        .editor-layer {
+            font-family: var(--editor-font-family); font-size: var(--base-font-size);
+            line-height: var(--line-height); tab-size: 4; padding: 10px; margin: 0;
+            border: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0;
+            white-space: pre; overflow: auto;
+        }
+        #code-highlight { color: var(--text-primary); pointer-events: none; z-index: 1; scrollbar-width: none; }
+        #code-highlight::-webkit-scrollbar { display: none; }
+        #code-input { color: transparent; background: transparent; caret-color: var(--caret-color); z-index: 2; resize: none; outline: none; }
+        #code-input::selection { background-color: var(--selection-bg); color: transparent; }
+
+        /* --- 语法高亮 --- */
+        .token-keyword { color: var(--color-keyword); font-weight: bold; }
+        .token-type { color: var(--color-type); }
+        .token-function { color: var(--color-function); }
+        .token-string { color: var(--color-string); }
+        .token-number { color: var(--color-number); }
+        .token-comment { color: var(--color-comment); font-style: italic; }
+        .token-operator { color: var(--color-operator); }
+        .token-class { color: var(--color-class); }
+        .token-builtin { color: var(--color-builtin); }
+
+        /* --- 状态栏 --- */
+        .statusbar {
+            height: var(--statusbar-height); background-color: var(--bg-toolbar);
+            border-top: 1px solid var(--border-color); display: flex;
+            justify-content: space-between; align-items: center; padding: 0 15px;
+            font-size: 11px; color: var(--text-secondary);
+        }
+        .status-left { display: flex; gap: 20px; }
+        .status-right { display: flex; gap: 15px; align-items: center; }
+        select.status-select {
+            background: transparent; border: none; color: inherit; font-size: 11px; cursor: pointer; outline: none;
+        }
+
+        /* 隐藏的文件输入 */
+        #file-input { display: none; }
+    </style>
+</head>
+<body data-theme="light">
+
+    <div class="toolbar">
+        <div class="brand">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+            PyRite
+        </div>
+        <button class="tool-btn" id="btn-save" data-tooltip="保存当前 (Ctrl+S)">
+            <svg viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
+        </button>
+        <div class="divider"></div>
+        <button class="tool-btn" id="btn-new" data-tooltip="新建 (Alt+N)">
+            <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+        </button>
+        <button class="tool-btn" id="btn-open" data-tooltip="打开文件">
+            <svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+        </button>
+        <input type="file" id="file-input" accept=".pr,.src" multiple>
+        <div class="spacer" style="flex:1"></div>
+        <select id="select-font-size" class="status-select" style="border: 1px solid var(--border-color); padding: 2px 5px; border-radius: 4px;">
+            <option value="12px">12px</option>
+            <option value="14px" selected>14px</option>
+            <option value="16px">16px</option>
+            <option value="18px">18px</option>
+        </select>
+        <button class="tool-btn" id="btn-theme" data-tooltip="切换主题">
+            <svg viewBox="0 0 24 24"><path d="M20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69zM12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6zm0-10c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4z"/></svg>
+        </button>
+    </div>
+
+    <div class="tab-bar" id="tab-bar">
+        </div>
+
+    <div class="editor-container">
+        <div class="gutter" id="gutter"></div>
+        <div class="code-area">
+            <pre id="code-highlight" class="editor-layer"></pre>
+            <textarea id="code-input" class="editor-layer" spellcheck="false" wrap="off"></textarea>
+        </div>
+    </div>
+
+    <div class="statusbar">
+        <div class="status-left">
+            <span id="status-info">未打开文件</span>
+        </div>
+        <div class="status-right">
+            <select id="select-encoding" class="status-select">
+                <option value="utf-8-sig">UTF-8 with BOM</option>
+                <option value="utf-8">UTF-8</option>
+                <option value="gbk">GBK</option>
+            </select>
+            <span id="status-cursor">Ln 1, Col 1</span>
+            <span>PyRite</span>
+        </div>
+    </div>
+
+    <script>
+        // --- 数据模型 ---
+        let files = []; // { id, name, content, unsaved, encoding }
+        let activeFileId = null;
+
+        const syntax = {
+            keywords: ['if', 'then', 'else', 'endif', 'while', 'do', 'finally', 'endwhile', 'fn', 'endfn', 'return', 'say', 'ask', 'halt', 'run', 'try', 'catch', 'endtry', 'raise', 'await', 'endawait', 'ins', 'contains', 'endins', 'using', 'as', 'loop', 'for', 'times', 'until', 'endloop', 'break', 'not', 'and', 'or', 'new'],
+            types: ['dec', 'str', 'bin', 'list', 'any', 'tense', 'nul', 'void'],
+            builtins: ['abs', 'len', 'rt', 'sort', 'setify', 'max', 'min', 'countdown', 'hash', 'sin', 'cos', 'tan', 'log', 'set_precision', 'get_precision', 'approx', 'is_int', 'is_neg', 'to_double'],
+            classes: ['Exception']
+        };
+
+        // --- DOM 引用 ---
+        const els = {
+            input: document.getElementById('code-input'),
+            highlight: document.getElementById('code-highlight'),
+            gutter: document.getElementById('gutter'),
+            tabBar: document.getElementById('tab-bar'),
+            statusInfo: document.getElementById('status-info'),
+            statusCursor: document.getElementById('status-cursor'),
+            encoding: document.getElementById('select-encoding'),
+            fileInput: document.getElementById('file-input')
+        };
+
+        // --- 初始化 ---
+        function init() {
+            addFile("untitled.pr", "");
+            
+            els.input.addEventListener('input', handleInput);
+            els.input.addEventListener('scroll', syncScroll);
+            els.input.onkeydown = handleKeydown;
+            els.input.onclick = els.input.onkeyup = updateCursor;
+            
+            document.getElementById('btn-new').onclick = () => addFile();
+            document.getElementById('btn-open').onclick = () => els.fileInput.click();
+            document.getElementById('btn-save').onclick = saveActiveFile;
+            document.getElementById('btn-theme').onclick = toggleTheme;
+            document.getElementById('select-font-size').onchange = (e) => {
+                document.documentElement.style.setProperty('--base-font-size', e.target.value);
+                syncScroll();
+            };
+            
+            els.fileInput.onchange = handleFileOpen;
+            
+            window.onkeydown = (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveActiveFile(); }
+                if (e.altKey && e.key === 'n') { e.preventDefault(); addFile(); }
+            };
+        }
+
+        // --- 核心逻辑 ---
+        function addFile(name = "untitled.pr", content = "") {
+            const id = Date.now() + Math.random().toString(36).substr(2, 5);
+            const newFile = { id, name, content, unsaved: false, encoding: els.encoding.value };
+            files.push(newFile);
+            renderTabs();
+            switchFile(id);
+        }
+
+        function switchFile(id) {
+            // 保存当前编辑中的内容
+            if (activeFileId) {
+                const current = files.find(f => f.id === activeFileId);
+                if (current) current.content = els.input.value;
+            }
+
+            activeFileId = id;
+            const file = files.find(f => f.id === id);
+            els.input.value = file.content;
+            els.encoding.value = file.encoding || 'utf-8-sig';
+            
+            refreshEditor();
+            renderTabs();
+            updateStatusBar();
+        }
+
+        function closeFile(id, e) {
+            e.stopPropagation();
+            const fileIndex = files.findIndex(f => f.id === id);
+            if (files[fileIndex].unsaved && !confirm("文件未保存，确定关闭吗？")) return;
+            
+            files.splice(fileIndex, 1);
+            if (files.length === 0) {
+                addFile();
+            } else if (activeFileId === id) {
+                switchFile(files[Math.max(0, fileIndex - 1)].id);
+            } else {
+                renderTabs();
+            }
+        }
+
+        function handleInput() {
+            const file = files.find(f => f.id === activeFileId);
+            if (file) {
+                file.content = els.input.value;
+                if (!file.unsaved) {
+                    file.unsaved = true;
+                    renderTabs();
+                }
+            }
+            refreshEditor();
+            updateStatusBar();
+        }
+
+        function refreshEditor() {
+            updateHighlight();
+            updateLineNumbers();
+            syncScroll();
+        }
+
+        function syncScroll() {
+            els.highlight.scrollTop = els.gutter.scrollTop = els.input.scrollTop;
+            els.highlight.scrollLeft = els.input.scrollLeft;
+        }
+
+        function updateHighlight() {
+            const code = els.input.value;
+            els.highlight.innerHTML = tokenize(code);
+        }
+
+        function updateLineNumbers() {
+            const lines = els.input.value.split('\n').length;
+            els.gutter.innerHTML = Array.from({length: lines}, (_, i) => `<div>${i+1}</div>`).join('');
+        }
+
+        function updateStatusBar() {
+            const file = files.find(f => f.id === activeFileId);
+            if (!file) return;
+            const lines = els.input.value.split('\n').length;
+            els.statusInfo.textContent = `${file.name} 行数: ${lines}`;
+        }
+
+        function updateCursor() {
+            const pos = els.input.selectionStart;
+            const lines = els.input.value.substring(0, pos).split('\n');
+            els.statusCursor.textContent = `Ln ${lines.length}, Col ${lines[lines.length-1].length + 1}`;
+        }
+
+        // --- 标签页渲染 ---
+        function renderTabs() {
+            els.tabBar.innerHTML = '';
+            files.forEach(f => {
+                const tab = document.createElement('div');
+                tab.className = `tab ${f.id === activeFileId ? 'active' : ''} ${f.unsaved ? 'unsaved' : ''}`;
+                tab.onclick = () => switchFile(f.id);
+                tab.innerHTML = `
+                    <span class="tab-name">${f.name}</span>
+                    <span class="tab-close">×</span>
+                `;
+                tab.querySelector('.tab-close').onclick = (e) => closeFile(f.id, e);
+                els.tabBar.appendChild(tab);
+            });
+        }
+
+        // --- 文件 IO 与 编码控制 ---
+        async function handleFileOpen(e) {
+            const fileList = e.target.files;
+            const encoding = els.encoding.value;
+
+            for (let file of fileList) {
+                const buffer = await file.arrayBuffer();
+                let decoder = new TextDecoder(encoding.replace('-sig', ''));
+                
+                // 处理 UTF-8-sig 的 BOM
+                let content = decoder.decode(buffer);
+                if (encoding === 'utf-8-sig' && content.charCodeAt(0) === 0xFEFF) {
+                    content = content.substring(1);
+                }
+
+                const id = Date.now() + Math.random().toString(36).substr(2, 5);
+                files.push({ id, name: file.name, content, unsaved: false, encoding });
+                switchFile(id);
+            }
+            els.fileInput.value = '';
+        }
+
+        function saveActiveFile() {
+            const file = files.find(f => f.id === activeFileId);
+            if (!file) return;
+
+            const content = els.input.value;
+            const encoding = els.encoding.value;
+            let blob;
+
+            if (encoding === 'utf-8-sig') {
+                // 添加 BOM 头 (0xEF, 0xBB, 0xBF)
+                const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+                const textData = new TextEncoder().encode(content);
+                const combined = new Uint8Array(bom.length + textData.length);
+                combined.set(bom);
+                combined.set(textData, bom.length);
+                blob = new Blob([combined], { type: 'text/plain' });
+            } else if (encoding === 'gbk') {
+                // 现代浏览器原生不支持 TextEncoder GBK，此处若需生产级支持建议引入 iconv-lite
+                // 这里作为演示尝试使用 TextEncoder
+                blob = new Blob([content], { type: 'text/plain;charset=gbk' });
+            } else {
+                blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+            }
+
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name;
+            a.click();
+            URL.revokeObjectURL(url);
+
+            file.unsaved = false;
+            file.encoding = encoding;
+            renderTabs();
+            updateStatusBar();
+        }
+
+        // --- 词法分析 (与前一版本一致，颜色方案已更新) ---
+        function tokenize(code) {
+            if (!code) return ' ';
+            let html = '';
+            let i = 0;
+            const len = code.length;
+            const escape = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+            while (i < len) {
+                const char = code[i];
+                if (char === '\n') { html += '\n'; i++; continue; }
+                if (/\s/.test(char)) { html += char; i++; continue; }
+                if (char === '#') {
+                    let end = code.indexOf('\n', i); if (end === -1) end = len;
+                    html += `<span class="token-comment">${escape(code.substring(i, end))}</span>`;
+                    i = end; continue;
+                }
+                if (char === '"' || char === "'") {
+                    let end = i + 1;
+                    while (end < len && code[end] !== char) { if (code[end] === '\\') end++; end++; }
+                    if (end < len) end++;
+                    html += `<span class="token-string">${escape(code.substring(i, end))}</span>`;
+                    i = end; continue;
+                }
+                if (/[0-9]/.test(char)) {
+                    let end = i; while (end < len && /[0-9a-fA-FxX.]/.test(code[end])) end++;
+                    html += `<span class="token-number">${escape(code.substring(i, end))}</span>`;
+                    i = end; continue;
+                }
+                if (/[a-zA-Z_]/.test(char)) {
+                    let end = i; while (end < len && /[a-zA-Z0-9_]/.test(code[end])) end++;
+                    const word = code.substring(i, end);
+                    let cls = '';
+                    if (syntax.keywords.includes(word)) cls = 'token-keyword';
+                    else if (syntax.types.includes(word)) cls = 'token-type';
+                    else if (syntax.builtins.includes(word)) cls = 'token-builtin';
+                    else if (syntax.classes.includes(word)) cls = 'token-class';
+                    else if (code[end] === '(') cls = 'token-function';
+                    html += cls ? `<span class="${cls}">${escape(word)}</span>` : escape(word);
+                    i = end; continue;
+                }
+                if (/[+\-*\/%=<>!&|^~?:;.,()[\]{}]/.test(char)) {
+                    html += `<span class="token-operator">${escape(char)}</span>`;
+                    i++; continue;
+                }
+                html += escape(char); i++;
+            }
+            return html + (code.endsWith('\n') ? ' ' : '');
+        }
+
+        function handleKeydown(e) {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                document.execCommand('insertText', false, '    ');
+            }
+        }
+
+        function toggleTheme() {
+            const theme = document.body.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+            document.body.setAttribute('data-theme', theme);
+        }
+
+        init();
+    </script>
+</body>
+</html>

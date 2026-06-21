@@ -1,41 +1,17 @@
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
+# Build artifacts
 *.o
-*.obj
+PyRite
 
-# Precompiled Headers
-*.gch
-*.pch
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
 
-# Linker files
-*.ilk
+# OS
+.DS_Store
+Thumbs.db
 
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# debug information files
-*.dwo
+# Test modules (user files)
+test_modules/
