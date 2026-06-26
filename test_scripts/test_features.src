@@ -1,0 +1,110 @@
+say("=== 1. Exception handling ===")
+fn risky(dec x) do
+  if x < 0 then
+    raise "negative value: " + x
+  else
+    return x * 2
+  endif
+endfn
+
+try
+  dec r1 = risky(5)
+  say("risky(5) = " + r1)
+catch e
+  say("caught: " + e)
+endtry
+
+try
+  dec r2 = risky(-3)
+  say("risky(-3) = " + r2)
+catch e
+  say("caught error: " + e)
+endtry
+
+say("")
+say("=== 2. Nested try-catch ===")
+fn nested_risky(dec x) do
+  try
+    if x < 0 then
+      raise "inner error"
+    endif
+    return x
+  catch e
+    say("inner catch: " + e)
+    return -1
+  endtry
+endfn
+
+say("nested_risky(5) = " + nested_risky(5))
+say("nested_risky(-3) = " + nested_risky(-3))
+
+say("")
+say("=== 3. List operations ===")
+ln list = [1, 2, 3, 4, 5]
+say("list = " + list)
+say("list[0] = " + list[0])
+say("list[4] = " + list[4])
+say("len(list) = " + len(list))
+
+ln appended = list + [6, 7]
+say("list + [6,7] = " + appended)
+
+ln repeated = [1, 2] * 3
+say("[1,2] * 3 = " + repeated)
+
+say("")
+say("=== 4. Dictionary operations ===")
+dim dict = {"name": "Alice", "age": 30}
+say("dict = " + dict)
+say("dict['name'] = " + dict["name"])
+say("dict['age'] = " + dict["age"])
+
+dict["city"] = "NYC"
+say("after adding city: " + dict)
+
+dict["age"] = 31
+say("after updating age: " + dict)
+
+say("")
+say("=== 5. String operations ===")
+str s = "Hello, World!"
+say("s = " + s)
+say("len(s) = " + len(s))
+
+say("")
+say("=== 6. For-in loop ===")
+ln items = ["apple", "banana", "cherry"]
+for item in items do
+  say("  item: " + item)
+end
+
+say("")
+say("=== 7. Nested loops ===")
+loop(i)
+  loop(j)
+    say("  i=" + i + ", j=" + j)
+  for 3 times
+for 3 times
+
+say("")
+say("=== 8. Break and continue ===")
+loop(i)
+  if i == 5 then
+    say("  breaking at i=5")
+    break
+  endif
+  if i == 2 then
+    say("  skipping i=2")
+    continue
+  endif
+  say("  i = " + i)
+for 10 times
+
+say("")
+say("=== 9. Math built-ins ===")
+say("abs(-42) = " + abs(0 - 42))
+say("max(3, 7, 2, 9, 1) = " + max(3, 7, 2, 9, 1))
+say("min(3, 7, 2, 9, 1) = " + min(3, 7, 2, 9, 1))
+
+say("")
+say("=== All feature tests passed ===")

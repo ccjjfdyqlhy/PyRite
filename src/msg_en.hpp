@@ -129,6 +129,31 @@ inline const char* msg(Msg id) {
         case Msg::MAIN_USAGE: return "Usage: ";
         case Msg::MAIN_SCRIPT: return " [script.src]";
         case Msg::MAIN_OPEN: return "Error: Cannot open file '{}'.";
+        case Msg::REPL_HELP_NOT_FOUND: return "Help not found for function '{}'.";
+        case Msg::REPL_HELP_SUGGESTION: return "Type help() to list all available functions.";
+        case Msg::MAIN_HELP_HEADER: return "Usage: {} [options] [script.pr|.prc|.prt]\n\nOptions:\n";
+        case Msg::MAIN_HELP_VM: return "  --vm                     Execute using the bytecode VM (faster)\n";
+        case Msg::MAIN_HELP_AST: return "  --ast                    Execute using the AST interpreter (default)\n";
+        case Msg::MAIN_HELP_DUMP: return "  --dump-bytecode          Compile and print bytecode disassembly\n";
+        case Msg::MAIN_HELP_EMIT_BC: return "  --emit-bytecode <file>   Compile and save .prc bytecode, then run\n";
+        case Msg::MAIN_HELP_EMIT_AST: return "  --emit-ast <file>        Compile and save .prt AST, then run\n";
+        case Msg::MAIN_HELP_SAVE_BC: return "  --save-bytecode <file>   Compile and save .prc bytecode only\n";
+        case Msg::MAIN_HELP_SAVE_AST: return "  --save-ast <file>        Compile and save .prt AST only\n";
+        case Msg::MAIN_HELP_HELP: return "  --help, -h               Show this help message\n";
+        case Msg::MAIN_HELP_FORMATS: return "\nFile formats:\n";
+        case Msg::MAIN_HELP_PR: return "  .pr    PyRite source script\n";
+        case Msg::MAIN_HELP_PRC: return "  .prc   Compiled bytecode (load and run via VM)\n";
+        case Msg::MAIN_HELP_PRT: return "  .prt   Serialized AST (load and run via interpreter)\n";
+        case Msg::MAIN_LOAD_ERR: return "Error loading {}: {}";
+        case Msg::MAIN_COMPILE_ERR: return "Compilation error: {}";
+        case Msg::MAIN_OPT_NEED_ARG: return "{} requires a filename argument.";
+        case Msg::MAIN_UNKNOWN_OPT: return "Unknown option: {}";
+        case Msg::MAIN_HELP_HINT: return "Use --help for usage information.";
+        case Msg::MAIN_SAVE_NEED_SRC: return "A source file must be specified when using emit/save options.";
+        case Msg::MAIN_SAVE_OK_BC: return "Bytecode saved to {}.";
+        case Msg::MAIN_SAVE_OK_AST: return "AST saved to {}.";
+        case Msg::MAIN_SAVE_ERR_BC: return "Error saving bytecode: {}";
+        case Msg::MAIN_SAVE_ERR_AST: return "Error saving AST: {}";
     }
     return "";
 }
@@ -144,6 +169,12 @@ inline std::string fmt(Msg id, const std::string& arg) {
         case Msg::CALL_ONLY: return std::string("Can only call functions and methods. Got '") + arg + "'.";
         case Msg::DIM_KEY_MISS: return std::string("Key '") + arg + "' not found in dim.";
         case Msg::MAIN_OPEN: return std::string("Error: Cannot open file '") + arg + "'.";
+        case Msg::REPL_HELP_NOT_FOUND: return std::string("Help not found for function '") + arg + "'.";
+        case Msg::MAIN_COMPILE_ERR: return std::string("Compilation error: ") + arg;
+        case Msg::MAIN_UNKNOWN_OPT: return std::string("Unknown option: ") + arg;
+        case Msg::MAIN_OPT_NEED_ARG: return arg + std::string(" requires a filename argument.");
+        case Msg::MAIN_SAVE_ERR_BC: return std::string("Error saving bytecode: ") + arg;
+        case Msg::MAIN_SAVE_ERR_AST: return std::string("Error saving AST: ") + arg;
         default: return arg;
     }
 }
@@ -160,6 +191,13 @@ inline std::string fmt_int(Msg id, long long n) {
         case Msg::REPL_TIME: return std::string("Execution time: ") + ns + " ms.";
         default: return ns;
     }
+}
+
+inline std::string fmt2(Msg id, const std::string& a1, const std::string& a2) {
+    if (id == Msg::MAIN_LOAD_ERR) {
+        return std::string("Error loading ") + a1 + ": " + a2;
+    }
+    return a1 + a2;
 }
 
 inline std::string fmt3(Msg id, const std::string& a1, const std::string& a2, const std::string& a3) {

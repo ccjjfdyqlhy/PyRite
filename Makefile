@@ -8,8 +8,11 @@ SRCS    := $(SRC_DIR)/main.cpp \
            $(SRC_DIR)/Value.cpp \
            $(SRC_DIR)/Tokenizer.cpp \
            $(SRC_DIR)/Parser.cpp \
+           $(SRC_DIR)/Compiler.cpp \
            $(SRC_DIR)/Environment.cpp \
-           $(SRC_DIR)/Interpreter.cpp
+           $(SRC_DIR)/Interpreter.cpp \
+           $(SRC_DIR)/VM.cpp \
+           $(SRC_DIR)/Serializer.cpp
 OBJS    := $(SRCS:.cpp=.o)
 
 .PHONY: all clean release debug

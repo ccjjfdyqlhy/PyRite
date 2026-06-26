@@ -1,0 +1,10 @@
+fn fib(dec n) do
+  if n < 2 then
+    return n
+  else
+    return fib(n - 1) + fib(n - 2)
+  endif
+endfn
+
+dec result = fib(30)
+say("fib(30) OK")

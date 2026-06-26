@@ -1,0 +1,141 @@
+say("=== 1. Basic closure ===")
+fn make_adder(dec x) do
+  fn adder(dec y) do
+    return x + y
+  endfn
+  return adder
+endfn
+
+dec add_ten = make_adder(10)
+dec add_five = make_adder(5)
+say("add_ten(5) = " + add_ten(5))
+say("add_five(5) = " + add_five(5))
+say("add_ten(100) = " + add_ten(100))
+
+say("")
+say("=== 2. Multiple closures sharing an upvalue ===")
+fn make_counter() do
+  dec count = 0
+  fn increment() do
+    count = count + 1
+    return count
+  endfn
+  fn get() do
+    return count
+  endfn
+  return increment
+endfn
+
+dec inc = make_counter()
+say("counter after 1st inc: " + inc())
+say("counter after 2nd inc: " + inc())
+say("counter after 3rd inc: " + inc())
+
+say("")
+say("=== 3. Nested closures (3 levels) ===")
+fn outer(dec a) do
+  fn middle(dec b) do
+    fn inner(dec c) do
+      return a + b + c
+    endfn
+    return inner
+  endfn
+  return middle
+endfn
+
+dec mid = outer(100)
+dec inn = mid(20)
+say("outer(100) -> middle(20) -> inner(3) = " + inn(3))
+
+say("")
+say("=== 4. Recursive closure ===")
+fn factorial(dec n) do
+  if n <= 1 then
+    return 1
+  else
+    return n * factorial(n - 1)
+  endif
+endfn
+
+say("factorial(5) = " + factorial(5))
+say("factorial(10) = " + factorial(10))
+say("factorial(20) = " + factorial(20))
+
+say("")
+say("=== 5. Closure with upvalue modification ===")
+fn make_accumulator(dec start) do
+  dec total = start
+  fn add(dec val) do
+    total = total + val
+    return total
+  endfn
+  return add
+endfn
+
+dec acc = make_accumulator(100)
+say("acc(10) = " + acc(10))
+say("acc(20) = " + acc(20))
+say("acc(30) = " + acc(30))
+
+say("")
+say("=== 6. Higher-order functions ===")
+fn apply(any func, dec x, dec y) do
+  return func(x, y)
+endfn
+
+fn max_fn(dec a, dec b) do
+  if a > b then
+    return a
+  else
+    return b
+  endif
+endfn
+
+fn min_fn(dec a, dec b) do
+  if a < b then
+    return a
+  else
+    return b
+  endif
+endfn
+
+say("max(3, 7) = " + apply(max_fn, 3, 7))
+say("min(3, 7) = " + apply(min_fn, 3, 7))
+
+say("")
+say("=== 7. Closure returning closure ===")
+fn compose(any f, any g) do
+  fn composed(dec x) do
+    return f(g(x))
+  endfn
+  return composed
+endfn
+
+fn double(dec x) do
+  return x * 2
+endfn
+
+fn inc_fn(dec x) do
+  return x + 1
+endfn
+
+dec double_then_inc = compose(inc_fn, double)
+dec inc_then_double = compose(double, inc_fn)
+say("double_then_inc(5) = " + double_then_inc(5))
+say("inc_then_double(5) = " + inc_then_double(5))
+
+say("")
+say("=== 8. Fibonacci recursion ===")
+fn fib(dec n) do
+  if n < 2 then
+    return n
+  else
+    return fib(n - 1) + fib(n - 2)
+  endif
+endfn
+
+say("fib(10) = " + fib(10))
+say("fib(20) = " + fib(20))
+
+say("")
+say("=== All closure tests passed ===")

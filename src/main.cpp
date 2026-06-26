@@ -6,6 +6,9 @@
 #include <cctype>
 #include <map>
 #include "Interpreter.hpp"
+#include "Compiler.hpp"
+#include "VM.hpp"
+#include "Serializer.hpp"
 #include "help_cn.hpp"
 #include "msg_cn.hpp"
 
@@ -13,7 +16,7 @@
 constexpr bool DEBUG = false;
 #endif
 
-std::string VERSION = "v0.20.1";
+std::string VERSION = "v0.31.0";
 
 // --- Helper Functions ---
 std::string trim(const std::string& str) {
@@ -39,7 +42,47 @@ bool ends_with(const std::string& str, const std::string& suffix) {
     return str.size() >= suffix.size() && str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-void run_file(const char* filename, Interpreter& interpreter) {
+void run_prc_file(const std::string& filename, Interpreter& interpreter) {
+    BytecodeChunkPtr chunk;
+    try {
+        chunk = load_bytecode(filename);
+    } catch (const std::exception& e) {
+        std::cerr << fmt2(Msg::MAIN_LOAD_ERR, filename, e.what()) << std::endl;
+        exit(1);
+    }
+    VM vm;
+    vm.set_interpreter(&interpreter);
+    vm.set_globals(interpreter.globals);
+    if (!vm.run(chunk)) {
+        std::cerr << vm.error_message << std::endl;
+        exit(1);
+    }
+}
+
+void run_prt_file(const std::string& filename, Interpreter& interpreter) {
+    std::vector<AstNodePtr> statements;
+    try {
+        statements = load_ast(filename);
+    } catch (const std::exception& e) {
+        std::cerr << fmt2(Msg::MAIN_LOAD_ERR, filename, e.what()) << std::endl;
+        exit(1);
+    }
+    interpreter.interpret(statements);
+}
+
+void run_file(const char* filename, Interpreter& interpreter, bool use_vm, bool dump_bytecode) {
+    std::string fname(filename);
+
+    // Auto-detect format by extension.
+    if (ends_with(fname, ".prc")) {
+        run_prc_file(fname, interpreter);
+        return;
+    }
+    if (ends_with(fname, ".prt")) {
+        run_prt_file(fname, interpreter);
+        return;
+    }
+
     std::ifstream file(filename);
     if (!file.is_open()) {
         std::cerr << fmt(Msg::MAIN_OPEN, filename) << std::endl;
@@ -49,8 +92,31 @@ void run_file(const char* filename, Interpreter& interpreter) {
     file.close();
     Parser parser(source_code);
     auto statements = parser.parse();
-    if (parser.has_error()) { exit(1); }
-    interpreter.interpret(statements);
+        if (parser.has_error()) { exit(1); }
+
+        if (use_vm) {
+            // Compile AST -> Bytecode, then execute on the VM.
+            Compiler compiler;
+            BytecodeChunkPtr chunk = compiler.compile(statements);
+            if (compiler.has_error()) {
+                std::cerr << fmt(Msg::MAIN_COMPILE_ERR, compiler.get_error()) << std::endl;
+                exit(1);
+            }
+        if (dump_bytecode) {
+            VM vm;
+            vm.disassemble(chunk);
+            return;
+        }
+        VM vm;
+        vm.set_interpreter(&interpreter);
+        vm.set_globals(interpreter.globals);
+        if (!vm.run(chunk)) {
+            std::cerr << vm.error_message << std::endl;
+            exit(1);
+        }
+    } else {
+        interpreter.interpret(statements);
+    }
 }
 
 void run_repl(Interpreter& interpreter) {
@@ -107,10 +173,10 @@ void run_repl(Interpreter& interpreter) {
                     std::cout << help_text << std::endl;
                     found = true;
                 } else {
-                    std::cout << "未找到函数 '" << func_name << "' 的帮助信息。" << std::endl;
+                    std::cout << fmt(Msg::REPL_HELP_NOT_FOUND, func_name) << std::endl;
                 }
             }
-            if (!found) { std::cout << "输入 help() 查看所有可用函数。" << std::endl; }
+            if (!found) { std::cout << msg(Msg::REPL_HELP_SUGGESTION) << std::endl; }
             continue;
         }
 
@@ -175,7 +241,9 @@ void run_repl(Interpreter& interpreter) {
         size_t word_end = trimmed_line.find_first_of(" \t\n\r(");
         first_word = (word_end == std::string::npos) ? trimmed_line : trimmed_line.substr(0, word_end);
 
-        if (first_word == "if" || first_word == "while" || first_word == "fn" || first_word == "await" || first_word == "try" || first_word == "ins" || first_word == "loop") {
+        if (first_word == "fn" && trimmed_line.find("->") != std::string::npos) {
+            // Arrow function (single-line, no end keyword needed).
+        } else if (first_word == "if" || first_word == "while" || first_word == "fn" || first_word == "await" || first_word == "try" || first_word == "ins" || first_word == "loop") {
             env_stack.push_back(first_word);
         } else if (first_word == "endif" && env_stack.back() == "if") {
             if (env_stack.size() > 1) env_stack.pop_back();
@@ -234,11 +302,115 @@ int main(int argc, char* argv[]) {
         executable_dir = executable_path.substr(0, last_slash_pos);
     }
     interpreter.base_path = executable_dir;
-    if (argc > 2) {
-        std::cerr << msg(Msg::MAIN_USAGE) << argv[0] << msg(Msg::MAIN_SCRIPT) << std::endl;
-        return 1;
-    } else if (argc == 2) {
-        run_file(argv[1], interpreter);
+
+    bool use_vm = false;
+    bool dump_bytecode = false;
+    bool emit_only = false;
+    std::string script_file;
+    std::string emit_bytecode_path;
+    std::string emit_ast_path;
+
+    // Parse command-line arguments.
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--vm") {
+            use_vm = true;
+        } else if (arg == "--dump-bytecode") {
+            use_vm = true;
+            dump_bytecode = true;
+        } else if (arg == "--ast") {
+            use_vm = false;
+        } else if (arg == "--emit-bytecode" || arg == "--save-bytecode") {
+            if (++i >= argc) {
+                std::cerr << fmt(Msg::MAIN_OPT_NEED_ARG, arg) << std::endl;
+                return 1;
+            }
+            emit_bytecode_path = argv[i];
+            if (arg == "--save-bytecode") emit_only = true;
+        } else if (arg == "--emit-ast" || arg == "--save-ast") {
+            if (++i >= argc) {
+                std::cerr << fmt(Msg::MAIN_OPT_NEED_ARG, arg) << std::endl;
+                return 1;
+            }
+            emit_ast_path = argv[i];
+            if (arg == "--save-ast") emit_only = true;
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << fmt(Msg::MAIN_HELP_HEADER, argv[0])
+                      << msg(Msg::MAIN_HELP_VM)
+                      << msg(Msg::MAIN_HELP_AST)
+                      << msg(Msg::MAIN_HELP_DUMP)
+                      << msg(Msg::MAIN_HELP_EMIT_BC)
+                      << msg(Msg::MAIN_HELP_EMIT_AST)
+                      << msg(Msg::MAIN_HELP_SAVE_BC)
+                      << msg(Msg::MAIN_HELP_SAVE_AST)
+                      << msg(Msg::MAIN_HELP_HELP)
+                      << msg(Msg::MAIN_HELP_FORMATS)
+                      << msg(Msg::MAIN_HELP_PR)
+                      << msg(Msg::MAIN_HELP_PRC)
+                      << msg(Msg::MAIN_HELP_PRT);
+            return 0;
+        } else if (arg[0] == '-') {
+            std::cerr << fmt(Msg::MAIN_UNKNOWN_OPT, arg) << "\n"
+                      << msg(Msg::MAIN_HELP_HINT) << std::endl;
+            return 1;
+        } else {
+            if (!script_file.empty()) {
+                std::cerr << msg(Msg::MAIN_USAGE) << argv[0] << msg(Msg::MAIN_SCRIPT) << std::endl;
+                return 1;
+            }
+            script_file = arg;
+        }
+    }
+
+    // If we have source output paths, load source, parse, emit, optionally run.
+    if (!emit_bytecode_path.empty() || !emit_ast_path.empty()) {
+        if (script_file.empty()) {
+            std::cerr << msg(Msg::MAIN_SAVE_NEED_SRC) << std::endl;
+            return 1;
+        }
+        std::ifstream file(script_file);
+        if (!file.is_open()) {
+            std::cerr << fmt(Msg::MAIN_OPEN, script_file) << std::endl;
+            return 1;
+        }
+        std::string source_code((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        file.close();
+        Parser parser(source_code);
+        auto statements = parser.parse();
+        if (parser.has_error()) { return 1; }
+
+        if (!emit_bytecode_path.empty()) {
+            Compiler compiler;
+            BytecodeChunkPtr chunk = compiler.compile(statements);
+            if (compiler.has_error()) {
+                std::cerr << fmt(Msg::MAIN_COMPILE_ERR, compiler.get_error()) << std::endl;
+                return 1;
+            }
+            try {
+                save_bytecode(emit_bytecode_path, chunk);
+                std::cout << fmt(Msg::MAIN_SAVE_OK_BC, emit_bytecode_path) << std::endl;
+            } catch (const std::exception& e) {
+                std::cerr << fmt(Msg::MAIN_SAVE_ERR_BC, e.what()) << std::endl;
+                return 1;
+            }
+        }
+
+        if (!emit_ast_path.empty()) {
+            try {
+                save_ast(emit_ast_path, statements);
+                std::cout << fmt(Msg::MAIN_SAVE_OK_AST, emit_ast_path) << std::endl;
+            } catch (const std::exception& e) {
+                std::cerr << fmt(Msg::MAIN_SAVE_ERR_AST, e.what()) << std::endl;
+                return 1;
+            }
+        }
+
+        if (emit_only) return 0;
+        // Fall through to run the source.
+    }
+
+    if (!script_file.empty()) {
+        run_file(script_file.c_str(), interpreter, use_vm, dump_bytecode);
     } else {
         run_repl(interpreter);
     }

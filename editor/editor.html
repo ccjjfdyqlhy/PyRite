@@ -243,9 +243,9 @@
         let activeFileId = null;
 
         const syntax = {
-            keywords: ['if', 'then', 'else', 'endif', 'while', 'do', 'finally', 'endwhile', 'fn', 'endfn', 'return', 'say', 'ask', 'halt', 'run', 'try', 'catch', 'endtry', 'raise', 'await', 'endawait', 'ins', 'contains', 'endins', 'using', 'as', 'loop', 'for', 'times', 'until', 'endloop', 'break', 'not', 'and', 'or', 'new'],
-            types: ['dec', 'str', 'bin', 'list', 'any', 'tense', 'nul', 'void'],
-            builtins: ['abs', 'len', 'rt', 'sort', 'setify', 'max', 'min', 'countdown', 'hash', 'sin', 'cos', 'tan', 'log', 'set_precision', 'get_precision', 'approx', 'is_int', 'is_neg', 'to_double'],
+            keywords: ['if', 'then', 'else', 'elif', 'endif', 'end', 'while', 'do', 'finally', 'fin', 'endwhile', 'fn', 'endfn', 'return', 'say', 'ask', 'halt', 'run', 'try', 'catch', 'endtry', 'raise', 'await', 'endawait', 'ins', 'contains', 'endins', 'using', 'as', 'require', 'expose', 'loop', 'for', 'times', 'until', 'endloop', 'break', 'continue', 'not', 'and', 'or', 'new', 'in', 'struct'],
+            types: ['dec', 'str', 'bin', 'ln', 'dim', 'any', 'nul', 'void'],
+            builtins: ['abs', 'len', 'rt', 'sort', 'setify', 'max', 'min', 'countdown', 'hash', 'sin', 'cos', 'tan', 'log', 'set_precision', 'get_precision', 'approx', 'is_int', 'is_neg', 'to_double', 'type', 'is_dec', 'is_str', 'is_bin', 'is_ln', 'is_dim', 'is_nul', 'is_fn', 'open', 'split', 'join', 'find', 'contains', 'replace', 'trim', 'substr', 'upper', 'lower', 'char', 'ord', 'repeat', 'reverse', 'index', 'push', 'pop', 'dim_keys', 'dim_values', 'dim_has', 'dim_merge'],
             classes: ['Exception']
         };
 
@@ -462,18 +462,68 @@
                 const char = code[i];
                 if (char === '\n') { html += '\n'; i++; continue; }
                 if (/\s/.test(char)) { html += char; i++; continue; }
-                if (char === '#') {
+
+                // // line comment
+                if (char === '/' && i + 1 < len && code[i+1] === '/') {
                     let end = code.indexOf('\n', i); if (end === -1) end = len;
                     html += `<span class="token-comment">${escape(code.substring(i, end))}</span>`;
                     i = end; continue;
                 }
-                if (char === '"' || char === "'") {
-                    let end = i + 1;
-                    while (end < len && code[end] !== char) { if (code[end] === '\\') end++; end++; }
-                    if (end < len) end++;
+
+                // #...# block comment
+                if (char === '#') {
+                    let end = code.indexOf('#', i + 1);
+                    if (end === -1) end = len; else end++;
+                    html += `<span class="token-comment">${escape(code.substring(i, end))}</span>`;
+                    i = end; continue;
+                }
+
+                // """ multi-line string
+                if (char === '"' && i + 2 < len && code[i+1] === '"' && code[i+2] === '"') {
+                    let end = code.indexOf('"""', i + 3);
+                    if (end === -1) end = len; else end += 3;
                     html += `<span class="token-string">${escape(code.substring(i, end))}</span>`;
                     i = end; continue;
                 }
+
+                // string with interpolation
+                if (char === '"' || char === "'") {
+                    let end = i + 1;
+                    let parts = [];
+                    let partStart = i;
+                    while (end < len && code[end] !== char) {
+                        if (code[end] === '\\') { end += 2; continue; }
+                        if (code[end] === '{') {
+                            parts.push({ type: 'str', text: code.substring(partStart, end) });
+                            let braceStart = end + 1;
+                            let depth = 1;
+                            end++;
+                            while (end < len && depth > 0) {
+                                if (code[end] === '{') depth++;
+                                else if (code[end] === '}') depth--;
+                                end++;
+                            }
+                            parts.push({ type: 'expr', text: code.substring(braceStart, end - 1) });
+                            partStart = end;
+                            continue;
+                        }
+                        end++;
+                    }
+                    if (end < len) end++;
+                    if (parts.length === 0) {
+                        html += `<span class="token-string">${escape(code.substring(i, end))}</span>`;
+                    } else {
+                        if (partStart < end - 1 || (partStart === end - 1 && code[end-1] !== char)) {
+                            parts.push({ type: 'str', text: code.substring(partStart, end) });
+                        }
+                        for (const p of parts) {
+                            if (p.type === 'str') html += `<span class="token-string">${escape(p.text)}</span>`;
+                            else html += `<span class="token-string">{</span>${tokenize(p.text)}<span class="token-string">}</span>`;
+                        }
+                    }
+                    i = end; continue;
+                }
+
                 if (/[0-9]/.test(char)) {
                     let end = i; while (end < len && /[0-9a-fA-FxX.]/.test(code[end])) end++;
                     html += `<span class="token-number">${escape(code.substring(i, end))}</span>`;

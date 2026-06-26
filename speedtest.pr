@@ -1,0 +1,6 @@
+say("PyRite Speed Test Begin")
+say(2^100000)
+say(rt(4))
+say(rt(5))
+say(rt(1501674322828744,3))
+say("PyRite Speed Test Complete")

@@ -129,6 +129,31 @@ inline const char* msg(Msg id) {
         case Msg::MAIN_USAGE: return "用法: ";
         case Msg::MAIN_SCRIPT: return " [脚本.src]";
         case Msg::MAIN_OPEN: return "错误: 无法打开文件 '{}'。";
+        case Msg::REPL_HELP_NOT_FOUND: return "未找到函数 '{}' 的帮助信息。";
+        case Msg::REPL_HELP_SUGGESTION: return "输入 help() 查看所有可用函数。";
+        case Msg::MAIN_HELP_HEADER: return "用法: {} [选项] [script.pr|.prc|.prt]\n\n选项:\n";
+        case Msg::MAIN_HELP_VM: return "  --vm                    使用字节码 VM 执行（更快）\n";
+        case Msg::MAIN_HELP_AST: return "  --ast                   使用 AST 解释器执行（默认）\n";
+        case Msg::MAIN_HELP_DUMP: return "  --dump-bytecode         编译并打印字节码反汇编\n";
+        case Msg::MAIN_HELP_EMIT_BC: return "  --emit-bytecode <file>  编译并保存 .prc 字节码，然后执行\n";
+        case Msg::MAIN_HELP_EMIT_AST: return "  --emit-ast <file>       编译并保存 .prt AST，然后执行\n";
+        case Msg::MAIN_HELP_SAVE_BC: return "  --save-bytecode <file>  编译并保存 .prc 字节码（不执行）\n";
+        case Msg::MAIN_HELP_SAVE_AST: return "  --save-ast <file>       编译并保存 .prt AST（不执行）\n";
+        case Msg::MAIN_HELP_HELP: return "  --help, -h              显示此帮助信息\n";
+        case Msg::MAIN_HELP_FORMATS: return "\n文件格式:\n";
+        case Msg::MAIN_HELP_PR: return "  .pr    PyRite 源脚本\n";
+        case Msg::MAIN_HELP_PRC: return "  .prc   编译后的字节码（通过 VM 加载执行）\n";
+        case Msg::MAIN_HELP_PRT: return "  .prt   序列化 AST（通过解释器加载执行）\n";
+        case Msg::MAIN_LOAD_ERR: return "加载 {} 时出错: {}";
+        case Msg::MAIN_COMPILE_ERR: return "编译错误: {}";
+        case Msg::MAIN_OPT_NEED_ARG: return "{} 需要一个文件名参数。";
+        case Msg::MAIN_UNKNOWN_OPT: return "未知选项: {}";
+        case Msg::MAIN_HELP_HINT: return "使用 --help 查看帮助信息。";
+        case Msg::MAIN_SAVE_NEED_SRC: return "使用 emit/save 选项时必须指定源文件。";
+        case Msg::MAIN_SAVE_OK_BC: return "字节码已保存到 {}。";
+        case Msg::MAIN_SAVE_OK_AST: return "AST 已保存到 {}。";
+        case Msg::MAIN_SAVE_ERR_BC: return "保存字节码时出错: {}";
+        case Msg::MAIN_SAVE_ERR_AST: return "保存 AST 时出错: {}";
     }
     return "";
 }
@@ -144,6 +169,13 @@ inline std::string fmt(Msg id, const std::string& arg) {
         case Msg::CALL_ONLY: return std::string("只能调用函数或方法。被调用者是 '") + arg + "'。";
         case Msg::DIM_KEY_MISS: return std::string("键 '") + arg + "' 不在 dim 中。";
         case Msg::MAIN_OPEN: return std::string("错误: 无法打开文件 '") + arg + "'。";
+        case Msg::REPL_HELP_NOT_FOUND: return std::string("未找到函数 '") + arg + "' 的帮助信息。";
+        case Msg::MAIN_COMPILE_ERR: return std::string("编译错误: ") + arg;
+        case Msg::MAIN_UNKNOWN_OPT: return std::string("未知选项: ") + arg;
+        case Msg::MAIN_OPT_NEED_ARG: return arg + std::string(" 需要一个文件名参数。");
+        case Msg::MAIN_HELP_HEADER: return std::string("用法: ") + arg + std::string(" [选项] [script.pr|.prc|.prt]\n\n选项:\n");
+        case Msg::MAIN_SAVE_ERR_BC: return std::string("保存字节码时出错: ") + arg;
+        case Msg::MAIN_SAVE_ERR_AST: return std::string("保存 AST 时出错: ") + arg;
         default: return arg;
     }
 }
@@ -160,6 +192,13 @@ inline std::string fmt_int(Msg id, long long n) {
         case Msg::REPL_TIME: return std::string("代码执行时间: ") + ns + " 毫秒。";
         default: return ns;
     }
+}
+
+inline std::string fmt2(Msg id, const std::string& a1, const std::string& a2) {
+    if (id == Msg::MAIN_LOAD_ERR) {
+        return std::string("加载 ") + a1 + " 时出错: " + a2;
+    }
+    return a1 + a2;
 }
 
 inline std::string fmt3(Msg id, const std::string& a1, const std::string& a2, const std::string& a3) {
