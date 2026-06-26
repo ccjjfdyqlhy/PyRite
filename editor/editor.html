@@ -198,7 +198,7 @@
         <button class="tool-btn" id="btn-open" data-tooltip="打开文件">
             <svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
         </button>
-        <input type="file" id="file-input" accept=".pr,.src" multiple>
+        <input type="file" id="file-input" accept=".pr,.prc,.prt,.src" multiple>
         <div class="spacer" style="flex:1"></div>
         <select id="select-font-size" class="status-select" style="border: 1px solid var(--border-color); padding: 2px 5px; border-radius: 4px;">
             <option value="12px">12px</option>
@@ -243,9 +243,9 @@
         let activeFileId = null;
 
         const syntax = {
-            keywords: ['if', 'then', 'else', 'elif', 'endif', 'end', 'while', 'do', 'finally', 'fin', 'endwhile', 'fn', 'endfn', 'return', 'say', 'ask', 'halt', 'run', 'try', 'catch', 'endtry', 'raise', 'await', 'endawait', 'ins', 'contains', 'endins', 'using', 'as', 'require', 'expose', 'loop', 'for', 'times', 'until', 'endloop', 'break', 'continue', 'not', 'and', 'or', 'new', 'in', 'struct'],
-            types: ['dec', 'str', 'bin', 'ln', 'dim', 'any', 'nul', 'void'],
-            builtins: ['abs', 'len', 'rt', 'sort', 'setify', 'max', 'min', 'countdown', 'hash', 'sin', 'cos', 'tan', 'log', 'set_precision', 'get_precision', 'approx', 'is_int', 'is_neg', 'to_double', 'type', 'is_dec', 'is_str', 'is_bin', 'is_ln', 'is_dim', 'is_nul', 'is_fn', 'open', 'split', 'join', 'find', 'contains', 'replace', 'trim', 'substr', 'upper', 'lower', 'char', 'ord', 'repeat', 'reverse', 'index', 'push', 'pop', 'dim_keys', 'dim_values', 'dim_has', 'dim_merge'],
+            keywords: ['if', 'then', 'else', 'elif', 'endif', 'end', 'while', 'do', 'finally', 'fin', 'endwhile', 'fn', 'endfn', 'return', 'say', 'ask', 'try', 'catch', 'endtry', 'raise', 'await', 'endawait', 'ins', 'contains', 'endins', 'using', 'as', 'require', 'expose', 'loop', 'for', 'times', 'until', 'endloop', 'break', 'continue', 'not', 'and', 'or', 'new', 'in', 'struct', 'this', 'swap'],
+            types: ['dec', 'str', 'bin', 'ln', 'dim', 'any', 'nul'],
+            builtins: ['abs', 'len', 'rt', 'sort', 'setify', 'max', 'min', 'countdown', 'hash', 'sin', 'cos', 'tan', 'log', 'set_precision', 'get_precision', 'approx', 'is_int', 'is_neg', 'to_double', 'halt', 'run', 'about', 'help'],
             classes: ['Exception']
         };
 
@@ -542,6 +542,16 @@
                     i = end; continue;
                 }
                 if (/[+\-*\/%=<>!&|^~?:;.,()[\]{}]/.test(char)) {
+                    // Multi-char operators: ->  +=  -=  *=  /=  ^=  %=  ==  !=  <=  >=
+                    if (i + 1 < len) {
+                        const two = code.substring(i, i + 2);
+                        if (two === '->' || two === '+=' || two === '-=' || two === '*=' ||
+                            two === '/=' || two === '^=' || two === '%=' || two === '==' ||
+                            two === '!=' || two === '<=' || two === '>=') {
+                            html += `<span class="token-operator">${escape(two)}</span>`;
+                            i += 2; continue;
+                        }
+                    }
                     html += `<span class="token-operator">${escape(char)}</span>`;
                     i++; continue;
                 }
