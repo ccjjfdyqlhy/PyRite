@@ -1,5 +1,7 @@
 # PyRite — A Lightweight Scripting Language with BigNumber Arithmetic
 
+**English** | [**中文**](README_zh.md)
+
 PyRite is an interpreted scripting language that blends syntax from Python, C++, and BASIC. Its standout feature is **transparent arbitrary-precision arithmetic**: every number is a `BigNumber` by default, with no import, no `Decimal()`, no precision ceiling.
 
 Version **v0.31.0** — hybrid AST/bytecode interpreter with `.prc`/`.prt` serialization.
