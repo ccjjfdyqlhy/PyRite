@@ -22,6 +22,14 @@ void VM::runtime_error(int line, const std::string& msg) {
     std::ostringstream oss;
     oss << ::msg(Msg::RUNTIME_PREFIX) << line << ": " << msg;
     error_message = oss.str();
+    throw RuntimeError(line, msg);
+}
+
+void VM::set_error(int line, const std::string& msg) {
+    had_error = true;
+    std::ostringstream oss;
+    oss << ::msg(Msg::RUNTIME_PREFIX) << line << ": " << msg;
+    error_message = oss.str();
 }
 
 int VM::current_line() {
@@ -157,7 +165,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     frame.function->constants[idx])->value;
                 ValuePtr val = globals->get(name);
                 if (!val) {
-                    runtime_error(0, "Undefined variable '" + name + "'");
+                    runtime_error(current_line(), fmt(Msg::UNDEFINED_VAR, name));
                     return false;
                 }
                 // Lazy-load module proxies.
@@ -219,24 +227,24 @@ bool VM::run(BytecodeChunkPtr c) {
                         long long len = static_cast<long long>(ln->elements.size());
                         if (i < 0) i += len;
                         if (i < 0 || i >= len) {
-                            runtime_error(0, "List index out of range");
+                            runtime_error(current_line(), msg(Msg::LN_IDX_OOB));
                             return false;
                         }
                         push(ln->elements[i]);
                     } else {
-                        runtime_error(0, "List index must be a number");
+                        runtime_error(current_line(), msg(Msg::LN_IDX_NUM));
                         return false;
                     }
                 } else if (auto dm = dynamic_cast<DimValue*>(obj.get())) {
                     if (auto str = dynamic_cast<StringValue*>(index.get())) {
                         auto it = dm->dict.find(str->value);
                         if (it == dm->dict.end()) {
-                            runtime_error(0, "Key not found: " + str->value);
+                            runtime_error(current_line(), fmt(Msg::DIM_KEY_MISS, str->value));
                             return false;
                         }
                         push(it->second);
                     } else {
-                        runtime_error(0, "Dict key must be a string");
+                        runtime_error(current_line(), msg(Msg::DIM_KEY_TYPE));
                         return false;
                     }
                 } else if (auto str = dynamic_cast<StringValue*>(obj.get())) {
@@ -245,16 +253,16 @@ bool VM::run(BytecodeChunkPtr c) {
                         long long len = static_cast<long long>(str->value.size());
                         if (i < 0) i += len;
                         if (i < 0 || i >= len) {
-                            runtime_error(0, "String index out of range");
+                            runtime_error(current_line(), msg(Msg::LN_IDX_OOB));
                             return false;
                         }
                         push(std::make_shared<StringValue>(std::string(1, str->value[i])));
                     } else {
-                        runtime_error(0, "String index must be a number");
+                        runtime_error(current_line(), msg(Msg::LN_IDX_NUM));
                         return false;
                     }
                 } else {
-                    runtime_error(0, "Cannot index this value type");
+                    runtime_error(current_line(), msg(Msg::NOT_SUBSCR));
                     return false;
                 }
                 break;
@@ -269,15 +277,24 @@ bool VM::run(BytecodeChunkPtr c) {
                         long long len = static_cast<long long>(ln->elements.size());
                         if (i < 0) i += len;
                         if (i < 0 || i >= len) {
-                            runtime_error(0, "List index out of range");
+                            runtime_error(current_line(), msg(Msg::LN_IDX_OOB));
                             return false;
                         }
                         ln->elements[i] = val;
+                    } else {
+                        runtime_error(current_line(), msg(Msg::LN_IDX_NUM));
+                        return false;
                     }
                 } else if (auto dm = dynamic_cast<DimValue*>(obj.get())) {
                     if (auto str = dynamic_cast<StringValue*>(index.get())) {
                         dm->dict[str->value] = val;
+                    } else {
+                        runtime_error(current_line(), msg(Msg::DIM_KEY_TYPE));
+                        return false;
                     }
+                } else {
+                    runtime_error(current_line(), msg(Msg::NOT_SUBSCR));
+                    return false;
                 }
                 push(val);
                 break;
@@ -296,7 +313,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     if (it != dm->dict.end()) push(it->second);
                     else push(std::make_shared<NullValue>());
                 } else {
-                    runtime_error(0, "Cannot get property from this value");
+                    runtime_error(current_line(), fmt(Msg::NO_PROP, name));
                     return false;
                 }
                 break;
@@ -312,6 +329,9 @@ bool VM::run(BytecodeChunkPtr c) {
                     inst->set(name, val);
                 } else if (auto dm = dynamic_cast<DimValue*>(obj.get())) {
                     dm->dict[name] = val;
+                } else {
+                    runtime_error(current_line(), msg(Msg::NO_SET_PROP));
+                    return false;
                 }
                 push(val);
                 break;
@@ -350,7 +370,7 @@ bool VM::run(BytecodeChunkPtr c) {
                 } else if (auto str = dynamic_cast<StringValue*>(obj.get())) {
                     push(std::make_shared<NumberValue>(BigNumber(static_cast<long long>(str->value.size()))));
                 } else {
-                    runtime_error(0, "Cannot get length of this value");
+                    runtime_error(current_line(), "Argument to len() must be a string or a list.");
                     return false;
                 }
                 break;
@@ -549,10 +569,13 @@ bool VM::run(BytecodeChunkPtr c) {
                 break;
             }
             case OpCode::OP_INPUT: {
-                uint32_t idx = read_operand24(frame.ip);
-                frame.ip += 3;
-                std::string prompt = std::dynamic_pointer_cast<StringValue>(
-                    frame.function->constants[idx])->value;
+                ValuePtr promptVal = pop();
+                std::string prompt;
+                if (auto s = std::dynamic_pointer_cast<StringValue>(promptVal)) {
+                    prompt = s->value;
+                } else {
+                    prompt = promptVal->toString();
+                }
                 std::cout << prompt;
                 std::string line;
                 std::getline(std::cin, line);
@@ -567,29 +590,40 @@ bool VM::run(BytecodeChunkPtr c) {
                 TokenType type = static_cast<TokenType>(idx);
                 ValuePtr val = pop();
                 // Perform type conversion, mirroring the AST interpreter's
-                // VarDeclarationNode::accept logic.
+                // TypeConversionNode::accept logic (for `as` casts) and
+                // VarDeclarationNode::accept logic (for variable declarations).
                 if (type == TokenType::DEC) {
-                    if (auto s = dynamic_cast<StringValue*>(val.get())) {
+                    if (dynamic_cast<NumberValue*>(val.get())) {
+                        push(val);
+                    } else if (auto s = dynamic_cast<StringValue*>(val.get())) {
                         try { push(std::make_shared<NumberValue>(BigNumber(s->value))); }
-                        catch (...) { push(std::make_shared<NumberValue>(BigNumber(0))); }
+                        catch (const std::invalid_argument&) {
+                            runtime_error(current_line(), std::string("Cannot convert string '") + s->value + "' to a number.");
+                            return false;
+                        }
                     } else if (auto b = dynamic_cast<BinaryValue*>(val.get())) {
                         push(std::make_shared<NumberValue>(b->toBigNumber()));
                     } else if (dynamic_cast<NullValue*>(val.get())) {
+                        // VarDeclaration allows null -> 0
                         push(std::make_shared<NumberValue>(BigNumber(0)));
                     } else {
-                        // NumberValue, Closure, LnValue, DimValue: keep as-is
+                        // VarDeclaration keeps as-is; TypeConversion throws.
+                        // Since we can't distinguish, keep as-is (lenient).
                         push(val);
                     }
                 } else if (type == TokenType::STR) {
                     push(std::make_shared<StringValue>(val->toString()));
                 } else if (type == TokenType::BIN) {
-                    if (auto s = dynamic_cast<StringValue*>(val.get())) {
+                    if (dynamic_cast<BinaryValue*>(val.get())) {
+                        push(val);
+                    } else if (auto s = dynamic_cast<StringValue*>(val.get())) {
                         try { push(std::make_shared<BinaryValue>(s->value)); }
-                        catch (...) { push(std::make_shared<BinaryValue>(std::vector<uint8_t>{0})); }
+                        catch (...) {
+                            runtime_error(current_line(), std::string("Cannot convert string '") + s->value + "' to binary. Expected '0x...' format.");
+                            return false;
+                        }
                     } else if (dynamic_cast<NullValue*>(val.get())) {
                         push(std::make_shared<BinaryValue>(std::vector<uint8_t>{0}));
-                    } else if (dynamic_cast<BinaryValue*>(val.get())) {
-                        push(val);
                     } else {
                         push(std::make_shared<BinaryValue>(std::vector<uint8_t>{0}));
                     }
@@ -599,7 +633,8 @@ bool VM::run(BytecodeChunkPtr c) {
                     } else if (dynamic_cast<NullValue*>(val.get())) {
                         push(std::make_shared<LnValue>(std::vector<ValuePtr>{}));
                     } else {
-                        // Non-list/non-null assigned to ln: wrap in a list
+                        // VarDeclaration wraps in list; TypeConversion throws.
+                        // Since we can't distinguish, wrap in list (lenient).
                         push(std::make_shared<LnValue>(std::vector<ValuePtr>{val}));
                     }
                 } else if (type == TokenType::DIM) {
@@ -675,16 +710,22 @@ bool VM::run(BytecodeChunkPtr c) {
         // Unhandled raise: print the error and terminate.
         std::string m = e.value ? e.value->toString() : "";
         int line = current_line();
-        runtime_error(line, msg(Msg::UNCAUGHT_EX) + m);
+        set_error(line, msg(Msg::UNCAUGHT_EX) + m);
         return false;
     } catch (const RuntimeError& e) {
         // Use the exception's line if available, otherwise the current VM line.
         int line = e.line > 0 ? e.line : current_line();
-        runtime_error(line, e.what());
+        // Wrap in ExceptionValue to match interpreter behavior
+        ValuePtr exc = std::make_shared<ExceptionValue>(std::make_shared<StringValue>(e.what()));
+        // Try to handle the runtime error via a try-handler (catchable).
+        if (handle_exception(exc)) {
+            continue;  // resume execution at the catch handler
+        }
+        set_error(line, e.what());
         return false;
     } catch (const std::exception& e) {
         int line = current_line();
-        runtime_error(line, e.what());
+        set_error(line, e.what());
         return false;
     }
     }  // end outer while (exception resume loop)
@@ -772,7 +813,6 @@ ValuePtr VM::eval_ast(const AstNodePtr& node) {
             dynamic_cast<BreakNode*>(node.get()) ||
             dynamic_cast<ContinueNode*>(node.get()) ||
             dynamic_cast<SayNode*>(node.get()) ||
-            dynamic_cast<InpNode*>(node.get()) ||
             dynamic_cast<FnDefNode*>(node.get()) ||
             dynamic_cast<ReturnNode*>(node.get()) ||
             dynamic_cast<TryCatchNode*>(node.get()) ||
@@ -801,8 +841,8 @@ ValuePtr VM::eval_ast(const AstNodePtr& node) {
         throw;
     } catch (RuntimeError& e) {
         interpreter->environment = saved_env;
-        runtime_error(e.line, e.what());
-        return std::make_shared<NullValue>();
+        // Re-throw for the VM's run() loop to handle (may be caught by try/catch)
+        throw;
     }
 
     interpreter->environment = saved_env;
@@ -841,8 +881,8 @@ bool VM::call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line
             ValuePtr result = native->fn(args);
             push(result);
         } catch (RuntimeError& e) {
-            runtime_error(e.line, e.what());
-            return false;
+            // Re-throw for the VM's run() loop to handle (may be caught by try/catch)
+            throw;
         }
         return true;
     }
@@ -880,8 +920,8 @@ bool VM::call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line
             result = e.value;
         } catch (RuntimeError& e) {
             interpreter->environment = saved;
-            runtime_error(e.line, e.what());
-            return false;
+            // Re-throw for the VM's run() loop to handle (may be caught by try/catch)
+            throw;
         }
         interpreter->environment = saved;
         push(result);
@@ -920,8 +960,8 @@ bool VM::call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line
             result = e.value;
         } catch (RuntimeError& e) {
             interpreter->environment = saved;
-            runtime_error(e.line, e.what());
-            return false;
+            // Re-throw for the VM's run() loop to handle (may be caught by try/catch)
+            throw;
         }
         interpreter->environment = saved;
         push(result);
@@ -1017,10 +1057,10 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
         switch (op) {
             case OpCode::OP_SUB: return std::make_shared<NumberValue>(na->value - nb->value);
             case OpCode::OP_DIV:
-                if (nb->value == BigNumber(0)) { runtime_error(line, "Division by zero"); return std::make_shared<NullValue>(); }
+                if (nb->value == BigNumber(0)) { runtime_error(line, "Division by zero."); return std::make_shared<NullValue>(); }
                 return std::make_shared<NumberValue>(na->value / nb->value);
             case OpCode::OP_MOD:
-                if (nb->value == BigNumber(0)) { runtime_error(line, "Modulo by zero"); return std::make_shared<NullValue>(); }
+                if (nb->value == BigNumber(0)) { runtime_error(line, "Modulo by zero."); return std::make_shared<NullValue>(); }
                 return std::make_shared<NumberValue>(na->value % nb->value);
             case OpCode::OP_POW: return std::make_shared<NumberValue>(na->value ^ nb->value);
             case OpCode::OP_LESS: return std::make_shared<NumberValue>(na->value < nb->value ? 1 : 0);
@@ -1060,7 +1100,19 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
             default: break;
         }
     }
-    runtime_error(line, "Invalid operand types for operator");
+    // Select appropriate error message based on operation type
+    std::string err_msg;
+    switch (op) {
+        case OpCode::OP_ADD: err_msg = msg(Msg::ADD_TYPE); break;
+        case OpCode::OP_SUB: err_msg = msg(Msg::SUB_TYPE); break;
+        case OpCode::OP_MUL: err_msg = msg(Msg::MUL_TYPE); break;
+        case OpCode::OP_DIV: case OpCode::OP_MOD: case OpCode::OP_POW: err_msg = msg(Msg::DIV_TYPE); break;
+        case OpCode::OP_LESS: case OpCode::OP_LESS_EQUAL:
+        case OpCode::OP_GREATER: case OpCode::OP_GREATER_EQUAL:
+        case OpCode::OP_EQUAL: case OpCode::OP_NOT_EQUAL: err_msg = msg(Msg::CMP_TYPE); break;
+        default: err_msg = "Invalid operand types for operator"; break;
+    }
+    runtime_error(line, err_msg);
     return std::make_shared<NullValue>();
 }
 
@@ -1070,7 +1122,7 @@ ValuePtr VM::unary_op(OpCode op, const ValuePtr& a, int line) {
             return std::make_shared<NumberValue>(BigNumber(0) - na->value);
         }
     }
-    runtime_error(line, "Invalid operand for unary operator");
+    runtime_error(line, msg(Msg::SUB_TYPE));
     return std::make_shared<NullValue>();
 }
 

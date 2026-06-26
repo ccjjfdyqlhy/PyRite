@@ -89,7 +89,8 @@ private:
     void push_frame(ClosurePtr closure, const std::vector<ValuePtr>& args, int line);
 
     // ---- Error ----
-    void runtime_error(int line, const std::string& msg);
+    void runtime_error(int line, const std::string& msg);  // throws RuntimeError
+    void set_error(int line, const std::string& msg);      // sets flag only (no throw)
     int current_line();
 
     // ---- Exception handling ----

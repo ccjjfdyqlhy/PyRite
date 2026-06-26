@@ -193,7 +193,7 @@ ValuePtr read_value(BinReader& r) {
     ValueTag tag = static_cast<ValueTag>(r.u8());
     switch (tag) {
         case ValueTag::NULL_VAL:
-            return nullptr;
+            return std::make_shared<NullValue>();
         case ValueTag::NUMBER:
             return std::make_shared<NumberValue>(BigNumber(r.string()));
         case ValueTag::STRING:

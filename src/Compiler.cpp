@@ -276,6 +276,7 @@ void Compiler::compile_expression(const AstNodePtr& node) {
     if (auto n = dynamic_cast<CallNode*>(node.get())) { compile_call(n); return; }
     if (auto n = dynamic_cast<SubscriptNode*>(node.get())) { compile_subscript(n); return; }
     if (auto n = dynamic_cast<GetNode*>(node.get())) { compile_get(n); return; }
+    if (auto n = dynamic_cast<InpNode*>(node.get())) { compile_inp(n); return; }
     // Complex expressions -> OP_EVAL_AST
     emit_op_operand(OpCode::OP_EVAL_AST, add_ast_node(node));
 }

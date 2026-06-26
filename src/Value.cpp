@@ -145,6 +145,18 @@ bool BinaryValue::isEqualTo(const Value& other) const {
 ValuePtr StringValue::add(const Value& other) const { return std::make_shared<StringValue>(this->value + other.toString()); }
 bool StringValue::isEqualTo(const Value& other) const { if (const StringValue* o = dynamic_cast<const StringValue*>(&other)) return this->value == o->value; return false; }
 bool StringValue::isLessThan(const Value& other) const { if (const StringValue* o = dynamic_cast<const StringValue*>(&other)) return this->value < o->value; return Value::isLessThan(other); }
+ValuePtr StringValue::getSubscript(const Value& index) const {
+    if (const NumberValue* num = dynamic_cast<const NumberValue*>(&index)) {
+        long long i = num->value.toLongLong();
+        long long len = static_cast<long long>(this->value.size());
+        if (i < 0) i += len;
+        if (i < 0 || i >= len) {
+            throw std::runtime_error(msg(Msg::LN_IDX_OOB));
+        }
+        return std::make_shared<StringValue>(std::string(1, this->value[i]));
+    }
+    throw std::runtime_error(msg(Msg::LN_IDX_NUM));
+}
 std::string StringValue::repr() const {
     std::stringstream ss;
     ss << "'" << value << "'";

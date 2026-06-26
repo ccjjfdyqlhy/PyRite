@@ -92,6 +92,7 @@ public:
     ValuePtr add(const Value& other) const override;
     bool isEqualTo(const Value& other) const override;
     bool isLessThan(const Value& other) const override;
+    ValuePtr getSubscript(const Value& index) const override;
     ValuePtr getSlice(const ValuePtr& start, const ValuePtr& end, const ValuePtr& step) const override;
 };
 
