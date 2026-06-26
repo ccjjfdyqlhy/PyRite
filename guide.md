@@ -4,38 +4,17 @@
 
 1. [语言简介](#1-语言简介)
 2. [核心语法](#2-核心语法)
-   - [注释](#注释)
-   - [数据类型](#数据类型)
-   - [变量声明与赋值](#变量声明与赋值)
-   - [运算符](#运算符)
-   - [复合赋值](#复合赋值)
-   - [类型转换](#类型转换)
 3. [控制流](#3-控制流)
-   - [if-then-elif-else-end](#if-then-elif-else-end)
-   - [while-do-fin-end](#while-do-fin-end)
-   - [loop-for/until/endloop](#loop-foruntilendloop)
-   - [for-in 迭代](#for-in-迭代)
-   - [break / continue](#break--continue)
-   - [await-then-endawait](#await-then-endawait)
 4. [函数](#4-函数)
-   - [标准定义](#标准定义)
-   - [简写 fn->](#简写-fn-)
-   - [Lambda / 匿名函数](#lambda--匿名函数)
-   - [参数与默认值](#参数与默认值)
 5. [面向对象](#5-面向对象)
-   - [struct 结构体](#struct-结构体)
-   - [ins 类](#ins-类)
-   - [实例化 new()](#实例化-new)
 6. [错误处理](#6-错误处理)
-   - [try-catch-fin-endtry](#try-catch-fin-endtry)
-   - [raise](#raise)
 7. [内置功能](#7-内置功能)
-   - [输入输出 say / ask](#输入输出-say--ask)
-   - [变量交换 swap()](#变量交换-swap)
-   - [别名 using-as](#别名-using-as)
 8. [内置函数](#8-内置函数)
 9. [REPL](#9-repl)
 10. [完整例程](#10-完整例程)
+11. [模块系统](#11-模块系统)
+12. [字节码 VM 与序列化](#12-字节码-vm-与序列化)
+13. [算法与数据结构例程](#13-算法与数据结构例程)
 
 ---
 
@@ -44,7 +23,9 @@
 PyRite 是一门解释型脚本语言，语法融合 Python/C++/BASIC，核心特色是**内置 BigNumber 高精度运算**。
 
 ```
-fn fact(dec n) -> n == 0 ? 1 else n * fact(n - 1)
+fn fact(dec n) do
+  if n == 0 then return 1 else return n * fact(n - 1) endif
+end
 say(fact(100))  # 任意精度 #
 ```
 
@@ -122,12 +103,12 @@ a %= 3    // a = a % 3
 #### 类型转换
 
 ```python
-"123" as dec     // → 123 (数字)
-456 as str       // → "456"
-"0xFF" as bin    // → 0xFF
-[1,2,3] as str   // → "[1, 2, 3]"
-nul as ln        // → []
-nul as dim       // → {}
+say("123" as dec)     // → 123 (数字)
+say(456 as str)       // → "456"
+say("0xFF" as bin)    // → 0xFF
+say([1,2,3] as str)   // → "[1, 2, 3]"
+say(nul as ln)        // → []
+say(nul as dim)       // → {}
 ```
 
 ### 3. 控制流
@@ -163,18 +144,24 @@ end
 #### loop-for/until/endloop
 
 ```python
+// 单行
+loop say("Hello") for 5 times
+
+// 多行
 loop
-  say("Hello")
+  say("world")
+for 3 times
+
+// 带索引变量
+loop(i)
+  say(i)
 for 5 times
 
+// until 条件终止
+dec i = 5
 loop
-  say(i)
   i = i - 1
-until i < 0
-
-loop(i) for 5 times       // 带索引变量
-  say("索引: " + (i as str))
-end
+until i <= 0
 ```
 
 #### for-in 迭代
@@ -235,6 +222,8 @@ say(double(5))        // 10
 say(greet("alice"))   // hello alice
 ```
 
+注意：箭头后的表达式只能为单个表达式，不支持赋值语句或 `if/then/else` 等控制流。如需多语句逻辑请使用 `do...end`。
+
 #### Lambda / 匿名函数
 
 ```python
@@ -289,18 +278,23 @@ say(c.name)   // "default"
 
 ```python
 struct Stack(ln items = [])
-fn push(any s, any item) -> s.items = s.items + [item]
+fn push(any s, any item) do
+  s.items = s.items + [item]
+end
 fn pop(any s) do
+  if len(s.items) == 0 then raise("empty") endif
   any v = s.items[len(s.items)-1]
   s.items = s.items[0:len(s.items)-1]
   return v
-endfn
+end
 
 dec s = new(Stack)
 push(s, 10)
 push(s, 20)
-say(pop(s))   // 20
+say(pop(s))  // 20
 ```
+
+注意：箭头函数体内不能包含赋值语句或控制流。如需复杂的 push/logic 请在 `do...end` 块中编写完整函数体。
 
 #### ins 类
 
@@ -308,7 +302,7 @@ say(pop(s))   // 20
 
 ```python
 ins Counter(dec val = 0) contains
-  fn inc() do this.val = this.val + 1 endfn
+  fn inc() do this.val = this.val + 1 end
   fn get() -> this.val
 endins
 
@@ -355,7 +349,7 @@ end
 ```python
 fn check(dec age) do
   if age < 18 then raise("未成年") endif
-endfn
+end
 
 try
   check(15)
@@ -371,7 +365,6 @@ end
 ```python
 say("hello")                    // 打印
 str name = ask("你的名字: ")    // 输入
-ask("年龄: ") as str age        // 输入并赋值
 ```
 
 #### 变量交换 swap()
@@ -432,23 +425,35 @@ say(v)   // 42
 | `$ code` | 执行并加入缓冲区 |
 | `$# code` | 执行不加入缓冲区 |
 
-**示例：**
+**多行函数输入示例：**
 ```
-(void)     1| fn fact(dec n) -> n == 0 ? 1 else n * fact(n - 1)
-(fn)       2| end
-(void)     3| run()
-(void)     4| say(fact(10))
+(void)     1| fn fact(dec n) do
+(fn)       2|   if n == 0 then return 1 else return n * fact(n - 1) endif
+(if)       3| end
+(void)     4| run()
+(void)     5| say(fact(10))
+(void)     6| run()
 3628800
-(void)     5| halt()
+(void)     7| halt()
 退出 REPL 模式...
+```
+
+**单行箭头函数（env 不滞留）：**
+```
+(void)     1| $ fn double(dec x) -> x * 2
+(void)     2| $ say(double(5))
+10
+(void)     3| halt()
 ```
 
 ### 10. 完整例程
 
-#### 阶乘（简写 + 递归）
+#### 阶乘（递归）
 
 ```python
-fn fact(dec n) -> n == 0 ? 1 else n * fact(n - 1)
+fn fact(dec n) do
+  if n == 0 then return 1 else return n * fact(n - 1) endif
+end
 say(fact(100))
 ```
 
@@ -462,9 +467,9 @@ fn fib(dec n) do
   while i <= n do
     seq = seq + [seq[i-1] + seq[i-2]]
     i = i + 1
-  endwhile
+  end
   return seq[n]
-endfn
+end
 say(fib(10))  // 55
 ```
 
@@ -479,11 +484,11 @@ fn sort(ln arr) do
     while j < n - i - 1 do
       if arr[j] > arr[j+1] then swap(arr[j], arr[j+1]) endif
       j += 1
-    endwhile
+    end
     i += 1
-  endwhile
+  end
   return arr
-endfn
+end
 
 ln data = [64, 34, 25, 12, 22, 11, 90]
 say(sort(data))  // [11, 12, 22, 25, 34, 64, 90]
@@ -496,7 +501,7 @@ fn sum(ln items) do
   dec total = 0
   for x in items do total += x end
   return total
-endfn
+end
 say(sum([1, 2, 3, 4, 5]))  // 15
 ```
 
@@ -504,17 +509,24 @@ say(sum([1, 2, 3, 4, 5]))  // 15
 
 ```python
 struct Stack(ln items = [])
-fn push(any s, any item) -> s.items = s.items + [item]
-fn top(any s) -> len(s.items) == 0 ? nul else s.items[len(s.items)-1]
+fn push(any s, any item) do
+  s.items = s.items + [item]
+end
+fn top(any s) do
+  if len(s.items) == 0 then return nul endif
+  return s.items[len(s.items)-1]
+end
 fn pop(any s) do
   if len(s.items) == 0 then raise("empty") endif
   any v = top(s)
   s.items = s.items[0:len(s.items)-1]
   return v
-endfn
+end
 
 dec s = new(Stack)
-push(s, 10); push(s, 20); push(s, 30)
+push(s, 10)
+push(s, 20)
+push(s, 30)
 say(pop(s))  // 30
 say(pop(s))  // 20
 ```
@@ -527,33 +539,46 @@ struct BST(any root = nul)
 
 fn bst_insert(any self, dec key) do
   if self.root == nul then
-    dec n = new(Node); n.key = key; self.root = n
-  else
-    fn ins(any node, dec k) do
-      if k < node.key then
-        if node.left == nul then dec n = new(Node); n.key = k; node.left = n
-        else ins(node.left, k) endif
-      else
-        if node.right == nul then dec n = new(Node); n.key = k; node.right = n
-        else ins(node.right, k) endif
-      endif
-    endfn
-    ins(self.root, key)
+    dec n = new(Node)
+    n.key = key
+    self.root = n
+    return
   endif
-endfn
+  any cur = self.root
+  while cur != nul do
+    if key < cur.key then
+      if cur.left == nul then
+        dec n = new(Node)
+        n.key = key
+        cur.left = n
+        return
+      endif
+      cur = cur.left
+    else
+      if cur.right == nul then
+        dec n = new(Node)
+        n.key = key
+        cur.right = n
+        return
+      endif
+      cur = cur.right
+    endif
+  end
+end
 
 fn bst_search(any self, dec key) do
-  fn srch(any node, dec k) do
-    if node == nul then return 0 endif
-    if node.key == k then return 1 endif
-    if k < node.key then return srch(node.left, k)
-    else return srch(node.right, k) endif
-  endfn
-  return srch(self.root, key)
-endfn
+  any cur = self.root
+  while cur != nul do
+    if cur.key == key then return 1 endif
+    if key < cur.key then cur = cur.left else cur = cur.right endif
+  end
+  return 0
+end
 
 dec bst = new(BST)
-bst_insert(bst, 50); bst_insert(bst, 30); bst_insert(bst, 70)
+bst_insert(bst, 50)
+bst_insert(bst, 30)
+bst_insert(bst, 70)
 say(bst_search(bst, 40))  // 0
 say(bst_search(bst, 50))  // 1
 ```
@@ -606,11 +631,10 @@ utils/
 // utils/_index.pr
 expose fn add(dec a, dec b) -> a + b
 expose dec PI = 3.14159
-expose fn helper()
 
 fn _on_load() do
   say("utils 模块已加载")
-endfn
+end
 ```
 
 未标 `expose` 的顶层变量不会进入模块字典。
@@ -638,18 +662,8 @@ expose struct Point(dec x, dec y)  // 导出结构体
 fn connect() -> ...
 fn _on_load() do
   say("数据库模块已加载")
-endfn
+end
 ```
-
-#### 模块解析路径
-
-- 相对路径：相对于当前工作目录
-- 以 `/` 开头：绝对路径
-- 自动尝试 `path`、`path.pr`、`path/_index.pr`
-
-#### 循环引用保护
-
-模块系统会检测循环引用并抛出运行时错误。
 
 #### 完整示例
 
@@ -667,4 +681,282 @@ say(m.PI)             // 3.14159
 
 ---
 
-*PyRite v0.20.2 — 持续开发中*
+### 12. 字节码 VM 与序列化
+
+PyRite v0.31.0 引入了混合执行引擎：AST 解释器（默认）和字节码 VM（`--vm`），以及编译产物的序列化/反序列化。
+
+#### 执行模式
+
+| 模式 | 命令 | 说明 |
+|------|------|------|
+| AST 解释器 | `./PyRite script.pr` | 解析后直接遍历 AST 执行（默认） |
+| 字节码 VM | `./PyRite --vm script.pr` | 解析→编译→VM 执行，热路径更快 |
+| 预编译字节码 | `./PyRite script.prc` | 直接加载运行，无需解析 |
+| 预编译 AST | `./PyRite script.prt` | 直接加载运行，无需解析 |
+
+#### 文件格式
+
+| 扩展名 | 内容 | 自动检测 | 执行引擎 |
+|--------|------|----------|----------|
+| `.pr` | 源代码 | — | 解释器 / VM |
+| `.prc` | 编译后的 BytecodeChunk | 是 | VM |
+| `.prt` | 序列化 AST（35 种节点类型） | 是 | 解释器 |
+
+#### CLI 选项
+
+```
+--vm                       使用字节码 VM 执行（更快）
+--ast                      使用 AST 解释器执行（默认）
+--dump-bytecode            编译并打印字节码反汇编
+--emit-bytecode <file>     编译并保存 .prc 字节码，然后执行
+--emit-ast <file>          编译并保存 .prt AST，然后执行
+--save-bytecode <file>     编译并保存 .prc 字节码（不执行）
+--save-ast <file>          编译并保存 .prt AST（不执行）
+```
+
+#### 导出示例
+
+```bash
+# 编译为字节码并保存，然后执行源文件
+./PyRite --emit-bytecode out.prc script.pr
+
+# 仅保存字节码（不执行）
+./PyRite --save-bytecode out.prc script.pr
+
+# 直接运行编译后的字节码
+./PyRite out.prc
+```
+
+#### 混合执行机制
+
+编译器为简单操作（算术、局部变量、控制流）发射纯字节码，为复杂特性（类、try-catch、模块、await、raise、using、require）发射 `OP_EVAL_AST` 指令。VM 遇到该指令时将其局部变量桥接到临时 Environment，委托 AST 解释器执行单个节点。
+
+#### 实现架构
+
+```
+源文件 (.pr)
+    │
+    ▼
+┌────────────┐
+│  Tokenizer │  词法分析
+└─────┬──────┘
+      │
+      ▼
+┌────────────┐
+│   Parser   │  递归下降 → AST
+└─────┬──────┘
+      │
+      ├──▶ Interpreter（AST 遍历执行）
+      │
+      └──▶ Compiler → BytecodeChunk → VM（字节码执行）
+                                          │
+                                     OP_EVAL_AST → Interpreter（回退）
+```
+
+---
+
+### 13. 算法与数据结构例程
+
+#### 选择排序
+
+```python
+fn selection_sort(ln arr) do
+  dec n = len(arr)
+  dec i = 0
+  while i < n do
+    dec min_idx = i
+    dec j = i + 1
+    while j < n do
+      if arr[j] < arr[min_idx] then min_idx = j endif
+      j += 1
+    end
+    if min_idx != i then swap(arr[i], arr[min_idx]) endif
+    i += 1
+  end
+  return arr
+end
+say(selection_sort([29, 10, 14, 37, 13]))  // [10, 13, 14, 29, 37]
+```
+
+#### 插入排序
+
+```python
+fn insertion_sort(ln arr) do
+  dec i = 1
+  while i < len(arr) do
+    any key = arr[i]
+    dec j = i - 1
+    while j >= 0 and arr[j] > key do
+      arr[j + 1] = arr[j]
+      j = j - 1
+    end
+    arr[j + 1] = key
+    i += 1
+  end
+  return arr
+end
+say(insertion_sort([5, 2, 4, 6, 1, 3]))  // [1, 2, 3, 4, 5, 6]
+```
+
+#### 二分查找（有序数组）
+
+```python
+fn binary_search(ln arr, dec target) do
+  dec lo = 0
+  dec hi = len(arr) - 1
+  while lo <= hi do
+    dec mid = lo + (hi - lo) / 2
+    if arr[mid] == target then return mid endif
+    if arr[mid] < target then lo = mid + 1 else hi = mid - 1 endif
+  end
+  return -1
+end
+ln sorted = [1, 3, 5, 7, 9, 11, 13]
+say(binary_search(sorted, 7))   // 3
+say(binary_search(sorted, 6))   // -1
+```
+
+#### 链表
+
+```python
+struct ListNode(any val, any next = nul)
+struct LinkedList(any head = nul)
+
+fn ll_push(any self, any val) do
+  dec node = new(ListNode)
+  node.val = val
+  node.next = self.head
+  self.head = node
+end
+
+fn ll_to_list(any self) do
+  ln result = []
+  any cur = self.head
+  while cur != nul do
+    result = result + [cur.val]
+    cur = cur.next
+  end
+  return result
+end
+
+dec list = new(LinkedList)
+ll_push(list, 3)
+ll_push(list, 2)
+ll_push(list, 1)
+say(ll_to_list(list))  // [1, 2, 3]
+```
+
+#### 队列（struct 实现）
+
+```python
+struct Queue(ln items = [])
+fn q_push(any self, any val) -> self.items = self.items + [val]
+fn q_pop(any self) do
+  if len(self.items) == 0 then raise("empty queue") endif
+  any v = self.items[0]
+  self.items = self.items[1:len(self.items)]
+  return v
+end
+fn q_peek(any self) do
+  if len(self.items) == 0 then return nul endif
+  return self.items[0]
+end
+
+dec q = new(Queue)
+q_push(q, "a")
+q_push(q, "b")
+q_push(q, "c")
+say(q_pop(q))    // a
+say(q_pop(q))    // b
+say(q_peek(q))   // c
+```
+
+#### 最大公约数（辗转相除法）
+
+```python
+fn gcd(dec a, dec b) do
+  while b != 0 do
+    dec t = b
+    b = a % b
+    a = t
+  end
+  return a
+end
+say(gcd(48, 18))  // 6
+say(gcd(100, 75)) // 25
+```
+
+#### 判断素数
+
+```python
+fn is_prime(dec n) do
+  if n < 2 then return 0 endif
+  dec i = 2
+  while i * i <= n do
+    if n % i == 0 then return 0 endif
+    i += 1
+  end
+  return 1
+end
+say(is_prime(17))  // 1
+say(is_prime(25))  // 0
+```
+
+#### 数组最大值与最小值
+
+```python
+fn array_min(ln arr) do
+  dec m = arr[0]
+  dec i = 1
+  while i < len(arr) do
+    if arr[i] < m then m = arr[i] endif
+    i += 1
+  end
+  return m
+end
+fn array_max(ln arr) do
+  dec m = arr[0]
+  dec i = 1
+  while i < len(arr) do
+    if arr[i] > m then m = arr[i] endif
+    i += 1
+  end
+  return m
+end
+say(array_min([3, 7, 1, 9, 4]))  // 1
+say(array_max([3, 7, 1, 9, 4]))  // 9
+```
+
+#### 数组求和与平均值
+
+```python
+fn array_sum(ln arr) do
+  dec total = 0
+  for x in arr do total += x end
+  return total
+end
+fn array_avg(ln arr) -> array_sum(arr) / len(arr)
+say(array_sum([10, 20, 30, 40]))   // 100
+say(array_avg([10, 20, 30, 40]))   // 25
+```
+
+#### 累乘求幂
+
+```python
+fn pow(dec base, dec exp) do
+  dec result = 1
+  dec i = 0
+  while i < exp do
+    result = result * base
+    i += 1
+  end
+  return result
+end
+say(pow(2, 10))  // 1024
+```
+
+更高效的二分求幂需要整数除法支持，此处用累乘保持跨平台兼容。
+
+---
+
+*PyRite v0.31.0 — 持续开发中*
