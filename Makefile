@@ -15,7 +15,7 @@ SRCS    := $(SRC_DIR)/main.cpp \
            $(SRC_DIR)/Serializer.cpp
 OBJS    := $(SRCS:.cpp=.o)
 
-.PHONY: all clean release debug
+.PHONY: all clean release debug check check-opcodes
 
 all: release
 
@@ -33,3 +33,12 @@ $(SRC_DIR)/%.o: $(SRC_DIR)/%.cpp
 
 clean:
 	rm -f $(OBJS) $(TARGET)
+
+# Verify that the generated opcode tables are in sync with opcodes.def.
+# The bytecode contract lives in opcodes.def; src/OpCode.hpp and the
+# JavaScript VM's opcodes.js are generated from it. Run 'make
+# check-opcodes' in CI to catch a half-applied change.
+check: check-opcodes
+
+check-opcodes:
+	python3 tools/gen_opcodes.py --check

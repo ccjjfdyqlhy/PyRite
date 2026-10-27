@@ -1,0 +1,136 @@
+# PyRite bytecode opcode table
+# ============================================================================
+# THIS FILE IS THE SINGLE SOURCE OF TRUTH FOR THE BYTECODE CONTRACT.
+#
+# The C++ compiler (src/OpCode.hpp) and the JavaScript VM (PyRiteJS
+# src/runtime/opcodes.js) both derive their opcode tables from this file.
+# Never edit the generated files by hand -- run:
+#
+#     python3 tools/gen_opcodes.py            # regenerate both sides
+#     python3 tools/gen_opcodes.py --check    # CI: fail if out of date
+#
+# The numbering is part of the on-disk bytecode format: changing a number
+# invalidates every previously compiled .prc file. Append new opcodes at the
+# end; never renumber an existing one.
+#
+# Format
+# ------
+#   <number> <NAME> <operand|no-operand>  # <description>
+#
+#   operand       the instruction carries a 3-byte big-endian operand
+#   no-operand    the instruction is a single byte
+#
+# @section lines start a new group (used for grouping in the generated files).
+
+# ---- Constants ----
+@section Constants
+0  OP_CONSTANT        operand      # [idx] push constants[idx]
+1  OP_NULL            no-operand   # push NullValue
+2  OP_TRUE            no-operand   # push NumberValue(1)
+3  OP_FALSE           no-operand   # push NumberValue(0)
+
+# ---- Stack manipulation ----
+@section Stack manipulation
+4  OP_POP             no-operand   # pop & discard
+5  OP_DUP             no-operand   # duplicate top
+
+# ---- Local variables (stack slot indexed) ----
+@section Local variables (stack slot indexed)
+6  OP_GET_LOCAL       operand      # [idx] push locals[idx]
+7  OP_SET_LOCAL       operand      # [idx] locals[idx] = pop (keeps value on stack? no, pops)
+8  OP_SET_LOCAL_KEEP  operand      # [idx] locals[idx] = peek (keeps value)
+
+# ---- Global variables (name indexed in constant pool) ----
+@section Global variables (name indexed in constant pool)
+9   OP_GET_GLOBAL     operand      # [name_idx] push globals[name]
+10  OP_SET_GLOBAL     operand      # [name_idx] globals[name] = pop
+11  OP_DEFINE_GLOBAL  operand      # [name_idx] globals[name] = pop
+
+# ---- Upvalues (closures) ----
+@section Upvalues (closures)
+12  OP_GET_UPVALUE    operand      # [idx] push upvalues[idx]->value
+13  OP_SET_UPVALUE    operand      # [idx] upvalues[idx]->value = pop
+14  OP_CLOSE_UPVALUE  no-operand   # close the upvalue pointing to this slot
+
+# ---- Collections ----
+@section Collections
+15  OP_GET_INDEX      no-operand   # pop index, pop obj; push obj[index]
+16  OP_SET_INDEX      no-operand   # pop val, pop index, pop obj; obj[index] = val
+17  OP_GET_PROPERTY   operand      # [name_idx] pop obj; push obj.name
+18  OP_SET_PROPERTY   operand      # [name_idx] pop val, pop obj; obj.name = val
+19  OP_BUILD_LIST     operand      # [n] pop n values; push LnValue
+20  OP_BUILD_DICT     operand      # [n] pop n key-value pairs; push DimValue
+21  OP_GET_LEN        no-operand   # pop obj; push len(obj)
+22  OP_GET_SLICE      no-operand   # pop step, end, start, obj; push obj[start:end:step]
+23  OP_SET_SLICE      no-operand   # pop val, step, end, start, obj; obj[start:end:step] = val
+
+# ---- Arithmetic ----
+@section Arithmetic
+24  OP_ADD            no-operand   # pop b, a; push a + b
+25  OP_SUB            no-operand   # pop b, a; push a - b
+26  OP_MUL            no-operand   # pop b, a; push a * b
+27  OP_DIV            no-operand   # pop b, a; push a / b
+28  OP_MOD            no-operand   # pop b, a; push a % b
+29  OP_POW            no-operand   # pop b, a; push a ** b
+30  OP_NEGATE         no-operand   # pop a; push -a
+31  OP_NOT            no-operand   # pop a; push (a truthy ? 0 : 1)
+
+# ---- Comparison ----
+@section Comparison
+32  OP_EQUAL          no-operand   # pop b, a; push (a == b ? 1 : 0)
+33  OP_NOT_EQUAL      no-operand   # pop b, a; push (a != b ? 1 : 0)
+34  OP_LESS           no-operand   # pop b, a; push (a < b ? 1 : 0)
+35  OP_LESS_EQUAL     no-operand   # pop b, a; push (a <= b ? 1 : 0)
+36  OP_GREATER        no-operand   # pop b, a; push (a > b ? 1 : 0)
+37  OP_GREATER_EQUAL  no-operand   # pop b, a; push (a >= b ? 1 : 0)
+
+# ---- Control flow (24-bit jump target = absolute IP) ----
+@section Control flow (24-bit jump target = absolute IP)
+38  OP_JUMP             operand    # [target] ip = target
+39  OP_JUMP_IF_FALSE    operand    # [target] pop; if falsy ip = target
+40  OP_JUMP_IF_TRUE     operand    # [target] pop; if truthy ip = target
+41  OP_JUMP_IF_FALSE_KEEP operand  # [target] if falsy ip = target (does not pop)
+42  OP_JUMP_IF_TRUE_KEEP  operand  # [target] if truthy ip = target (does not pop)
+43  OP_LOOP             operand    # [target] ip = target (backward jump)
+
+# ---- Functions ----
+@section Functions
+44  OP_CALL          operand      # [n] pop n args; pop callee; push result
+45  OP_CLOSURE       operand      # [fn_idx] build Closure from CompiledFunction
+46  OP_RETURN        no-operand   # pop return value; restore frame; push value to caller
+47  OP_RETURN_NULL   no-operand   # push null then return (no pop)
+
+# ---- I/O ----
+@section I/O
+48  OP_PRINT         no-operand   # pop; print + newline
+49  OP_INPUT         no-operand   # pop prompt; read line; push string
+
+# ---- Type conversion (as) ----
+@section Type conversion (as)
+50  OP_CAST          operand      # [type_token] pop; push converted value
+
+# ---- Compound assignment helpers ----
+# For `a += b` we emit: GET a, EVAL b, ADD, SET a
+
+# ---- Swap ----
+@section Swap
+51  OP_SWAP          no-operand   # pop b, pop a; push b, push a (then caller sets back)
+
+# ---- AST fallback (hybrid execution) ----
+# For features not yet bytecode-compiled (try-catch, classes, modules,
+# await, raise, using, require), the compiler emits OP_EVAL_AST with an
+# index into a side-table of AstNodePtr stored on the chunk. The VM
+# delegates to the AST interpreter for that single node.
+@section AST fallback (hybrid execution)
+52  OP_EVAL_AST      operand      # [ast_idx] evaluate ast_nodes[idx] via interpreter
+
+# ---- Exception handling (native) ----
+@section Exception handling (native)
+53  OP_RAISE         no-operand   # pop value; throw PyRiteRaiseException(value)
+54  OP_TRY_BEGIN     operand      # [catch_target] push try-handler with catch jump target
+55  OP_TRY_END       no-operand   # pop try-handler (try block completed without exception)
+56  OP_CATCH         no-operand   # catch handler entry; exception value already on stack
+
+# ---- Halt ----
+@section Halt
+57  OP_HALT          no-operand   # stop the VM
