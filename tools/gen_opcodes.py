@@ -243,7 +243,7 @@ CAST_CPP_TEMPLATE = """#pragma once
 #include "Tokenizer.hpp"
 
 // ============================================================================
-// PyRite cast type codes -- the operand of OP_CAST.
+// PyRite cast type codes -- the operand of the cast instruction.
 // ============================================================================
 // GENERATED FILE -- DO NOT EDIT BY HAND.
 // Source: opcodes.def (sha256 {sha})
@@ -254,7 +254,7 @@ CAST_CPP_TEMPLATE = """#pragma once
 // whenever a keyword is added, which would silently change the meaning of
 // every already-compiled .prc file.
 //
-// The compiler emits one of these codes as the operand of OP_CAST; the VM
+// The compiler emits one of these codes as the operand of the cast instruction; the VM
 // (C++ and JavaScript alike) switches on it.
 // ============================================================================
 
@@ -329,7 +329,7 @@ for (const [name, code] of Object.entries(OP)) {{
 }}
 
 // Total number of opcodes (used for shuffle range)
-const OP_COUNT = {count};
+const OPCODE_COUNT = {count};
 
 // Opcodes that have NO operand (single byte)
 const NO_OPERAND_OPS = new Set([
@@ -343,7 +343,13 @@ const NO_OPERAND_OPS = new Set([
 const JS_UNSUPPORTED_OPS = new Set([
 {unsupported_body}]);
 
-module.exports = {{ OP, OP_NAMES, OP_COUNT, NO_OPERAND_OPS, JS_UNSUPPORTED_OPS }};
+// Why the VM cannot execute them, keyed by opcode number. The reason names
+// the FEATURE, not the opcode, so a bundle that carries these reasons still
+// does not carry the opcode table.
+const JS_UNSUPPORTED_REASONS = {{
+{reasons_body}}};
+
+module.exports = {{ OP, OP_NAMES, OPCODE_COUNT, NO_OPERAND_OPS, JS_UNSUPPORTED_OPS, JS_UNSUPPORTED_REASONS }};
 """
 
 
@@ -371,9 +377,18 @@ def render_js(ops, sections, unsupported, sha):
             unsupported_lines.append("  %2d,  // %s" % (op.number, op.name))
     unsupported_body = "\n".join(unsupported_lines) + "\n"
 
+    reason_lines = []
+    for op in ops:
+        for u in unsupported:
+            if u.name == op.name:
+                reason = u.reason.replace(chr(34), chr(92) + chr(34))
+                reason_lines.append("  %d: %s%s%s," % (op.number, chr(34), reason, chr(34)))
+    reasons_body = "\n".join(reason_lines) + "\n"
+
     return JS_TEMPLATE.format(
         sha=sha, op_body=op_body, count=len(ops),
-        no_operand_body=no_operand_body, unsupported_body=unsupported_body)
+        no_operand_body=no_operand_body, unsupported_body=unsupported_body,
+        reasons_body=reasons_body)
 
 
 # --------------------------------------------------------------------------
@@ -381,14 +396,14 @@ def render_js(ops, sections, unsupported, sha):
 # --------------------------------------------------------------------------
 
 CAST_JS_TEMPLATE = """// ============================================================================
-// PyRite Cast Type Codes -- the operand of OP_CAST.
+// PyRite Cast Type Codes -- the operand of the cast instruction.
 // ============================================================================
 // GENERATED FILE -- DO NOT EDIT BY HAND.
 // Source: opcodes.def (sha256 {sha})
 // Regenerate: python3 ../PyRite/tools/gen_opcodes.py --js-root .
 //
 // These codes are STABLE and MUST match src/CastTypes.hpp in the C++
-// compiler. The C++ compiler emits one of them as the operand of OP_CAST.
+// compiler. The C++ compiler emits one of them as the operand of the cast instruction.
 // ============================================================================
 
 const CAST = {{
