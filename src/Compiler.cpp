@@ -601,7 +601,17 @@ void Compiler::compile_fn_def(FnDefNode* n) {
 
 void Compiler::compile_return(ReturnNode* n) {
     if (n->value) {
+        // A wholesale-returned literal is display data: the host shows it to
+        // the player (a lyric table, a staged dialogue sequence). Its string
+        // literals get dedicated constants the packaging step can watermark.
+        // The author keeps keys and directive names out of the literal
+        // (positional arrays, numeric opcodes) or they get marked too.
+        const bool display_literal =
+            dynamic_cast<ListLiteralNode*>(n->value.get()) != nullptr ||
+            dynamic_cast<DimLiteralNode*>(n->value.get()) != nullptr;
+        if (display_literal) ++display_literal_depth_;
         compile_expression(n->value);
+        if (display_literal) --display_literal_depth_;
     } else {
         emit_op(OpCode::OP_NULL);
     }
@@ -695,6 +705,13 @@ void Compiler::compile_literal(LiteralNode* n) {
         if (num->value == BigNumber(1)) { emit_op(OpCode::OP_TRUE); return; }
     }
     if (std::dynamic_pointer_cast<NullValue>(n->value)) { emit_op(OpCode::OP_NULL); return; }
+    if (display_literal_depth_ > 0 &&
+        std::dynamic_pointer_cast<StringValue>(n->value)) {
+        uint32_t idx = add_display_constant(n->value);
+        current->func->display_constants.push_back(static_cast<int>(idx));
+        emit_op_operand(OpCode::OP_CONSTANT, idx);
+        return;
+    }
     uint32_t idx = add_constant(n->value);
     emit_op_operand(OpCode::OP_CONSTANT, idx);
 }

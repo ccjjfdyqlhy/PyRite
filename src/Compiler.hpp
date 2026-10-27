@@ -66,6 +66,13 @@ private:
     std::string error_msg;
     int current_line;  // tracks the source line for bytecode line info
 
+    // > 0 while compiling the literal tree of a `return [...]` / `return {...}`.
+    // String literals inside such a wholesale-returned display literal are
+    // shown to the player, so they go through add_display_constant and the
+    // packaging step can watermark them. Keys and directive names stay OUT
+    // of returned literals (the data is positional) or they get marked too.
+    int display_literal_depth_ = 0;
+
     // ---- Constant pool helpers ----
     uint32_t add_constant(ValuePtr value);
     uint32_t add_display_constant(ValuePtr value);
