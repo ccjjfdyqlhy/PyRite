@@ -31,6 +31,7 @@ PYRITE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEF_PATH = os.path.join(PYRITE_ROOT, "opcodes.def")
 CPP_PATH = os.path.join(PYRITE_ROOT, "src", "OpCode.hpp")
 CAST_CPP_PATH = os.path.join(PYRITE_ROOT, "src", "CastTypes.hpp")
+INFO_CPP_PATH = os.path.join(PYRITE_ROOT, "src", "OpCodeInfo.hpp")
 DEFAULT_JS_ROOT = os.path.join(os.path.dirname(PYRITE_ROOT), "PyRiteJS")
 JS_OPCODES_PATH = os.path.join("src", "runtime", "opcodes.js")
 JS_CAST_PATH = os.path.join("src", "runtime", "castTypes.js")
@@ -56,17 +57,34 @@ class Cast:
         self.comment = comment
 
 
+class Unsupported:
+    __slots__ = ("name", "reason")
+
+    def __init__(self, name, reason):
+        self.name = name
+        self.reason = reason
+
+
 def parse_def(path):
     """Parse opcodes.def into (ops, sections, casts)."""
     ops = []
     sections = []          # list of (title, [Op])
     casts = []
+    unsupported = []       # list of Unsupported
     current = None
 
     with open(path, "r", encoding="utf-8") as fh:
         for lineno, raw in enumerate(fh, 1):
             line = raw.strip()
             if not line:
+                continue
+            if line.startswith("@js-unsupported"):
+                parts = line[len("@js-unsupported"):].split(None, 1)
+                if len(parts) < 1:
+                    raise SystemExit("%s:%d: @js-unsupported needs an opcode name"
+                                     % (path, lineno))
+                reason = parts[1].strip() if len(parts) > 1 else ""
+                unsupported.append(Unsupported(parts[0], reason))
                 continue
             if line.startswith("@cast"):
                 parts = line[len("@cast"):].split()
@@ -109,11 +127,11 @@ def parse_def(path):
                 sections.append(current)
             current[1].append(op)
 
-    validate(ops, casts, path)
-    return ops, sections, casts
+    validate(ops, casts, unsupported, path)
+    return ops, sections, casts, unsupported
 
 
-def validate(ops, casts, path):
+def validate(ops, casts, unsupported, path):
     numbers = [op.number for op in ops]
     names = [op.name for op in ops]
     if len(set(numbers)) != len(numbers):
@@ -137,6 +155,12 @@ def validate(ops, casts, path):
     if len(set(cast_tokens)) != len(cast_tokens):
         dupes = sorted({t for t in cast_tokens if cast_tokens.count(t) > 1})
         raise SystemExit("%s: duplicate cast tokens: %s" % (path, dupes))
+
+    known = set(op.name for op in ops)
+    for u in unsupported:
+        if u.name not in known:
+            raise SystemExit("%s: @js-unsupported names unknown opcode %s"
+                             % (path, u.name))
 
 
 def def_sha256(path):
@@ -311,11 +335,19 @@ const OP_COUNT = {count};
 const NO_OPERAND_OPS = new Set([
 {no_operand_body}]);
 
-module.exports = {{ OP, OP_NAMES, OP_COUNT, NO_OPERAND_OPS }};
+// Opcodes this VM cannot execute. The C++ compiler can fall back to its AST
+// interpreter for these; the browser VM has no such fallback, so bytecode
+// containing them would run locally and break once packaged. The C++ JSON
+// exporter refuses to emit such a program; this set lets the VM refuse to
+// load one too.
+const JS_UNSUPPORTED_OPS = new Set([
+{unsupported_body}]);
+
+module.exports = {{ OP, OP_NAMES, OP_COUNT, NO_OPERAND_OPS, JS_UNSUPPORTED_OPS }};
 """
 
 
-def render_js(ops, sections, sha):
+def render_js(ops, sections, unsupported, sha):
     lines = []
     for title, group in sections:
         lines.append("  // ---- %s ----" % title)
@@ -332,8 +364,16 @@ def render_js(ops, sections, sha):
     no_operand_body = "\n".join(
         "  OP.%s," % op.name for op in no_operand) + "\n"
 
+    unsupported_names = set(u.name for u in unsupported)
+    unsupported_lines = []
+    for op in ops:
+        if op.name in unsupported_names:
+            unsupported_lines.append("  %2d,  // %s" % (op.number, op.name))
+    unsupported_body = "\n".join(unsupported_lines) + "\n"
+
     return JS_TEMPLATE.format(
-        sha=sha, op_body=op_body, count=len(ops), no_operand_body=no_operand_body)
+        sha=sha, op_body=op_body, count=len(ops),
+        no_operand_body=no_operand_body, unsupported_body=unsupported_body)
 
 
 # --------------------------------------------------------------------------
@@ -382,6 +422,81 @@ def render_cast_js(casts, sha):
 
 
 # --------------------------------------------------------------------------
+# C++ opcode metadata (operand table + JS support)
+# --------------------------------------------------------------------------
+
+INFO_CPP_TEMPLATE = """#pragma once
+#include "OpCode.hpp"
+
+// ============================================================================
+// PyRite opcode metadata.
+// ============================================================================
+// GENERATED FILE -- DO NOT EDIT BY HAND.
+// Source: opcodes.def (sha256 {sha})
+// Regenerate: python3 tools/gen_opcodes.py
+//
+// Two tables live here:
+//
+//   OPCODE_HAS_OPERAND      does the instruction carry a 3-byte operand?
+//   OPCODE_JS_UNSUPPORTED   can the JavaScript VM execute the instruction?
+//
+// The operand table is what lets the C++ side walk a bytecode stream without
+// hard-coding instruction lengths. It used to be a hand-written list in the
+// disassembler, which is exactly the kind of thing that drifts.
+// ============================================================================
+
+// Whether the instruction carries a 3-byte big-endian operand.
+constexpr bool OPCODE_HAS_OPERAND[OPCODE_COUNT] = {{
+{operand_table}}};
+
+// Whether the JavaScript VM can execute the instruction. The JS VM has no AST
+// fallback and no native exception handling, so bytecode containing any of
+// these cannot run in the browser.
+constexpr bool OPCODE_JS_UNSUPPORTED[OPCODE_COUNT] = {{
+{unsupported_table}}};
+
+// Human-readable reason an opcode is unsupported, shown to the author when
+// the JSON exporter refuses a program. Empty when the opcode is supported.
+inline const char* opcode_js_unsupported_reason(OpCode op) {{
+    switch (op) {{
+{cases}    }}
+    return "";
+}}
+"""
+
+
+def render_opcode_info(ops, unsupported, sha):
+    by_name = dict((op.name, op) for op in ops)
+
+    operand_lines = []
+    for op in ops:
+        operand_lines.append("    /* %2d */ %-5s,  // %s"
+                             % (op.number, "true" if op.has_operand else "false", op.name))
+    operand_table = chr(10).join(operand_lines) + chr(10)
+
+    unsupported_names = set(u.name for u in unsupported)
+    unsupported_lines = []
+    for op in ops:
+        unsupported_lines.append("    /* %2d */ %-5s,  // %s"
+                                 % (op.number, "true" if op.name in unsupported_names else "false", op.name))
+    unsupported_table = chr(10).join(unsupported_lines) + chr(10)
+
+    cases = []
+    for u in unsupported:
+        if u.name not in by_name:
+            continue
+        reason = u.reason.replace(chr(34), chr(92) + chr(34))
+        cases.append("        case OpCode::%s: return %s%s%s;" % (u.name, chr(34), reason, chr(34)))
+    cases.append("")
+
+    return INFO_CPP_TEMPLATE.format(
+        sha=sha,
+        operand_table=operand_table,
+        unsupported_table=unsupported_table,
+        cases=chr(10).join(cases))
+
+
+# --------------------------------------------------------------------------
 # Driver
 # --------------------------------------------------------------------------
 
@@ -408,12 +523,13 @@ def main(argv=None):
                     help="path to opcodes.def")
     args = ap.parse_args(argv)
 
-    ops, sections, casts = parse_def(args.def_path)
+    ops, sections, casts, unsupported = parse_def(args.def_path)
     sha = def_sha256(args.def_path)
 
     targets = [
         (CPP_PATH, render_cpp(ops, sections, sha)),
         (CAST_CPP_PATH, render_cast_cpp(casts, sha)),
+        (INFO_CPP_PATH, render_opcode_info(ops, unsupported, sha)),
     ]
 
     js_root = os.path.abspath(args.js_root)
@@ -422,7 +538,7 @@ def main(argv=None):
     js_def = os.path.join(js_root, JS_DEF_PATH)
 
     if os.path.isdir(js_root):
-        targets.append((js_opcodes, render_js(ops, sections, sha)))
+        targets.append((js_opcodes, render_js(ops, sections, unsupported, sha)))
         targets.append((js_cast, render_cast_js(casts, sha)))
         with open(args.def_path, "r", encoding="utf-8") as fh:
             targets.append((js_def, fh.read()))
@@ -449,8 +565,9 @@ def main(argv=None):
         return 1
 
     if not args.check:
-        print("\n%d opcodes and %d cast types generated from opcodes.def "
-              "(sha256 %s)" % (len(ops), len(casts), sha[:12]))
+        print("\n%d opcodes, %d cast types and %d js-unsupported opcodes "
+              "generated from opcodes.def (sha256 %s)"
+              % (len(ops), len(casts), len(unsupported), sha[:12]))
     return 0
 
 

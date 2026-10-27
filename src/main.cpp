@@ -428,8 +428,9 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
-            if (!writeJsonToFile(chunk, emit_json_path, info)) {
-                std::cerr << fmt(Msg::MAIN_SAVE_ERR_JSON, emit_json_path) << std::endl;
+            JsonExportResult export_result = writeJsonToFile(chunk, emit_json_path, info);
+            if (!export_result.ok) {
+                std::cerr << fmt(Msg::MAIN_SAVE_ERR_JSON, export_result.error) << std::endl;
                 return 1;
             }
             std::cout << fmt(Msg::MAIN_SAVE_OK_JSON, emit_json_path) << std::endl;

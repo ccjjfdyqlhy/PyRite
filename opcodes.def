@@ -149,3 +149,15 @@
 @cast LN   3  list
 @cast DIM  4  dict
 @cast ANY  5  any (no conversion)
+
+# ---- Opcodes the JavaScript VM cannot execute ----
+# The JS VM has no AST fallback and no native exception handling, so bytecode
+# containing any of these cannot run in the browser. The JSON exporter refuses
+# to emit such a program instead of shipping something that breaks at runtime.
+#
+#   @js-unsupported <OPCODE> [reason shown to the author]
+#
+@js-unsupported OP_EVAL_AST  classes, structs, require, using, await and other AST fallbacks
+@js-unsupported OP_TRY_BEGIN  try/catch
+@js-unsupported OP_TRY_END    try/catch
+@js-unsupported OP_CATCH      try/catch

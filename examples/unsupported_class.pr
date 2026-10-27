@@ -1,0 +1,7 @@
+// Uses a class, which the C++ VM can run but the JavaScript VM cannot.
+struct Point(dec x, dec y)
+
+any p = new(Point)
+p.x = 1
+p.y = 2
+say(p.x)

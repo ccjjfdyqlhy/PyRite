@@ -1,5 +1,6 @@
 #include "JsBytecodeSerializer.hpp"
 #include "Value.hpp"
+#include "OpCodeInfo.hpp"
 #include <sstream>
 #include <fstream>
 #include <cstdio>
@@ -182,6 +183,37 @@ bool containsName(const std::vector<std::string>& names, const std::string& n) {
     return std::find(names.begin(), names.end(), n) != names.end();
 }
 
+// Walk a function's bytecode and report the first opcode the JavaScript VM
+// cannot execute. Returns true and fills 'why' when one is found.
+//
+// The operand table comes from opcodes.def (OpCodeInfo.hpp), so this walker
+// cannot fall out of step with the instruction encoding.
+bool find_js_unsupported(const CompiledFunctionPtr& fn, std::string& why) {
+    const std::vector<uint8_t>& code = fn->code;
+    size_t ip = 0;
+    while (ip < code.size()) {
+        uint8_t raw = code[ip];
+        if (raw >= OPCODE_COUNT) {
+            why = std::string("an invalid opcode (") + std::to_string((int)raw) + ")";
+            return true;
+        }
+        OpCode op = static_cast<OpCode>(raw);
+        if (OPCODE_JS_UNSUPPORTED[raw]) {
+            why = std::string(op_name(op)) + " (" + opcode_js_unsupported_reason(op) + ")";
+            return true;
+        }
+        ip++;
+        if (OPCODE_HAS_OPERAND[raw]) {
+            if (ip + 3 > code.size()) {
+                why = "a truncated operand";
+                return true;
+            }
+            ip += 3;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 std::string serializeToJson(BytecodeChunkPtr chunk, const JsonExportInfo& info) {
@@ -219,12 +251,42 @@ std::string serializeToJson(BytecodeChunkPtr chunk, const JsonExportInfo& info) 
     return oss.str();
 }
 
-bool writeJsonToFile(BytecodeChunkPtr chunk, const std::string& path,
-                      const JsonExportInfo& info) {
+JsonExportResult writeJsonToFile(BytecodeChunkPtr chunk, const std::string& path,
+                                 const JsonExportInfo& info) {
+    JsonExportResult result;
+    result.ok = false;
+    result.error.clear();
+
+    if (!chunk) {
+        result.error = "nothing to export";
+        return result;
+    }
+
+    // Refuse to emit bytecode the JavaScript VM cannot execute.
+    for (size_t i = 0; i < chunk->all_functions.size(); i++) {
+        std::string why;
+        if (find_js_unsupported(chunk->all_functions[i], why)) {
+            std::string where = (chunk->all_functions[i] == chunk->script)
+                ? std::string("the script")
+                : ("function '" + chunk->all_functions[i]->name + "'");
+            result.error = where + " uses " + why +
+                           ", which the JavaScript VM cannot execute";
+            return result;
+        }
+    }
+
     std::string json = serializeToJson(chunk, info);
     std::ofstream out(path.c_str(), std::ios::binary);
-    if (!out.is_open()) return false;
+    if (!out.is_open()) {
+        result.error = "cannot open " + path + " for writing";
+        return result;
+    }
     out << json;
     out.close();
-    return out.good() || !out.fail();
+    if (out.fail()) {
+        result.error = "cannot write " + path;
+        return result;
+    }
+    result.ok = true;
+    return result;
 }

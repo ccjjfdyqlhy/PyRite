@@ -65,7 +65,19 @@ struct JsonExportInfo {
 // Serialize a compiled chunk to the PRC1 JSON document.
 std::string serializeToJson(BytecodeChunkPtr chunk, const JsonExportInfo& info = JsonExportInfo());
 
-// Write the PRC1 JSON document to disk. Returns false if the file could not
-// be written.
-bool writeJsonToFile(BytecodeChunkPtr chunk, const std::string& path,
-                      const JsonExportInfo& info = JsonExportInfo());
+// The outcome of an export attempt.
+struct JsonExportResult {
+    bool ok;
+    std::string error;   // empty when ok
+};
+
+// Write the PRC1 JSON document to disk.
+//
+// Refuses (ok == false) when the program contains an opcode the JavaScript
+// VM cannot execute -- OP_EVAL_AST and the native try/catch opcodes. Those
+// work in the C++ VM because it can fall back to the AST interpreter, but
+// the browser VM has no such fallback, so shipping such a program would
+// mean "runs locally, breaks when packaged". The error names the function
+// and the feature so the author can fix it.
+JsonExportResult writeJsonToFile(BytecodeChunkPtr chunk, const std::string& path,
+                                 const JsonExportInfo& info = JsonExportInfo());

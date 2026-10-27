@@ -1,0 +1,8 @@
+// Uses try/catch, which the C++ VM can run (it falls back to the AST
+// interpreter) but the JavaScript VM cannot.
+try
+  dec r = 10 / 0
+catch err
+  say("caught: " + (err as str))
+end
+say("done")
