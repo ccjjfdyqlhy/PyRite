@@ -3,10 +3,10 @@
 #include "Tokenizer.hpp"
 
 // ============================================================================
-// PyRite cast type codes -- the operand of OP_CAST.
+// PyRite cast type codes -- the operand of the cast instruction.
 // ============================================================================
 // GENERATED FILE -- DO NOT EDIT BY HAND.
-// Source: opcodes.def (sha256 661c137c3e29221a8c06e674279cdf3d8dde346309c781e8abaec7dd648cc085)
+// Source: opcodes.def (sha256 d957ad6127a728b2fd13fd22422a4dc821fc06a6754b1374dce5092345df8a03)
 // Regenerate: python3 tools/gen_opcodes.py
 //
 // These codes are STABLE. They are deliberately not TokenType values:
@@ -14,7 +14,7 @@
 // whenever a keyword is added, which would silently change the meaning of
 // every already-compiled .prc file.
 //
-// The compiler emits one of these codes as the operand of OP_CAST; the VM
+// The compiler emits one of these codes as the operand of the cast instruction; the VM
 // (C++ and JavaScript alike) switches on it.
 // ============================================================================
 
