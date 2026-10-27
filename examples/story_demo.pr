@@ -1,0 +1,17 @@
+// A tiny story script, used to check the narrow story interface (Z6):
+// say / choice / set_flag / get_flag / play_scene, and nothing else.
+
+fn scene_snow() do
+  say("雪原层")
+  set_flag("went", "snow")
+end
+
+fn scene_stay() do
+  say("哪里也不去")
+  set_flag("went", "stay")
+end
+
+say("你终于来了，第七号。")
+set_flag("met_seven", 1)
+choice({"雪原层": scene_snow, "留在这里": scene_stay})
+play_scene("snow")
