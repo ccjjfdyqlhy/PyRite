@@ -9,6 +9,7 @@
 #include "Compiler.hpp"
 #include "VM.hpp"
 #include "Serializer.hpp"
+#include "JsBytecodeSerializer.hpp"
 #include "help_cn.hpp"
 #include "msg_cn.hpp"
 
@@ -309,6 +310,7 @@ int main(int argc, char* argv[]) {
     std::string script_file;
     std::string emit_bytecode_path;
     std::string emit_ast_path;
+    std::string emit_json_path;
 
     // Parse command-line arguments.
     for (int i = 1; i < argc; ++i) {
@@ -327,6 +329,13 @@ int main(int argc, char* argv[]) {
             }
             emit_bytecode_path = argv[i];
             if (arg == "--save-bytecode") emit_only = true;
+        } else if (arg == "--emit-json" || arg == "--save-json") {
+            if (++i >= argc) {
+                std::cerr << fmt(Msg::MAIN_OPT_NEED_ARG, arg) << std::endl;
+                return 1;
+            }
+            emit_json_path = argv[i];
+            if (arg == "--save-json") emit_only = true;
         } else if (arg == "--emit-ast" || arg == "--save-ast") {
             if (++i >= argc) {
                 std::cerr << fmt(Msg::MAIN_OPT_NEED_ARG, arg) << std::endl;
@@ -343,11 +352,14 @@ int main(int argc, char* argv[]) {
                       << msg(Msg::MAIN_HELP_EMIT_AST)
                       << msg(Msg::MAIN_HELP_SAVE_BC)
                       << msg(Msg::MAIN_HELP_SAVE_AST)
+                      << msg(Msg::MAIN_HELP_EMIT_JSON)
+                      << msg(Msg::MAIN_HELP_SAVE_JSON)
                       << msg(Msg::MAIN_HELP_HELP)
                       << msg(Msg::MAIN_HELP_FORMATS)
                       << msg(Msg::MAIN_HELP_PR)
                       << msg(Msg::MAIN_HELP_PRC)
-                      << msg(Msg::MAIN_HELP_PRT);
+                      << msg(Msg::MAIN_HELP_PRT)
+                      << msg(Msg::MAIN_HELP_JSON);
             return 0;
         } else if (arg[0] == '-') {
             std::cerr << fmt(Msg::MAIN_UNKNOWN_OPT, arg) << "\n"
@@ -363,7 +375,7 @@ int main(int argc, char* argv[]) {
     }
 
     // If we have source output paths, load source, parse, emit, optionally run.
-    if (!emit_bytecode_path.empty() || !emit_ast_path.empty()) {
+    if (!emit_bytecode_path.empty() || !emit_ast_path.empty() || !emit_json_path.empty()) {
         if (script_file.empty()) {
             std::cerr << msg(Msg::MAIN_SAVE_NEED_SRC) << std::endl;
             return 1;
@@ -393,6 +405,34 @@ int main(int argc, char* argv[]) {
                 std::cerr << fmt(Msg::MAIN_SAVE_ERR_BC, e.what()) << std::endl;
                 return 1;
             }
+        }
+
+        if (!emit_json_path.empty()) {
+            Compiler compiler;
+            BytecodeChunkPtr chunk = compiler.compile(statements);
+            if (compiler.has_error()) {
+                std::cerr << fmt(Msg::MAIN_COMPILE_ERR, compiler.get_error()) << std::endl;
+                return 1;
+            }
+            // The host may call what the script explicitly exposes.
+            JsonExportInfo info;
+            for (size_t i = 0; i < statements.size(); i++) {
+                if (auto fn = dynamic_cast<FnDefNode*>(statements[i].get())) {
+                    if (fn->is_exposed) {
+                        info.exports.push_back(fn->name);
+                        info.exposed_functions.push_back(fn->name);
+                    }
+                } else if (auto var = dynamic_cast<VarDeclarationNode*>(statements[i].get())) {
+                    if (var->is_exposed) {
+                        info.exports.push_back(var->name);
+                    }
+                }
+            }
+            if (!writeJsonToFile(chunk, emit_json_path, info)) {
+                std::cerr << fmt(Msg::MAIN_SAVE_ERR_JSON, emit_json_path) << std::endl;
+                return 1;
+            }
+            std::cout << fmt(Msg::MAIN_SAVE_OK_JSON, emit_json_path) << std::endl;
         }
 
         if (!emit_ast_path.empty()) {

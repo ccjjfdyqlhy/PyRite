@@ -3,10 +3,12 @@
 gen_opcodes.py -- generate the PyRite opcode tables from opcodes.def.
 
 The bytecode contract lives in exactly one place:  opcodes.def
-This script projects it onto the two implementations:
+This script projects it onto the implementations:
 
     src/OpCode.hpp                        (C++ compiler / VM)
+    src/CastTypes.hpp                     (C++ cast type codes)
     ../PyRiteJS/src/runtime/opcodes.js    (JavaScript VM)
+    ../PyRiteJS/src/runtime/castTypes.js  (JavaScript cast type codes)
     ../PyRiteJS/src/runtime/opcodes.def   (pinned snapshot for the JS repo)
 
 Usage
@@ -28,8 +30,10 @@ import sys
 PYRITE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEF_PATH = os.path.join(PYRITE_ROOT, "opcodes.def")
 CPP_PATH = os.path.join(PYRITE_ROOT, "src", "OpCode.hpp")
+CAST_CPP_PATH = os.path.join(PYRITE_ROOT, "src", "CastTypes.hpp")
 DEFAULT_JS_ROOT = os.path.join(os.path.dirname(PYRITE_ROOT), "PyRiteJS")
 JS_OPCODES_PATH = os.path.join("src", "runtime", "opcodes.js")
+JS_CAST_PATH = os.path.join("src", "runtime", "castTypes.js")
 JS_DEF_PATH = os.path.join("src", "runtime", "opcodes.def")
 
 
@@ -43,16 +47,37 @@ class Op:
         self.comment = comment
 
 
+class Cast:
+    __slots__ = ("token", "code", "comment")
+
+    def __init__(self, token, code, comment):
+        self.token = token
+        self.code = code
+        self.comment = comment
+
+
 def parse_def(path):
-    """Parse opcodes.def into (list[Op], list[(section_title, [Op])])."""
+    """Parse opcodes.def into (ops, sections, casts)."""
     ops = []
     sections = []          # list of (title, [Op])
+    casts = []
     current = None
 
     with open(path, "r", encoding="utf-8") as fh:
         for lineno, raw in enumerate(fh, 1):
             line = raw.strip()
             if not line:
+                continue
+            if line.startswith("@cast"):
+                parts = line[len("@cast"):].split()
+                if len(parts) < 2:
+                    raise SystemExit("%s:%d: @cast needs a token and a code"
+                                     % (path, lineno))
+                try:
+                    cast_code = int(parts[1])
+                except ValueError:
+                    raise SystemExit("%s:%d: bad cast code %r" % (path, lineno, parts[1]))
+                casts.append(Cast(parts[0], cast_code, " ".join(parts[2:])))
                 continue
             if line.startswith("@section"):
                 title = line[len("@section"):].strip()
@@ -84,11 +109,11 @@ def parse_def(path):
                 sections.append(current)
             current[1].append(op)
 
-    validate(ops, path)
-    return ops, sections
+    validate(ops, casts, path)
+    return ops, sections, casts
 
 
-def validate(ops, path):
+def validate(ops, casts, path):
     numbers = [op.number for op in ops]
     names = [op.name for op in ops]
     if len(set(numbers)) != len(numbers):
@@ -103,6 +128,15 @@ def validate(ops, path):
             "%s: opcode numbers must be contiguous 0..%d (missing %s)"
             % (path, len(ops) - 1,
                sorted(set(expected) - set(numbers))))
+
+    cast_codes = [c.code for c in casts]
+    if len(set(cast_codes)) != len(cast_codes):
+        dupes = sorted({c for c in cast_codes if cast_codes.count(c) > 1})
+        raise SystemExit("%s: duplicate cast type codes: %s" % (path, dupes))
+    cast_tokens = [c.token for c in casts]
+    if len(set(cast_tokens)) != len(cast_tokens):
+        dupes = sorted({t for t in cast_tokens if cast_tokens.count(t) > 1})
+        raise SystemExit("%s: duplicate cast tokens: %s" % (path, dupes))
 
 
 def def_sha256(path):
@@ -177,6 +211,66 @@ def render_cpp(ops, sections, sha):
 
 
 # --------------------------------------------------------------------------
+# C++ cast type table
+# --------------------------------------------------------------------------
+
+CAST_CPP_TEMPLATE = """#pragma once
+#include <cstdint>
+#include "Tokenizer.hpp"
+
+// ============================================================================
+// PyRite cast type codes -- the operand of OP_CAST.
+// ============================================================================
+// GENERATED FILE -- DO NOT EDIT BY HAND.
+// Source: opcodes.def (sha256 {sha})
+// Regenerate: python3 tools/gen_opcodes.py
+//
+// These codes are STABLE. They are deliberately not TokenType values:
+// TokenType is a tokenizer implementation detail whose numbering shifts
+// whenever a keyword is added, which would silently change the meaning of
+// every already-compiled .prc file.
+//
+// The compiler emits one of these codes as the operand of OP_CAST; the VM
+// (C++ and JavaScript alike) switches on it.
+// ============================================================================
+
+enum class CastType : uint8_t {{
+{enum_body}}};
+
+// Total number of cast type codes.
+constexpr int CAST_TYPE_COUNT = {count};
+
+// Map a declaration/cast keyword to its stable cast code.
+// Returns false when the token is not a type keyword.
+inline bool cast_code_for(TokenType t, uint32_t& out) {{
+    switch (t) {{
+{cases}    }}
+    return false;
+}}
+"""
+
+
+def render_cast_cpp(casts, sha):
+    width = max([len(c.token) for c in casts]) if casts else 6
+    lines = []
+    for c in casts:
+        comment = c.comment or ""
+        if comment:
+            lines.append("    CAST_%-*s = %d,   // %s" % (width + 1, c.token, c.code, comment))
+        else:
+            lines.append("    CAST_%-*s = %d," % (width + 1, c.token, c.code))
+    enum_body = "\n".join(lines) + "\n"
+
+    cases = []
+    for c in casts:
+        cases.append("        case TokenType::%s: out = %d; return true;" % (c.token, c.code))
+    cases.append("")
+
+    return CAST_CPP_TEMPLATE.format(
+        sha=sha, enum_body=enum_body, count=len(casts), cases="\n".join(cases))
+
+
+# --------------------------------------------------------------------------
 # JavaScript table
 # --------------------------------------------------------------------------
 
@@ -243,6 +337,51 @@ def render_js(ops, sections, sha):
 
 
 # --------------------------------------------------------------------------
+# JavaScript cast type table
+# --------------------------------------------------------------------------
+
+CAST_JS_TEMPLATE = """// ============================================================================
+// PyRite Cast Type Codes -- the operand of OP_CAST.
+// ============================================================================
+// GENERATED FILE -- DO NOT EDIT BY HAND.
+// Source: opcodes.def (sha256 {sha})
+// Regenerate: python3 ../PyRite/tools/gen_opcodes.py --js-root .
+//
+// These codes are STABLE and MUST match src/CastTypes.hpp in the C++
+// compiler. The C++ compiler emits one of them as the operand of OP_CAST.
+// ============================================================================
+
+const CAST = {{
+{cast_body}}};
+
+// Reverse map for debugging
+const CAST_NAMES = {{}};
+for (const [name, code] of Object.entries(CAST)) {{
+  CAST_NAMES[code] = name;
+}}
+
+// Total number of cast type codes.
+const CAST_COUNT = {count};
+
+module.exports = {{ CAST, CAST_NAMES, CAST_COUNT }};
+"""
+
+
+def render_cast_js(casts, sha):
+    width = max([len(c.token) for c in casts]) if casts else 6
+    lines = []
+    for c in casts:
+        comment = c.comment or ""
+        if comment:
+            lines.append("  %-*s %d,  // %s" % (width + 2, c.token + ":", c.code, comment))
+        else:
+            lines.append("  %-*s %d," % (width + 2, c.token + ":", c.code))
+    cast_body = "\n".join(lines) + "\n"
+    return CAST_JS_TEMPLATE.format(
+        sha=sha, cast_body=cast_body, count=len(casts))
+
+
+# --------------------------------------------------------------------------
 # Driver
 # --------------------------------------------------------------------------
 
@@ -269,19 +408,22 @@ def main(argv=None):
                     help="path to opcodes.def")
     args = ap.parse_args(argv)
 
-    ops, sections = parse_def(args.def_path)
+    ops, sections, casts = parse_def(args.def_path)
     sha = def_sha256(args.def_path)
 
     targets = [
         (CPP_PATH, render_cpp(ops, sections, sha)),
+        (CAST_CPP_PATH, render_cast_cpp(casts, sha)),
     ]
 
     js_root = os.path.abspath(args.js_root)
     js_opcodes = os.path.join(js_root, JS_OPCODES_PATH)
+    js_cast = os.path.join(js_root, JS_CAST_PATH)
     js_def = os.path.join(js_root, JS_DEF_PATH)
 
     if os.path.isdir(js_root):
         targets.append((js_opcodes, render_js(ops, sections, sha)))
+        targets.append((js_cast, render_cast_js(casts, sha)))
         with open(args.def_path, "r", encoding="utf-8") as fh:
             targets.append((js_def, fh.read()))
     else:
@@ -307,8 +449,8 @@ def main(argv=None):
         return 1
 
     if not args.check:
-        print("\n%d opcodes generated from opcodes.def (sha256 %s)"
-              % (len(ops), sha[:12]))
+        print("\n%d opcodes and %d cast types generated from opcodes.def "
+              "(sha256 %s)" % (len(ops), len(casts), sha[:12]))
     return 0
 
 

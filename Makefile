@@ -12,7 +12,8 @@ SRCS    := $(SRC_DIR)/main.cpp \
            $(SRC_DIR)/Environment.cpp \
            $(SRC_DIR)/Interpreter.cpp \
            $(SRC_DIR)/VM.cpp \
-           $(SRC_DIR)/Serializer.cpp
+           $(SRC_DIR)/Serializer.cpp \
+           $(SRC_DIR)/JsBytecodeSerializer.cpp
 OBJS    := $(SRCS:.cpp=.o)
 
 .PHONY: all clean release debug check check-opcodes

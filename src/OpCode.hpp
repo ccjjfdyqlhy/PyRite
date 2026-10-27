@@ -6,7 +6,7 @@
 // PyRite Bytecode Instruction Set
 // ============================================================================
 // GENERATED FILE -- DO NOT EDIT BY HAND.
-// Source: opcodes.def (sha256 5545478d679830c43aad4ba338f73a76b4eece66f6dc8ae8ee50418ee66fb005)
+// Source: opcodes.def (sha256 661c137c3e29221a8c06e674279cdf3d8dde346309c781e8abaec7dd648cc085)
 // Regenerate: python3 tools/gen_opcodes.py
 //
 // Stack-based VM. Operands are big-endian 24-bit unsigned integers (0..2^24-1)

@@ -137,13 +137,16 @@ inline const char* msg(Msg id) {
         case Msg::MAIN_HELP_DUMP: return "  --dump-bytecode         编译并打印字节码反汇编\n";
         case Msg::MAIN_HELP_EMIT_BC: return "  --emit-bytecode <file>  编译并保存 .prc 字节码，然后执行\n";
         case Msg::MAIN_HELP_EMIT_AST: return "  --emit-ast <file>       编译并保存 .prt AST，然后执行\n";
+        case Msg::MAIN_HELP_EMIT_JSON: return "  --emit-json <file>      编译并保存 PRC1 JSON 字节码，然后执行\n";
         case Msg::MAIN_HELP_SAVE_BC: return "  --save-bytecode <file>  编译并保存 .prc 字节码（不执行）\n";
         case Msg::MAIN_HELP_SAVE_AST: return "  --save-ast <file>       编译并保存 .prt AST（不执行）\n";
+        case Msg::MAIN_HELP_SAVE_JSON: return "  --save-json <file>      编译并保存 PRC1 JSON 字节码（不执行）\n";
         case Msg::MAIN_HELP_HELP: return "  --help, -h              显示此帮助信息\n";
         case Msg::MAIN_HELP_FORMATS: return "\n文件格式:\n";
         case Msg::MAIN_HELP_PR: return "  .pr    PyRite 源脚本\n";
         case Msg::MAIN_HELP_PRC: return "  .prc   编译后的字节码（通过 VM 加载执行）\n";
         case Msg::MAIN_HELP_PRT: return "  .prt   序列化 AST（通过解释器加载执行）\n";
+        case Msg::MAIN_HELP_JSON: return "  .json  PRC1 JSON 字节码（通过 JavaScript VM 加载执行）\n";
         case Msg::MAIN_LOAD_ERR: return "加载 {} 时出错: {}";
         case Msg::MAIN_COMPILE_ERR: return "编译错误: {}";
         case Msg::MAIN_OPT_NEED_ARG: return "{} 需要一个文件名参数。";
@@ -152,8 +155,10 @@ inline const char* msg(Msg id) {
         case Msg::MAIN_SAVE_NEED_SRC: return "使用 emit/save 选项时必须指定源文件。";
         case Msg::MAIN_SAVE_OK_BC: return "字节码已保存到 {}。";
         case Msg::MAIN_SAVE_OK_AST: return "AST 已保存到 {}。";
+        case Msg::MAIN_SAVE_OK_JSON: return "JSON 字节码已保存到 {}。";
         case Msg::MAIN_SAVE_ERR_BC: return "保存字节码时出错: {}";
         case Msg::MAIN_SAVE_ERR_AST: return "保存 AST 时出错: {}";
+        case Msg::MAIN_SAVE_ERR_JSON: return "保存 JSON 字节码时出错: {}";
     }
     return "";
 }
@@ -176,6 +181,7 @@ inline std::string fmt(Msg id, const std::string& arg) {
         case Msg::MAIN_HELP_HEADER: return std::string("用法: ") + arg + std::string(" [选项] [script.pr|.prc|.prt]\n\n选项:\n");
         case Msg::MAIN_SAVE_ERR_BC: return std::string("保存字节码时出错: ") + arg;
         case Msg::MAIN_SAVE_ERR_AST: return std::string("保存 AST 时出错: ") + arg;
+        case Msg::MAIN_SAVE_ERR_JSON: return std::string("保存 JSON 字节码时出错: ") + arg;
         default: return arg;
     }
 }

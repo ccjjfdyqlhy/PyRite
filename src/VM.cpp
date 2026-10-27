@@ -1,4 +1,5 @@
 #include "VM.hpp"
+#include "CastTypes.hpp"
 #include "Interpreter.hpp"
 #include "msgs.hpp"
 #include <sstream>
@@ -587,12 +588,12 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_CAST: {
                 uint32_t idx = read_operand24(frame.ip);
                 frame.ip += 3;
-                TokenType type = static_cast<TokenType>(idx);
+                CastType type = static_cast<CastType>(idx);
                 ValuePtr val = pop();
                 // Perform type conversion, mirroring the AST interpreter's
                 // TypeConversionNode::accept logic (for `as` casts) and
                 // VarDeclarationNode::accept logic (for variable declarations).
-                if (type == TokenType::DEC) {
+                if (type == CastType::CAST_DEC) {
                     if (dynamic_cast<NumberValue*>(val.get())) {
                         push(val);
                     } else if (auto s = dynamic_cast<StringValue*>(val.get())) {
@@ -611,9 +612,9 @@ bool VM::run(BytecodeChunkPtr c) {
                         // Since we can't distinguish, keep as-is (lenient).
                         push(val);
                     }
-                } else if (type == TokenType::STR) {
+                } else if (type == CastType::CAST_STR) {
                     push(std::make_shared<StringValue>(val->toString()));
-                } else if (type == TokenType::BIN) {
+                } else if (type == CastType::CAST_BIN) {
                     if (dynamic_cast<BinaryValue*>(val.get())) {
                         push(val);
                     } else if (auto s = dynamic_cast<StringValue*>(val.get())) {
@@ -627,7 +628,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     } else {
                         push(std::make_shared<BinaryValue>(std::vector<uint8_t>{0}));
                     }
-                } else if (type == TokenType::LN) {
+                } else if (type == CastType::CAST_LN) {
                     if (dynamic_cast<LnValue*>(val.get())) {
                         push(val);
                     } else if (dynamic_cast<NullValue*>(val.get())) {
@@ -637,7 +638,7 @@ bool VM::run(BytecodeChunkPtr c) {
                         // Since we can't distinguish, wrap in list (lenient).
                         push(std::make_shared<LnValue>(std::vector<ValuePtr>{val}));
                     }
-                } else if (type == TokenType::DIM) {
+                } else if (type == CastType::CAST_DIM) {
                     if (dynamic_cast<DimValue*>(val.get())) {
                         push(val);
                     } else if (dynamic_cast<NullValue*>(val.get())) {

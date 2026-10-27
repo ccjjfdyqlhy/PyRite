@@ -1,0 +1,19 @@
+// A small script exercising the PRC1 JSON export path.
+str greeting = "hello"
+ln nums = [1, 2, 3]
+dim table = {"a": 1, "b": "two"}
+dec big = 123456789012345678901234567890
+
+expose fn greet(str name) do
+  return greeting + ", " + name
+endfn
+
+fn helper(dec x) do
+  return x * 2
+endfn
+
+say(greet("world"))
+say(helper(21))
+say(nums)
+say(table)
+say(big)

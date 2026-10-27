@@ -134,3 +134,18 @@
 # ---- Halt ----
 @section Halt
 57  OP_HALT          no-operand   # stop the VM
+# ---- Cast type codes (operand of OP_CAST) ----
+# The operand of OP_CAST is one of these codes.
+#
+# They are deliberately NOT TokenType values: TokenType is a tokenizer
+# implementation detail, and its numbering shifts whenever a keyword is added
+# -- which would silently change the meaning of every compiled .prc file.
+#
+#   @cast <TOKEN> <code> <description>
+#
+@cast DEC  0  number
+@cast STR  1  string
+@cast BIN  2  binary
+@cast LN   3  list
+@cast DIM  4  dict
+@cast ANY  5  any (no conversion)

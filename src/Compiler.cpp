@@ -1,4 +1,5 @@
 #include "Compiler.hpp"
+#include "CastTypes.hpp"
 #include <sstream>
 
 // ============================================================================
@@ -292,8 +293,14 @@ void Compiler::compile_var_declaration(VarDeclarationNode* n) {
     }
     // Apply type conversion based on the declaration keyword (dec/str/bin/ln/dim/any),
     // mirroring the AST interpreter's VarDeclarationNode::accept logic.
-    emit_op_operand(OpCode::OP_CAST,
-        static_cast<uint32_t>(n->keyword.type));
+    //
+    // The operand is a stable cast code (see CastTypes.hpp), NOT a TokenType
+    // value: TokenType is a tokenizer implementation detail whose numbering
+    // shifts whenever a keyword is added, which would silently change the
+    // meaning of every already-compiled .prc file.
+    uint32_t cast_code = static_cast<uint32_t>(CastType::CAST_ANY);
+    cast_code_for(n->keyword.type, cast_code);
+    emit_op_operand(OpCode::OP_CAST, cast_code);
     // At script scope, define as global; otherwise as local.
     if (func_stack.size() == 1) {
         uint32_t name_idx = add_string_constant(n->name);
@@ -743,9 +750,10 @@ void Compiler::compile_logical(LogicalOpNode* n) {
 
 void Compiler::compile_typecast(TypeConversionNode* n) {
     compile_expression(n->expression);
-    // Encode the target type as the TokenType value directly in the operand.
-    emit_op_operand(OpCode::OP_CAST,
-        static_cast<uint32_t>(n->type_keyword.type));
+    // Encode the target type as a stable cast code (see CastTypes.hpp).
+    uint32_t cast_code = static_cast<uint32_t>(CastType::CAST_ANY);
+    cast_code_for(n->type_keyword.type, cast_code);
+    emit_op_operand(OpCode::OP_CAST, cast_code);
 }
 
 void Compiler::compile_assignment(AssignmentNode* n) {
