@@ -784,6 +784,8 @@ void write_compiled_function(BinWriter& w, CompiledFunctionPtr fn) {
     for (const auto& ln : fn->local_names) w.string(ln);
     w.bool8(fn->is_method);
     w.bool8(fn->is_lambda);
+    w.u32(static_cast<uint32_t>(fn->display_constants.size()));
+    for (int dc : fn->display_constants) w.i32(dc);
 }
 
 CompiledFunctionPtr read_compiled_function(BinReader& r) {

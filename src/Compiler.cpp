@@ -56,6 +56,15 @@ uint32_t Compiler::add_string_constant(const std::string& s) {
     return add_constant(std::make_shared<StringValue>(s));
 }
 
+// Like add_constant, but never shares the entry with anything else. Used for
+// spoken lines, so that watermarking one can never affect an identifier or a
+// call argument that happens to carry the same text.
+uint32_t Compiler::add_display_constant(ValuePtr value) {
+    auto& consts = current->func->constants;
+    consts.push_back(value);
+    return static_cast<uint32_t>(consts.size() - 1);
+}
+
 uint32_t Compiler::add_ast_node(AstNodePtr node) {
     auto& nodes = current->func->ast_nodes;
     nodes.push_back(node);
@@ -548,6 +557,18 @@ void Compiler::compile_continue(ContinueNode* n) {
 }
 
 void Compiler::compile_say(SayNode* n) {
+    // A direct string literal is a spoken line. Give it its own constant
+    // (never shared with an identifier or a call argument) and remember it,
+    // so the packaging step can watermark exactly the dialogue.
+    if (auto lit = dynamic_cast<LiteralNode*>(n->expression.get())) {
+        if (lit->value && dynamic_cast<StringValue*>(lit->value.get())) {
+            uint32_t idx = add_display_constant(lit->value);
+            emit_op_operand(OpCode::OP_CONSTANT, idx);
+            current->func->display_constants.push_back(static_cast<int>(idx));
+            emit_op(OpCode::OP_PRINT);
+            return;
+        }
+    }
     compile_expression(n->expression);
     emit_op(OpCode::OP_PRINT);
 }

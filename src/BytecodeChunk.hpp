@@ -43,6 +43,11 @@ struct CompiledFunction {
     };
     std::vector<ParamInfo> params;
     std::vector<std::string> local_names;  // local_names[slot] = name (for OP_EVAL_AST bridging)
+    // Constant indices that hold spoken lines -- the direct string literal of
+    // a say() statement. These get their own constant (never shared with an
+    // identifier or a call argument), so the packaging step can watermark
+    // exactly the dialogue without ever breaking the program.
+    std::vector<int> display_constants;
     bool is_method;       // true if `this` should be bound
     bool is_lambda;
 

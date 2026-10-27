@@ -68,6 +68,7 @@ private:
 
     // ---- Constant pool helpers ----
     uint32_t add_constant(ValuePtr value);
+    uint32_t add_display_constant(ValuePtr value);
     uint32_t add_string_constant(const std::string& s);
     uint32_t add_ast_node(AstNodePtr node);
     uint32_t add_ast_node_raw(AstNode* node);  // non-owning wrapper

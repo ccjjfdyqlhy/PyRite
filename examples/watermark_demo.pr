@@ -1,0 +1,3 @@
+// Spoken lines, used to check that a packaged copy carries a watermark.
+say("你终于来了，第七号。")
+say("雪原层")

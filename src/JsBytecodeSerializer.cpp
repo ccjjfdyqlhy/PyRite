@@ -174,7 +174,15 @@ std::string serializeFunction(const CompiledFunctionPtr& fn, bool is_exposed,
     oss << "],";
 
     oss << "\"is_method\":" << (fn->is_method ? "true" : "false") << ",";
-    oss << "\"is_exposed\":" << (is_exposed ? "true" : "false");
+    oss << "\"is_exposed\":" << (is_exposed ? "true" : "false") << ",";
+    // Which constants hold spoken lines. The packaging step watermarks
+    // exactly these.
+    oss << "\"display_constants\":[";
+    for (size_t i = 0; i < fn->display_constants.size(); i++) {
+        if (i > 0) oss << ",";
+        oss << fn->display_constants[i];
+    }
+    oss << "]";
     oss << "}";
     return oss.str();
 }
