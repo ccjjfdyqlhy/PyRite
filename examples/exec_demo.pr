@@ -1,0 +1,19 @@
+// A tiny multi-function script, used to check that function bodies are
+// sealed at rest and only resident while they run (P4).
+//
+// The entry (main) calls each helper, so packaging seals every helper and
+// leaves only the entry in the clear.
+
+fn greet(str who) do
+  return "你好，" + who + "。"
+end
+
+fn whisper(str line) do
+  say(line)
+  return line
+end
+
+str who = "第七号"
+say(greet(who))
+whisper("雪原层")
+say("往前走，别回头看。")
