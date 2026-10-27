@@ -1,0 +1,9 @@
+// A tiny script with dialogue, used to check that a packaged bundle
+// contains no plaintext.
+str greeting = "你终于来了，第七号。"
+str where = "雪原层"
+str hint = "往前走，别回头看。"
+
+say(greeting)
+say(where)
+say(hint)
