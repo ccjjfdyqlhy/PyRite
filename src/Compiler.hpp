@@ -80,6 +80,16 @@ private:
     uint32_t add_ast_node(AstNodePtr node);
     uint32_t add_ast_node_raw(AstNode* node);  // non-owning wrapper
 
+    // ---- Tables ----
+    // A table of literals becomes ONE constant: the rows stay in the
+    // constant pool as references, so the runtime can open a row when it
+    // is read and not before.  That is what keeps the plaintext of a
+    // whole table out of the runtime memory.
+    //
+    // Returns the index of the table constant, or -1 when the list holds
+    // something that is not a literal (then it is built the old way).
+    int32_t table_constant(ListLiteralNode* n);
+
     // ---- Emission helpers ----
     void emit_op(OpCode op);
     void emit_op_operand(OpCode op, uint32_t operand);

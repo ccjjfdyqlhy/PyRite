@@ -1,0 +1,39 @@
+// A table of rows, read one row at a time.
+//
+// This is the example the v2 "one line exists at a time" promise is
+// measured against: the table is ONE constant in the program, its rows
+// stay in the constant pool, and the runtime opens a row only when the
+// script reads it.  The C++ VM and the JavaScript VM have to agree on
+// every value - see PyRiteJS/tests/test_table_rows.js.
+
+dec at = 0
+
+ln ROWS = [
+  [1, "first line", 42],
+  [2, "second line", 43],
+  [3, "third line", 44]
+]
+
+ln TITLES = ["THE YEAR", "2 0 2 6"]
+
+say("titles:")
+any t = TITLES[0]
+say(t)
+any t2 = TITLES[1]
+say(t2)
+
+say("rows:")
+any row = ROWS[at]
+at = at + 1
+any row2 = ROWS[at]
+at = at + 1
+say(row2[0])
+say(row2[1])
+say(row2[2])
+say(row[0])
+say(row[1])
+say(row[2])
+
+say("len:")
+say(len(ROWS))
+say(len(TITLES))

@@ -17,6 +17,16 @@ struct Instance;
 class Environment;
 
 using ValuePtr = std::shared_ptr<class Value>;
+
+// The key that marks a table descriptor.
+//
+// A table of literals is compiled into ONE constant whose value lists the
+// slots of the rows.  The runtime opens a row when the script reads it,
+// so a whole table of dialogue never sits in memory at once.
+//
+// The key starts with a control character, which no script can type, so
+// no dictionary a script writes can collide with it.
+inline const char* table_key() { return "\x01" "table"; }
 using ClassPtr = std::shared_ptr<Class>;
 using InstancePtr = std::shared_ptr<Instance>;
 

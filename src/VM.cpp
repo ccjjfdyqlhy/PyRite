@@ -111,7 +111,30 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_CONSTANT: {
                 uint32_t idx = read_operand24(frame.ip);
                 frame.ip += 3;
-                push(frame.function->constants[idx]);
+                ValuePtr value = frame.function->constants[idx];
+                // A table descriptor: the constant holds the slots of the
+                // rows, and the list the script asked for is built here.
+                // The JavaScript VM builds the same list lazily - the
+                // values are the same, only the memory strategy differs.
+                if (auto d = std::dynamic_pointer_cast<DimValue>(value)) {
+                    auto found = d->dict.find(table_key());
+                    if (found != d->dict.end()) {
+                        if (auto rows = std::dynamic_pointer_cast<LnValue>(found->second)) {
+                            std::vector<ValuePtr> built;
+                            for (const auto& row : rows->elements) {
+                                if (auto n = std::dynamic_pointer_cast<NumberValue>(row)) {
+                                    size_t slot = static_cast<size_t>(n->value.toLongLong());
+                                    if (slot < frame.function->constants.size()) {
+                                        built.push_back(frame.function->constants[slot]);
+                                    }
+                                }
+                            }
+                            push(std::make_shared<LnValue>(built));
+                            break;
+                        }
+                    }
+                }
+                push(value);
                 break;
             }
             case OpCode::OP_NULL:

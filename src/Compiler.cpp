@@ -728,7 +728,51 @@ void Compiler::compile_literal(LiteralNode* n) {
     emit_op_operand(OpCode::OP_CONSTANT, idx);
 }
 
+
+int32_t Compiler::table_constant(ListLiteralNode* n) {
+    // Build the constant of a table of literals.
+    //
+    // The rows stay in the constant pool: the descriptor holds their
+    // indices, and the runtime opens a row when the script reads it.  A
+    // table of dialogue therefore never sits in memory as a whole.
+    if (n->elements.empty()) return -1;
+    std::vector<ValuePtr> index_values;
+    for (const auto& el : n->elements) {
+        int64_t slot = -1;
+        if (auto lit = std::dynamic_pointer_cast<LiteralNode>(el)) {
+            if (std::dynamic_pointer_cast<StringValue>(lit->value)) {
+                // A string in a table is a line the player reads: it gets
+                // its own constant and the packaging step can watermark
+                // it.
+                uint32_t idx = add_display_constant(lit->value);
+                current->func->display_constants.push_back(static_cast<int>(idx));
+                slot = static_cast<int64_t>(idx);
+            } else {
+                slot = static_cast<int64_t>(add_constant(lit->value));
+            }
+        } else if (auto lst = std::dynamic_pointer_cast<ListLiteralNode>(el)) {
+            int32_t nested = table_constant(lst.get());
+            if (nested < 0) return -1;
+            slot = static_cast<int64_t>(nested);
+        } else {
+            // Not a literal: the list is built the old way.
+            return -1;
+        }
+        index_values.push_back(std::make_shared<NumberValue>(BigNumber(slot)));
+    }
+    std::map<std::string, ValuePtr> descriptor;
+    descriptor[table_key()] = std::make_shared<LnValue>(index_values);
+    return static_cast<int32_t>(add_constant(std::make_shared<DimValue>(descriptor)));
+}
+
 void Compiler::compile_list_literal(ListLiteralNode* n) {
+    int32_t table = table_constant(n);
+    if (table >= 0) {
+        // A table: one constant, and the rows are opened when they are
+        // read.
+        emit_op_operand(OpCode::OP_CONSTANT, static_cast<uint32_t>(table));
+        return;
+    }
     for (const auto& el : n->elements) {
         compile_expression(el);
     }
