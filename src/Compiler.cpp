@@ -296,7 +296,19 @@ void Compiler::compile_expression(const AstNodePtr& node) {
 // ============================================================================
 void Compiler::compile_var_declaration(VarDeclarationNode* n) {
     if (n->initializer) {
+        // A table in a local is display data, exactly like a table that
+        // is returned wholesale: its strings are the lines the player
+        // reads, and the packaging step has to watermark them.
+        //
+        // This is what lets a story keep its tables inside the function
+        // that hands them out one row at a time: the rows are still
+        // marked, and the table is still out of reach by name.
+        const bool display_literal =
+            dynamic_cast<ListLiteralNode*>(n->initializer.get()) != nullptr ||
+            dynamic_cast<DimLiteralNode*>(n->initializer.get()) != nullptr;
+        if (display_literal) ++display_literal_depth_;
         compile_expression(n->initializer);
+        if (display_literal) --display_literal_depth_;
     } else {
         emit_op(OpCode::OP_NULL);
     }
