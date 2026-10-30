@@ -39,13 +39,14 @@ JS_DEF_PATH = os.path.join("src", "runtime", "opcodes.def")
 
 
 class Op:
-    __slots__ = ("number", "name", "has_operand", "comment")
+    __slots__ = ("number", "name", "has_operand", "comment", "operand_count")
 
     def __init__(self, number, name, has_operand, comment):
         self.number = number
         self.name = name
         self.has_operand = has_operand
         self.comment = comment
+        self.operand_count = 1 if has_operand else 0
 
 
 class Cast:
@@ -116,11 +117,18 @@ def parse_def(path):
                 raise SystemExit("%s:%d: bad opcode number %r" % (path, lineno, parts[0]))
             name = parts[1]
             flag = parts[2]
-            if flag not in ("operand", "no-operand"):
+            if flag == "no-operand":
+                operand_count = 0
+            elif flag == "operand":
+                operand_count = 1
+            elif re.fullmatch(r"operand[234]", flag):
+                operand_count = int(flag[len("operand"):])
+            else:
                 raise SystemExit("%s:%d: bad operand flag %r" % (path, lineno, flag))
             if not re.fullmatch(r"OP_[A-Z0-9_]+", name):
                 raise SystemExit("%s:%d: bad opcode name %r" % (path, lineno, name))
-            op = Op(number, name, flag == "operand", comment.strip())
+            op = Op(number, name, operand_count > 0, comment.strip())
+            op.operand_count = operand_count
             ops.append(op)
             if current is None:
                 current = ("Ungrouped", [])
@@ -464,6 +472,11 @@ INFO_CPP_TEMPLATE = """#pragma once
 constexpr bool OPCODE_HAS_OPERAND[OPCODE_COUNT] = {{
 {operand_table}}};
 
+// How many 3-byte big-endian operands the instruction carries (0, 1, or
+// more for the fused superinstructions).
+constexpr int OPCODE_OPERAND_COUNT[OPCODE_COUNT] = {{
+{count_table}}};
+
 // Whether the JavaScript VM can execute the instruction. The JS VM has no AST
 // fallback and no native exception handling, so bytecode containing any of
 // these cannot run in the browser.
@@ -489,6 +502,12 @@ def render_opcode_info(ops, unsupported, sha):
                              % (op.number, "true" if op.has_operand else "false", op.name))
     operand_table = chr(10).join(operand_lines) + chr(10)
 
+    count_lines = []
+    for op in ops:
+        count_lines.append("    /* %2d */ %d,     // %s"
+                           % (op.number, op.operand_count, op.name))
+    count_table = chr(10).join(count_lines) + chr(10)
+
     unsupported_names = set(u.name for u in unsupported)
     unsupported_lines = []
     for op in ops:
@@ -507,6 +526,7 @@ def render_opcode_info(ops, unsupported, sha):
     return INFO_CPP_TEMPLATE.format(
         sha=sha,
         operand_table=operand_table,
+        count_table=count_table,
         unsupported_table=unsupported_table,
         cases=chr(10).join(cases))
 

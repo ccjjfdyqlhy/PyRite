@@ -134,6 +134,19 @@
 # ---- Halt ----
 @section Halt
 57  OP_HALT          no-operand   # stop the VM
+58  OP_INPLACE_ADD   operand      # locals[dst] += rhs; dst+rhs packed in one operand
+59  OP_INPLACE_SUB   operand      # locals[dst] -= rhs
+60  OP_INPLACE_MUL   operand      # locals[dst] *= rhs
+61  OP_CMP_JUMP      operand4     # 4 operands: lhs, rhs, cmp-code, jump target
+62  OP_INPLACE_AM    operand2     # dst += src * k; two packed operands
+63  OP_RESERVED_1    no-operand   # reserved for future fused/superinstructions
+64  OP_RESERVED_2    no-operand   # reserved
+65  OP_RESERVED_3    no-operand   # reserved
+66  OP_RESERVED_4    no-operand   # reserved
+67  OP_RESERVED_5    no-operand   # reserved
+68  OP_RESERVED_6    no-operand   # reserved
+69  OP_RESERVED_7    no-operand   # reserved
+70  OP_RESERVED_8    no-operand   # reserved
 # ---- Cast type codes (operand of OP_CAST) ----
 # The operand of OP_CAST is one of these codes.
 #
@@ -161,3 +174,19 @@
 @js-unsupported OP_TRY_BEGIN  try/catch
 @js-unsupported OP_TRY_END    try/catch
 @js-unsupported OP_CATCH      try/catch
+
+@js-unsupported OP_INPLACE_ADD  in-place fused assignment
+@js-unsupported OP_INPLACE_SUB  in-place fused assignment
+@js-unsupported OP_INPLACE_MUL  in-place fused assignment
+
+@js-unsupported OP_CMP_JUMP     fused compare-and-jump
+@js-unsupported OP_INPLACE_AM   fused accumulate-multiply
+
+@js-unsupported OP_RESERVED_1  reserved opcode
+@js-unsupported OP_RESERVED_2  reserved opcode
+@js-unsupported OP_RESERVED_3  reserved opcode
+@js-unsupported OP_RESERVED_4  reserved opcode
+@js-unsupported OP_RESERVED_5  reserved opcode
+@js-unsupported OP_RESERVED_6  reserved opcode
+@js-unsupported OP_RESERVED_7  reserved opcode
+@js-unsupported OP_RESERVED_8  reserved opcode

@@ -1,0 +1,58 @@
+// 02 控制流：if / while / loop / for-in / break / continue
+// 运行： ./PyRite tutorial/ex/02_control.pr
+
+// ---- if / elif / else ----
+dec score = 85
+if score >= 90 then
+  say("优秀")
+elif score >= 60 then
+  say("及格")
+else
+  say("不及格")
+end
+
+// 单行写法
+if score > 100 then say("异常") endif
+
+// ---- while / do / fin ----
+dec i = 0
+while i < 5 do
+  say("i=" + (i as str))
+  i = i + 1
+fin
+  say("finally 块也会执行")
+end
+
+// ---- loop / for N times ----
+loop say("Hello") for 3 times
+
+loop
+  say("world")
+for 2 times
+
+// 带索引变量（索引变量作用域在循环内）
+loop(idx)
+  say("idx=" + (idx as str))
+for 3 times
+
+// ---- loop / until ----
+dec n = 3
+loop
+  say("n=" + (n as str))
+  n = n - 1
+until n <= 0
+
+// ---- for-in ----
+ln items = ["A", "B", "C"]
+for x in items do
+  say(x)
+end
+
+// ---- break / continue ----
+dec k = 0
+while k < 10 do
+  k = k + 1
+  if k == 3 then continue endif
+  if k > 5 then break endif
+  say("k=" + (k as str))
+end

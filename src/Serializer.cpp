@@ -832,6 +832,13 @@ CompiledFunctionPtr read_compiled_function(BinReader& r) {
         fn->local_names.push_back(r.string());
     fn->is_method = r.bool8();
     fn->is_lambda = r.bool8();
+    // The writer stores display_constants after is_lambda; without
+    // reading them back every following function deserializes from a
+    // misaligned offset ("Unexpected end of data").
+    uint32_t display_count = r.u32();
+    fn->display_constants.reserve(display_count);
+    for (uint32_t i = 0; i < display_count; ++i)
+        fn->display_constants.push_back(r.i32());
     return fn;
 }
 

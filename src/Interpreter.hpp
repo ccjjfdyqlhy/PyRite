@@ -40,6 +40,9 @@ class Interpreter {
 public:
     Interpreter();
     std::string base_path;
+    // Where a require looks for its module: the directory of the file
+    // that asks for it, then the library paths.
+    std::string script_dir_;
     void interpret(const std::vector<AstNodePtr>& statements);
     void execute(const AstNodePtr& stmt);
     ValuePtr evaluate(const AstNodePtr& expr);
@@ -58,6 +61,9 @@ public:
     std::string repl_buffer;
 
 private:
+    // The directory of the module being loaded (empty when the script
+    // itself is running).
+    std::string module_dir_;
     void define_native_functions();
     void print_stack_trace();
     std::set<std::string> loading_modules;

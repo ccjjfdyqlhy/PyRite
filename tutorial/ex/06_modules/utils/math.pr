@@ -1,0 +1,4 @@
+// 模块文件：单文件模块，顶层变量自动导出
+fn add(dec a, dec b) -> a + b
+fn mul(dec a, dec b) -> a * b
+dec PI = 3

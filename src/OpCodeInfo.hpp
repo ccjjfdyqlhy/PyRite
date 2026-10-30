@@ -5,7 +5,7 @@
 // PyRite opcode metadata.
 // ============================================================================
 // GENERATED FILE -- DO NOT EDIT BY HAND.
-// Source: opcodes.def (sha256 d957ad6127a728b2fd13fd22422a4dc821fc06a6754b1374dce5092345df8a03)
+// Source: opcodes.def (sha256 22f5b41a5f7517bc468e4ef506f1ecdb5e9893276074bb4f5696a7523eca6201)
 // Regenerate: python3 tools/gen_opcodes.py
 //
 // Two tables live here:
@@ -78,6 +78,95 @@ constexpr bool OPCODE_HAS_OPERAND[OPCODE_COUNT] = {
     /* 55 */ false,  // OP_TRY_END
     /* 56 */ false,  // OP_CATCH
     /* 57 */ false,  // OP_HALT
+    /* 58 */ true ,  // OP_INPLACE_ADD
+    /* 59 */ true ,  // OP_INPLACE_SUB
+    /* 60 */ true ,  // OP_INPLACE_MUL
+    /* 61 */ true ,  // OP_CMP_JUMP
+    /* 62 */ true ,  // OP_INPLACE_AM
+    /* 63 */ false,  // OP_RESERVED_1
+    /* 64 */ false,  // OP_RESERVED_2
+    /* 65 */ false,  // OP_RESERVED_3
+    /* 66 */ false,  // OP_RESERVED_4
+    /* 67 */ false,  // OP_RESERVED_5
+    /* 68 */ false,  // OP_RESERVED_6
+    /* 69 */ false,  // OP_RESERVED_7
+    /* 70 */ false,  // OP_RESERVED_8
+};
+
+// How many 3-byte big-endian operands the instruction carries (0, 1, or
+// more for the fused superinstructions).
+constexpr int OPCODE_OPERAND_COUNT[OPCODE_COUNT] = {
+    /*  0 */ 1,     // OP_CONSTANT
+    /*  1 */ 0,     // OP_NULL
+    /*  2 */ 0,     // OP_TRUE
+    /*  3 */ 0,     // OP_FALSE
+    /*  4 */ 0,     // OP_POP
+    /*  5 */ 0,     // OP_DUP
+    /*  6 */ 1,     // OP_GET_LOCAL
+    /*  7 */ 1,     // OP_SET_LOCAL
+    /*  8 */ 1,     // OP_SET_LOCAL_KEEP
+    /*  9 */ 1,     // OP_GET_GLOBAL
+    /* 10 */ 1,     // OP_SET_GLOBAL
+    /* 11 */ 1,     // OP_DEFINE_GLOBAL
+    /* 12 */ 1,     // OP_GET_UPVALUE
+    /* 13 */ 1,     // OP_SET_UPVALUE
+    /* 14 */ 0,     // OP_CLOSE_UPVALUE
+    /* 15 */ 0,     // OP_GET_INDEX
+    /* 16 */ 0,     // OP_SET_INDEX
+    /* 17 */ 1,     // OP_GET_PROPERTY
+    /* 18 */ 1,     // OP_SET_PROPERTY
+    /* 19 */ 1,     // OP_BUILD_LIST
+    /* 20 */ 1,     // OP_BUILD_DICT
+    /* 21 */ 0,     // OP_GET_LEN
+    /* 22 */ 0,     // OP_GET_SLICE
+    /* 23 */ 0,     // OP_SET_SLICE
+    /* 24 */ 0,     // OP_ADD
+    /* 25 */ 0,     // OP_SUB
+    /* 26 */ 0,     // OP_MUL
+    /* 27 */ 0,     // OP_DIV
+    /* 28 */ 0,     // OP_MOD
+    /* 29 */ 0,     // OP_POW
+    /* 30 */ 0,     // OP_NEGATE
+    /* 31 */ 0,     // OP_NOT
+    /* 32 */ 0,     // OP_EQUAL
+    /* 33 */ 0,     // OP_NOT_EQUAL
+    /* 34 */ 0,     // OP_LESS
+    /* 35 */ 0,     // OP_LESS_EQUAL
+    /* 36 */ 0,     // OP_GREATER
+    /* 37 */ 0,     // OP_GREATER_EQUAL
+    /* 38 */ 1,     // OP_JUMP
+    /* 39 */ 1,     // OP_JUMP_IF_FALSE
+    /* 40 */ 1,     // OP_JUMP_IF_TRUE
+    /* 41 */ 1,     // OP_JUMP_IF_FALSE_KEEP
+    /* 42 */ 1,     // OP_JUMP_IF_TRUE_KEEP
+    /* 43 */ 1,     // OP_LOOP
+    /* 44 */ 1,     // OP_CALL
+    /* 45 */ 1,     // OP_CLOSURE
+    /* 46 */ 0,     // OP_RETURN
+    /* 47 */ 0,     // OP_RETURN_NULL
+    /* 48 */ 0,     // OP_PRINT
+    /* 49 */ 0,     // OP_INPUT
+    /* 50 */ 1,     // OP_CAST
+    /* 51 */ 0,     // OP_SWAP
+    /* 52 */ 1,     // OP_EVAL_AST
+    /* 53 */ 0,     // OP_RAISE
+    /* 54 */ 1,     // OP_TRY_BEGIN
+    /* 55 */ 0,     // OP_TRY_END
+    /* 56 */ 0,     // OP_CATCH
+    /* 57 */ 0,     // OP_HALT
+    /* 58 */ 1,     // OP_INPLACE_ADD
+    /* 59 */ 1,     // OP_INPLACE_SUB
+    /* 60 */ 1,     // OP_INPLACE_MUL
+    /* 61 */ 4,     // OP_CMP_JUMP
+    /* 62 */ 2,     // OP_INPLACE_AM
+    /* 63 */ 0,     // OP_RESERVED_1
+    /* 64 */ 0,     // OP_RESERVED_2
+    /* 65 */ 0,     // OP_RESERVED_3
+    /* 66 */ 0,     // OP_RESERVED_4
+    /* 67 */ 0,     // OP_RESERVED_5
+    /* 68 */ 0,     // OP_RESERVED_6
+    /* 69 */ 0,     // OP_RESERVED_7
+    /* 70 */ 0,     // OP_RESERVED_8
 };
 
 // Whether the JavaScript VM can execute the instruction. The JS VM has no AST
@@ -142,6 +231,19 @@ constexpr bool OPCODE_JS_UNSUPPORTED[OPCODE_COUNT] = {
     /* 55 */ true ,  // OP_TRY_END
     /* 56 */ true ,  // OP_CATCH
     /* 57 */ false,  // OP_HALT
+    /* 58 */ true ,  // OP_INPLACE_ADD
+    /* 59 */ true ,  // OP_INPLACE_SUB
+    /* 60 */ true ,  // OP_INPLACE_MUL
+    /* 61 */ true ,  // OP_CMP_JUMP
+    /* 62 */ true ,  // OP_INPLACE_AM
+    /* 63 */ true ,  // OP_RESERVED_1
+    /* 64 */ true ,  // OP_RESERVED_2
+    /* 65 */ true ,  // OP_RESERVED_3
+    /* 66 */ true ,  // OP_RESERVED_4
+    /* 67 */ true ,  // OP_RESERVED_5
+    /* 68 */ true ,  // OP_RESERVED_6
+    /* 69 */ true ,  // OP_RESERVED_7
+    /* 70 */ true ,  // OP_RESERVED_8
 };
 
 // Human-readable reason an opcode is unsupported, shown to the author when
@@ -152,6 +254,19 @@ inline const char* opcode_js_unsupported_reason(OpCode op) {
         case OpCode::OP_TRY_BEGIN: return "try/catch";
         case OpCode::OP_TRY_END: return "try/catch";
         case OpCode::OP_CATCH: return "try/catch";
+        case OpCode::OP_INPLACE_ADD: return "in-place fused assignment";
+        case OpCode::OP_INPLACE_SUB: return "in-place fused assignment";
+        case OpCode::OP_INPLACE_MUL: return "in-place fused assignment";
+        case OpCode::OP_CMP_JUMP: return "fused compare-and-jump";
+        case OpCode::OP_INPLACE_AM: return "fused accumulate-multiply";
+        case OpCode::OP_RESERVED_1: return "reserved opcode";
+        case OpCode::OP_RESERVED_2: return "reserved opcode";
+        case OpCode::OP_RESERVED_3: return "reserved opcode";
+        case OpCode::OP_RESERVED_4: return "reserved opcode";
+        case OpCode::OP_RESERVED_5: return "reserved opcode";
+        case OpCode::OP_RESERVED_6: return "reserved opcode";
+        case OpCode::OP_RESERVED_7: return "reserved opcode";
+        case OpCode::OP_RESERVED_8: return "reserved opcode";
     }
     return "";
 }

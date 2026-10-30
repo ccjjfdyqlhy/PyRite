@@ -1,0 +1,57 @@
+// 04 面向对象：struct（纯数据）/ ins（含方法）
+// 运行： ./PyRite tutorial/ex/04_oop.pr
+
+// ---- struct：只有字段，没有方法 ----
+struct Point(dec x, dec y)
+struct Config(str name = "default", dec version = 1)
+
+dec p = new(Point)
+p.x = 10
+p.y = 20
+say(p.x)
+say(p.y)
+
+dec c = new(Config)
+say(c.name)
+say(c.version)
+
+// ---- ins：带方法的类 ----
+ins Counter(dec val = 0) contains
+  fn inc() do this.val = this.val + 1 end
+  fn get() -> this.val
+endins
+
+dec counter = new(Counter)
+counter.inc()
+counter.inc()
+say(counter.get())
+
+// ---- 初始化代码写在第一个 contains 之前 ----
+ins Greeter(str who = "世界")
+  say("你好，" + this.who)
+contains
+  fn hello() -> "hello " + this.who
+endins
+
+dec g = new(Greeter)
+say(g.hello())
+
+// ---- struct + 外部函数 = 经典数据结构写法 ----
+struct Stack(ln items = [])
+
+fn push(any self, any item) do
+  self.items = self.items + [item]
+end
+
+fn pop(any self) do
+  if len(self.items) == 0 then raise("stack empty") endif
+  any v = self.items[len(self.items) - 1]
+  self.items = self.items[0:len(self.items) - 1]
+  return v
+end
+
+dec s = new(Stack)
+push(s, 10)
+push(s, 20)
+say(pop(s))
+say(pop(s))

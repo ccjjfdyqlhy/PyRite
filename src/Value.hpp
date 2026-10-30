@@ -30,8 +30,19 @@ inline const char* table_key() { return "\x01" "table"; }
 using ClassPtr = std::shared_ptr<Class>;
 using InstancePtr = std::shared_ptr<Instance>;
 
-struct Value {
+// Runtime type tags. A tag read from the object beats a dynamic_cast in
+// the hot arithmetic paths: no typeinfo walk, no virtual call.
+enum class VTag : uint8_t {
+    Null, Number, String, Binary, Ln, Dim,
+    Function, Closure, NativeFn, BoundMethod, Exception, ModuleProxy,
+    Class, Instance
+};
+
+struct Value : public std::enable_shared_from_this<Value> {
+    const VTag tag;
+    Value(VTag t) : tag(t) {}
     virtual ~Value() {}
+    VTag kind() const { return tag; }
     virtual std::string toString() const = 0;
     virtual std::string repr() const = 0;
     virtual bool isTruthy() const = 0;
@@ -47,11 +58,17 @@ struct Value {
     virtual ValuePtr getSubscript(const Value& index) const;
     virtual void setSubscript(const Value& index, ValuePtr value);
     virtual ValuePtr getSlice(const ValuePtr& start, const ValuePtr& end, const ValuePtr& step) const;
+    // The members a value answers to: "abc".upper(), xs.push(1),
+    // d.keys().  They live with the value and not with the runtime
+    // around it, so the interpreter and the bytecode VM offer the
+    // same ones.
+    virtual ValuePtr getMember(const std::string& name) const { return nullptr; }
     virtual void setSlice(const ValuePtr& start, const ValuePtr& end, const ValuePtr& step, ValuePtr value);
 };
 
 class NullValue : public Value {
 public:
+    NullValue() : Value(VTag::Null) {}
     std::string toString() const override { return "null"; }
     std::string repr() const override;
     bool isTruthy() const override { return false; }
@@ -62,10 +79,10 @@ public:
 class NumberValue : public Value {
 public:
     BigNumber value;
-    NumberValue(const BigNumber& n) : value(n) {}
+    NumberValue(const BigNumber& n) : Value(VTag::Number), value(n) {}
     std::string toString() const override { return value.toString(); }
     std::string repr() const override { return value.toString(); }
-    bool isTruthy() const override { return value != BigNumber(0); }
+    bool isTruthy() const override { return !value.isZero(); }
     ValuePtr clone() const override { return std::make_shared<NumberValue>(value); }
     ValuePtr add(const Value& other) const override;
     ValuePtr subtract(const Value& other) const override;
@@ -80,7 +97,7 @@ public:
 class BinaryValue : public Value {
 public:
     std::vector<uint8_t> value;
-    BinaryValue(const std::vector<uint8_t>& v) : value(v) {}
+    BinaryValue(const std::vector<uint8_t>& v) : Value(VTag::Binary), value(v) {}
     BinaryValue(const std::string& hex_str);
     std::string toString() const override;
     std::string repr() const override { return toString(); }
@@ -94,7 +111,7 @@ public:
 class StringValue : public Value {
 public:
     std::string value;
-    StringValue(const std::string& s) : value(s) {}
+    StringValue(const std::string& s) : Value(VTag::String), value(s) {}
     std::string toString() const override { return value; }
     std::string repr() const override;
     bool isTruthy() const override { return !value.empty(); }
@@ -104,12 +121,13 @@ public:
     bool isLessThan(const Value& other) const override;
     ValuePtr getSubscript(const Value& index) const override;
     ValuePtr getSlice(const ValuePtr& start, const ValuePtr& end, const ValuePtr& step) const override;
+    ValuePtr getMember(const std::string& name) const override;
 };
 
 class LnValue : public Value {
 public:
     std::vector<ValuePtr> elements;
-    LnValue(const std::vector<ValuePtr>& e) : elements(e) {}
+    LnValue(const std::vector<ValuePtr>& e) : Value(VTag::Ln), elements(e) {}
     std::string toString() const override;
     std::string repr() const override { return toString(); }
     bool isTruthy() const override { return !elements.empty(); }
@@ -126,6 +144,7 @@ public:
     void setSubscript(const Value& index, ValuePtr value) override;
     ValuePtr getSlice(const ValuePtr& start, const ValuePtr& end, const ValuePtr& step) const override;
     void setSlice(const ValuePtr& start, const ValuePtr& end, const ValuePtr& step, ValuePtr value) override;
+    ValuePtr getMember(const std::string& name) const override;
     // Stack/queue operations
     ValuePtr push_pop(const Value* arg = nullptr) const;
     ValuePtr shift_unshift(const Value* arg = nullptr) const;
@@ -134,8 +153,8 @@ public:
 class DimValue : public Value {
 public:
     std::map<std::string, ValuePtr> dict;
-    DimValue(const std::map<std::string, ValuePtr>& d) : dict(d) {}
-    DimValue() {}
+    DimValue(const std::map<std::string, ValuePtr>& d) : Value(VTag::Dim), dict(d) {}
+    DimValue() : Value(VTag::Dim) {}
     std::string toString() const override;
     std::string repr() const override { return toString(); }
     bool isTruthy() const override { return !dict.empty(); }
@@ -143,12 +162,13 @@ public:
     ValuePtr getSubscript(const Value& index) const override;
     void setSubscript(const Value& index, ValuePtr value) override;
     bool isEqualTo(const Value& other) const override;
+    ValuePtr getMember(const std::string& name) const override;
 };
 
 class FunctionValue : public Value {
 public:
     std::shared_ptr<Function> value;
-    FunctionValue(const std::shared_ptr<Function>& f) : value(f) {}
+    FunctionValue(const std::shared_ptr<Function>& f) : Value(VTag::Function), value(f) {}
     std::string toString() const override;
     std::string repr() const override;
     bool isTruthy() const override { return true; }
@@ -160,7 +180,7 @@ public:
     using NativeFn = std::function<ValuePtr(const std::vector<ValuePtr>&)>;
     NativeFn fn;
     std::string name;
-    NativeFnValue(const std::string& n, NativeFn f) : name(n), fn(f) {}
+    NativeFnValue(const std::string& n, NativeFn f) : Value(VTag::NativeFn), name(n), fn(f) {}
     std::string toString() const override { return "<native function " + name + ">"; }
     std::string repr() const override { return toString(); }
     bool isTruthy() const override { return true; }
@@ -172,7 +192,7 @@ class BoundMethodValue : public Value {
 public:
     InstancePtr instance;
     std::shared_ptr<Function> method;
-    BoundMethodValue(InstancePtr inst, std::shared_ptr<Function> m) : instance(inst), method(m) {}
+    BoundMethodValue(InstancePtr inst, std::shared_ptr<Function> m) : Value(VTag::BoundMethod), instance(inst), method(m) {}
     std::string toString() const override;
     std::string repr() const override;
     bool isTruthy() const override { return true; }
@@ -182,7 +202,7 @@ public:
 class ExceptionValue : public Value {
 public:
     ValuePtr payload;
-    ExceptionValue(ValuePtr p) : payload(p) {}
+    ExceptionValue(ValuePtr p) : Value(VTag::Exception), payload(p) {}
     std::string toString() const override { return "<Exception: " + payload->toString() + ">"; }
     std::string repr() const override;
     bool isTruthy() const override { return true; }
@@ -194,7 +214,7 @@ class ModuleProxy : public Value {
 public:
     std::string file_path;
     bool loaded;
-    ModuleProxy(const std::string& path) : file_path(path), loaded(false) {}
+    ModuleProxy(const std::string& path) : Value(VTag::ModuleProxy), file_path(path), loaded(false) {}
     std::string toString() const override { return "<module " + file_path + ">"; }
     std::string repr() const override { return toString(); }
     bool isTruthy() const override { return true; }

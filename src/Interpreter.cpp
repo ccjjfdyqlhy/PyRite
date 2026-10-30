@@ -1,4 +1,5 @@
 #include "Interpreter.hpp"
+#include "ModulePath.hpp"
 #include "msg_cn.hpp"
 #include <iostream>
 #include <sstream>
@@ -6,6 +7,7 @@
 #include <set>
 #include <thread>
 #include <cstdlib>
+#include <cctype>
 #include <fstream>
 #include <sys/stat.h>
 
@@ -215,10 +217,15 @@ ValuePtr GetNode::accept(Interpreter& visitor) {
         catch (const std::runtime_error& e) { throw RuntimeError(line, e.what()); }
     }
     if (auto dim_val = std::dynamic_pointer_cast<DimValue>(object_val)) {
-        auto key = std::make_shared<StringValue>(name);
-        try { return dim_val->getSubscript(*key); }
-        catch (const std::runtime_error& e) { throw RuntimeError(line, e.what()); }
+        // A key of the dictionary comes first: a dictionary may hold a
+        // key called "keys".
+        auto it = dim_val->dict.find(name);
+        if (it != dim_val->dict.end()) return it->second;
+        if (auto member = dim_val->getMember(name)) return member;
+        throw RuntimeError(line, fmt(Msg::NO_PROP, name));
     }
+    // The members of a list or a string.
+    if (auto member = object_val->getMember(name)) return member;
     throw RuntimeError(line, fmt(Msg::NO_PROP, name));
 }
 
@@ -255,7 +262,11 @@ ValuePtr RequireNode::accept(Interpreter& visitor) {
         alias = (pos == std::string::npos) ? module_path : module_path.substr(pos + 1);
     }
     auto proxy = std::make_shared<ModuleProxy>(module_path);
-    visitor.environment->define(alias, proxy);
+    // The module is loaded right here, not when it is first used: the
+    // compiler puts the module into the program where the require
+    // stands, and the two have to behave the same way.
+    ValuePtr loaded = visitor.load_module(proxy.get());
+    visitor.environment->define(alias, loaded);
     return std::make_shared<NullValue>();
 }
 
@@ -636,20 +647,16 @@ void Interpreter::print_stack_trace() {
     call_stack.clear();
 }
 
+// The same resolution the compiler does, so a story that runs here runs
+// in the browser too: the directory of the file that asks first, then
+// the library paths.
 std::string Interpreter::resolve_module_path(const std::string& path) {
-    struct stat st;
-    if (stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
-        std::string index_path = path + "/_index.pr";
-        if (stat(index_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
-            return index_path;
-        }
-    }
-    if (stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
-        return path;
-    }
-    std::string with_ext = path + ".pr";
-    if (stat(with_ext.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
-        return with_ext;
+    const std::string& relative_to = module_dir_.empty() ? script_dir_ : module_dir_;
+    std::string resolved;
+    bool is_dir_module = false;
+    std::string tried;
+    if (ModulePath::resolve(path, relative_to, resolved, is_dir_module, tried)) {
+        return resolved;
     }
     return path;
 }
@@ -664,7 +671,11 @@ ValuePtr Interpreter::load_module(ModuleProxy* proxy) {
     std::ifstream file(resolved);
     if (!file.is_open()) {
         loading_modules.erase(proxy->file_path);
-        throw RuntimeError(0, "Cannot open module file '" + resolved + "'.");
+        throw RuntimeError(0, "Cannot open module file '" + resolved +
+                              "'.  A require looks in the directory of the "
+                              "file that asks for it, then in PYRITE_LIB_PATH, "
+                              "then in the lib directory next to the compiler "
+                              "and in ~/PyRite/lib.");
     }
     std::string source_code((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     file.close();
@@ -680,6 +691,9 @@ ValuePtr Interpreter::load_module(ModuleProxy* proxy) {
 
     auto module_env = std::make_shared<Environment>(this->globals);
     std::shared_ptr<Environment> previous = this->environment;
+    // While the module runs, its own requires are relative to it.
+    std::string previous_module_dir = module_dir_;
+    module_dir_ = ModulePath::dir_of(resolved);
     try {
         this->environment = module_env;
         for (const auto& stmt : statements) {
@@ -728,6 +742,7 @@ ValuePtr Interpreter::load_module(ModuleProxy* proxy) {
 
     proxy->loaded = true;
     loading_modules.erase(proxy->file_path);
+    module_dir_ = previous_module_dir;
     return module_dict;
 }
 
@@ -845,8 +860,20 @@ void Interpreter::define_native_functions() {
         REQUIRE_MIN_ARGS("new", 1);
         auto class_val = std::dynamic_pointer_cast<Class>(args[0]);
         if (!class_val) throw std::runtime_error(msg(Msg::NEW_CLASS));
+        if (args.size() - 1 > class_val->fields.size())
+            throw std::runtime_error(class_val->name + "() takes at most " +
+                                     std::to_string(class_val->fields.size()) + " arguments.");
         auto instance = std::make_shared<Instance>(class_val);
         instance->instance_env->define("this", instance);
+        // Constructor arguments fill the declared fields in order, with
+        // the same type check a method call applies to its parameters.
+        for (size_t i = 1; i < args.size(); ++i) {
+            const ParameterDefinition& field = class_val->fields[i - 1];
+            if (!is_type_compatible(field.type_keyword, args[i]))
+                throw std::runtime_error(class_val->name + " field '" + field.name +
+                                         "' expects " + token_type_to_string(field.type_keyword) + ".");
+            instance->instance_env->define(field.name, args[i]);
+        }
         if (!class_val->initializer_body.empty()) {
             try { this->execute_block(class_val->initializer_body, instance->instance_env); }
             catch (const ReturnValueException&) { throw std::runtime_error("Cannot return a value from an instance initializer."); }
@@ -887,6 +914,266 @@ void Interpreter::define_native_functions() {
     globals->define("run", std::make_shared<NativeFnValue>("run", [](const std::vector<ValuePtr>& args){
         return std::make_shared<NullValue>();
     }));
+
+
+    // ===== The helpers the browser runtime has =========================
+    //
+    // The two runtimes did not have the same builtins: a story that
+    // used split() or range() ran in the browser and failed on this
+    // machine, so a writer could not try a story out here.  These are
+    // the ones a story actually uses, and they behave the way the
+    // JavaScript runtime behaves, so the same program says the same
+    // thing in both.
+    //
+    // Two differences stay, and both are about the dictionary: this
+    // runtime keeps a dict in a map, so keys() and values() answer in
+    // sorted order, while the browser keeps them in the order they
+    // were written.  And the case functions here are ASCII, while the
+    // browser knows every alphabet.
+    {
+        auto number = [](long long v) -> ValuePtr {
+            return std::make_shared<NumberValue>(BigNumber(v));
+        };
+        auto text_value = [](const std::string& s) -> ValuePtr {
+            return std::make_shared<StringValue>(s);
+        };
+        auto is_space = [](char c) -> bool {
+            return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
+                   c == '\f' || c == '\v';
+        };
+        auto string_arg = [](const ValuePtr& value, const char* who) -> std::string {
+            auto str_val = dynamic_cast<StringValue*>(value.get());
+            if (!str_val) throw std::runtime_error(std::string("Argument to ") + who + "() must be a string.");
+            return str_val->value;
+        };
+
+        globals->define("upper", std::make_shared<NativeFnValue>("upper", [string_arg](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("upper", 1);
+            std::string out = string_arg(args[0], "upper");
+            for (char& c : out) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            return std::make_shared<StringValue>(out);
+        }));
+        globals->define("lower", std::make_shared<NativeFnValue>("lower", [string_arg](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("lower", 1);
+            std::string out = string_arg(args[0], "lower");
+            for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return std::make_shared<StringValue>(out);
+        }));
+        globals->define("trim", std::make_shared<NativeFnValue>("trim", [string_arg, is_space](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("trim", 1);
+            std::string text = string_arg(args[0], "trim");
+            size_t start = 0;
+            while (start < text.size() && is_space(text[start])) start++;
+            size_t stop = text.size();
+            while (stop > start && is_space(text[stop - 1])) stop--;
+            return std::make_shared<StringValue>(text.substr(start, stop - start));
+        }));
+        globals->define("split", std::make_shared<NativeFnValue>("split", [string_arg](const std::vector<ValuePtr>& args){
+            REQUIRE_MIN_ARGS("split", 1);
+            std::string text = string_arg(args[0], "split");
+            std::string sep = " ";
+            if (args.size() > 1) sep = string_arg(args[1], "split");
+            std::vector<ValuePtr> parts;
+            if (sep.empty()) {
+                for (size_t i = 0; i < text.size(); i++)
+                    parts.push_back(std::make_shared<StringValue>(text.substr(i, 1)));
+            } else {
+                size_t pos = 0;
+                while (true) {
+                    size_t hit = text.find(sep, pos);
+                    if (hit == std::string::npos) {
+                        parts.push_back(std::make_shared<StringValue>(text.substr(pos)));
+                        break;
+                    }
+                    parts.push_back(std::make_shared<StringValue>(text.substr(pos, hit - pos)));
+                    pos = hit + sep.size();
+                }
+            }
+            return std::make_shared<LnValue>(parts);
+        }));
+        globals->define("join", std::make_shared<NativeFnValue>("join", [string_arg](const std::vector<ValuePtr>& args){
+            REQUIRE_MIN_ARGS("join", 1);
+            GET_LN(args[0], list_val);
+            std::string sep = "";
+            if (args.size() > 1) sep = string_arg(args[1], "join");
+            std::string out;
+            for (size_t i = 0; i < list_val->elements.size(); i++) {
+                if (i > 0) out += sep;
+                out += list_val->elements[i]->toString();
+            }
+            return std::make_shared<StringValue>(out);
+        }));
+        globals->define("replace", std::make_shared<NativeFnValue>("replace", [string_arg](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("replace", 3);
+            std::string text = string_arg(args[0], "replace");
+            std::string from = string_arg(args[1], "replace");
+            std::string to = string_arg(args[2], "replace");
+            if (from.empty()) return std::make_shared<StringValue>(text);
+            std::string out;
+            size_t pos = 0;
+            while (true) {
+                size_t hit = text.find(from, pos);
+                if (hit == std::string::npos) {
+                    out += text.substr(pos);
+                    break;
+                }
+                out += text.substr(pos, hit - pos);
+                out += to;
+                pos = hit + from.size();
+            }
+            return std::make_shared<StringValue>(out);
+        }));
+        globals->define("contains", std::make_shared<NativeFnValue>("contains", [number](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("contains", 2);
+            if (auto str_val = dynamic_cast<StringValue*>(args[0].get())) {
+                auto sub_val = dynamic_cast<StringValue*>(args[1].get());
+                if (!sub_val) throw std::runtime_error("Argument to contains() must be a string.");
+                return number(str_val->value.find(sub_val->value) != std::string::npos ? 1 : 0);
+            }
+            if (auto list_val = dynamic_cast<LnValue*>(args[0].get())) {
+                for (const auto& element : list_val->elements) {
+                    try { if (element->isEqualTo(*args[1])) return number(1); }
+                    catch (...) {}
+                }
+                return number(0);
+            }
+            if (auto dict_val = dynamic_cast<DimValue*>(args[0].get())) {
+                auto key_val = dynamic_cast<StringValue*>(args[1].get());
+                if (!key_val) throw std::runtime_error("Argument to contains() must be a string.");
+                return number(dict_val->dict.count(key_val->value) ? 1 : 0);
+            }
+            return number(0);
+        }));
+        globals->define("substring", std::make_shared<NativeFnValue>("substring", [number](const std::vector<ValuePtr>& args){
+            REQUIRE_MIN_ARGS("substring", 1);
+            auto str_val = dynamic_cast<StringValue*>(args[0].get());
+            if (!str_val) throw std::runtime_error("Argument to substring() must be a string.");
+            long long length = static_cast<long long>(str_val->value.size());
+            long long start = 0;
+            long long stop = length;
+            if (args.size() > 1) { GET_NUM(args[1], start_val); start = start_val->value.toLongLong(); }
+            if (args.size() > 2) { GET_NUM(args[2], stop_val); stop = stop_val->value.toLongLong(); }
+            if (start < 0) start = 0;
+            if (start > length) start = length;
+            if (stop < 0) stop = 0;
+            if (stop > length) stop = length;
+            if (start > stop) { long long swap = start; start = stop; stop = swap; }
+            return std::make_shared<StringValue>(
+                str_val->value.substr(static_cast<size_t>(start),
+                                      static_cast<size_t>(stop - start)));
+        }));
+        globals->define("char", std::make_shared<NativeFnValue>("char", [number](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("char", 1); GET_NUM(args[0], code_val);
+            long long code = code_val->value.toLongLong();
+            std::string out(1, static_cast<char>(code & 0xFF));
+            return std::make_shared<StringValue>(out);
+        }));
+        globals->define("ord", std::make_shared<NativeFnValue>("ord", [number](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("ord", 1);
+            auto str_val = dynamic_cast<StringValue*>(args[0].get());
+            if (!str_val) throw std::runtime_error("Argument to ord() must be a string.");
+            if (str_val->value.empty()) return number(0);
+            return number(static_cast<long long>(
+                static_cast<unsigned char>(str_val->value[0])));
+        }));
+
+        globals->define("range", std::make_shared<NativeFnValue>("range", [number](const std::vector<ValuePtr>& args){
+            REQUIRE_MIN_ARGS("range", 1);
+            long long start = 0;
+            long long stop = 0;
+            long long step = 1;
+            if (args.size() == 1) {
+                GET_NUM(args[0], stop_val); stop = stop_val->value.toLongLong();
+            } else if (args.size() == 2) {
+                GET_NUM(args[0], start_val); GET_NUM(args[1], stop_val);
+                start = start_val->value.toLongLong();
+                stop = stop_val->value.toLongLong();
+            } else {
+                GET_NUM(args[0], start_val); GET_NUM(args[1], stop_val); GET_NUM(args[2], step_val);
+                start = start_val->value.toLongLong();
+                stop = stop_val->value.toLongLong();
+                step = step_val->value.toLongLong();
+            }
+            std::vector<ValuePtr> out;
+            if (step > 0) {
+                for (long long i = start; i < stop; i += step) out.push_back(number(i));
+            } else if (step < 0) {
+                for (long long i = start; i > stop; i += step) out.push_back(number(i));
+            }
+            return std::make_shared<LnValue>(out);
+        }));
+        globals->define("reverse", std::make_shared<NativeFnValue>("reverse", [](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("reverse", 1); GET_LN(args[0], list_val);
+            std::vector<ValuePtr> out(list_val->elements.rbegin(), list_val->elements.rend());
+            return std::make_shared<LnValue>(out);
+        }));
+        globals->define("keys", std::make_shared<NativeFnValue>("keys", [](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("keys", 1);
+            auto dict_val = dynamic_cast<DimValue*>(args[0].get());
+            if (!dict_val) throw std::runtime_error("Argument to keys() must be a dictionary.");
+            std::vector<ValuePtr> out;
+            for (const auto& entry : dict_val->dict)
+                out.push_back(std::make_shared<StringValue>(entry.first));
+            return std::make_shared<LnValue>(out);
+        }));
+        globals->define("values", std::make_shared<NativeFnValue>("values", [](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("values", 1);
+            auto dict_val = dynamic_cast<DimValue*>(args[0].get());
+            if (!dict_val) throw std::runtime_error("Argument to values() must be a dictionary.");
+            std::vector<ValuePtr> out;
+            for (const auto& entry : dict_val->dict) out.push_back(entry.second);
+            return std::make_shared<LnValue>(out);
+        }));
+        globals->define("has", std::make_shared<NativeFnValue>("has", [number](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("has", 2);
+            auto dict_val = dynamic_cast<DimValue*>(args[0].get());
+            if (!dict_val) throw std::runtime_error("Argument to has() must be a dictionary.");
+            auto key_val = dynamic_cast<StringValue*>(args[1].get());
+            if (!key_val) throw std::runtime_error("Argument to has() must be a string.");
+            return number(dict_val->dict.count(key_val->value) ? 1 : 0);
+        }));
+
+        globals->define("type", std::make_shared<NativeFnValue>("type", [text_value](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("type", 1);
+            const ValuePtr& value = args[0];
+            if (dynamic_cast<NullValue*>(value.get())) return text_value("null");
+            if (dynamic_cast<NumberValue*>(value.get())) return text_value("number");
+            if (dynamic_cast<StringValue*>(value.get())) return text_value("string");
+            if (dynamic_cast<LnValue*>(value.get())) return text_value("list");
+            if (dynamic_cast<DimValue*>(value.get())) return text_value("dict");
+            if (dynamic_cast<FunctionValue*>(value.get())) return text_value("function");
+            if (dynamic_cast<NativeFnValue*>(value.get())) return text_value("native");
+            if (dynamic_cast<Class*>(value.get())) return text_value("class");
+            if (dynamic_cast<Instance*>(value.get())) return text_value("instance");
+            return text_value("unknown");
+        }));
+        globals->define("is_null", std::make_shared<NativeFnValue>("is_null", [number](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("is_null", 1);
+            return number(dynamic_cast<NullValue*>(args[0].get()) ? 1 : 0);
+        }));
+        globals->define("is_number", std::make_shared<NativeFnValue>("is_number", [number](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("is_number", 1);
+            return number(dynamic_cast<NumberValue*>(args[0].get()) ? 1 : 0);
+        }));
+        globals->define("is_string", std::make_shared<NativeFnValue>("is_string", [number](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("is_string", 1);
+            return number(dynamic_cast<StringValue*>(args[0].get()) ? 1 : 0);
+        }));
+        globals->define("is_list", std::make_shared<NativeFnValue>("is_list", [number](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("is_list", 1);
+            return number(dynamic_cast<LnValue*>(args[0].get()) ? 1 : 0);
+        }));
+        globals->define("is_dict", std::make_shared<NativeFnValue>("is_dict", [number](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("is_dict", 1);
+            return number(dynamic_cast<DimValue*>(args[0].get()) ? 1 : 0);
+        }));
+        globals->define("is_function", std::make_shared<NativeFnValue>("is_function", [number](const std::vector<ValuePtr>& args){
+            REQUIRE_ARGS("is_function", 1);
+            bool is_fn = dynamic_cast<FunctionValue*>(args[0].get()) ||
+                         dynamic_cast<NativeFnValue*>(args[0].get());
+            return number(is_fn ? 1 : 0);
+        }));
+    }
 
 #undef REQUIRE_ARGS
 #undef REQUIRE_MIN_ARGS

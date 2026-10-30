@@ -1,0 +1,61 @@
+// 03 函数：定义、箭头简写、lambda、闭包、默认参数、高阶
+// 运行： ./PyRite tutorial/ex/03_functions.pr
+
+// ---- 标准定义 ----
+fn add(dec a, dec b) do
+  return a + b
+end
+say(add(2, 3))
+
+// ---- 箭头简写：单表达式自动 return ----
+fn double(dec x) -> x * 2
+fn greet(str name) -> "hello " + name
+say(double(5))
+say(greet("alice"))
+
+// ---- lambda ----
+dec square = fn(dec x) -> x * x
+say(square(4))
+
+// 多语句匿名函数
+dec shout = fn(str s) do
+  return s + "!"
+end
+say(shout("hi"))
+
+// ---- 高阶函数 ----
+fn apply(dec x, any f) -> f(x)
+say(apply(5, fn(dec n) -> n * 3))
+
+// 立即调用
+say((fn(dec a, dec b) -> a + b)(10, 20))
+
+// ---- 默认参数 ----
+fn greet2(str name = "world") -> "hi " + name
+say(greet2())
+say(greet2("PyRite"))
+
+// ---- 闭包：捕获外部变量并保留状态 ----
+fn makeCounter() do
+  dec count = 0
+  fn inc() do
+    count = count + 1
+    return count
+  end
+  return inc
+end
+dec counter = makeCounter()
+say(counter())
+say(counter())
+
+// ---- 递归 ----
+fn fact(dec n) do
+  if n == 0 then return 1 else return n * fact(n - 1) endif
+end
+say(fact(20))
+
+// 没有 return 的函数返回 nul
+fn nothing() do
+  say("只是副作用")
+end
+say(nothing())

@@ -6,6 +6,7 @@
 #include <cctype>
 #include <map>
 #include "Interpreter.hpp"
+#include "ModulePath.hpp"
 #include "Compiler.hpp"
 #include "VM.hpp"
 #include "Serializer.hpp"
@@ -17,7 +18,7 @@
 constexpr bool DEBUG = false;
 #endif
 
-std::string VERSION = "v0.31.0";
+std::string VERSION = "v0.32.0";
 
 // --- Helper Functions ---
 std::string trim(const std::string& str) {
@@ -94,11 +95,13 @@ void run_file(const char* filename, Interpreter& interpreter, bool use_vm, bool 
     Parser parser(source_code);
     auto statements = parser.parse();
         if (parser.has_error()) { exit(1); }
+    // A require inside the script looks next to the script.
+    interpreter.script_dir_ = ModulePath::dir_of(fname);
 
         if (use_vm) {
             // Compile AST -> Bytecode, then execute on the VM.
             Compiler compiler;
-            BytecodeChunkPtr chunk = compiler.compile(statements);
+            BytecodeChunkPtr chunk = compiler.compile(statements, fname);
             if (compiler.has_error()) {
                 std::cerr << fmt(Msg::MAIN_COMPILE_ERR, compiler.get_error()) << std::endl;
                 exit(1);
@@ -393,7 +396,7 @@ int main(int argc, char* argv[]) {
 
         if (!emit_bytecode_path.empty()) {
             Compiler compiler;
-            BytecodeChunkPtr chunk = compiler.compile(statements);
+            BytecodeChunkPtr chunk = compiler.compile(statements, script_file);
             if (compiler.has_error()) {
                 std::cerr << fmt(Msg::MAIN_COMPILE_ERR, compiler.get_error()) << std::endl;
                 return 1;
@@ -409,7 +412,7 @@ int main(int argc, char* argv[]) {
 
         if (!emit_json_path.empty()) {
             Compiler compiler;
-            BytecodeChunkPtr chunk = compiler.compile(statements);
+            BytecodeChunkPtr chunk = compiler.compile(statements, script_file);
             if (compiler.has_error()) {
                 std::cerr << fmt(Msg::MAIN_COMPILE_ERR, compiler.get_error()) << std::endl;
                 return 1;

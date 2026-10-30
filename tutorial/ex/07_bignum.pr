@@ -1,0 +1,23 @@
+// 07 高精度：BigNumber 是默认数字类型
+// 运行： ./PyRite tutorial/ex/07_bignum.pr
+
+fn fact(dec n) do
+  if n == 0 then return 1 else return n * fact(n - 1) endif
+end
+
+// 任意精度整数
+say(fact(50))
+
+// 精度控制：默认 50 位小数
+say(get_precision())
+say(1 / 3)
+set_precision(4)
+say(1 / 3)
+set_precision(50)
+
+say(approx(3.14159, 2))
+say(to_double(1 / 3))
+say(is_int(5))
+say(is_int(5.5))
+say(is_neg(-5))
+say(abs(-3.14))

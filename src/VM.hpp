@@ -7,6 +7,7 @@
 #include "BytecodeChunk.hpp"
 #include "Environment.hpp"
 #include "OpCode.hpp"
+#include <unordered_map>
 
 class Interpreter;
 
@@ -63,9 +64,16 @@ private:
     // Open upvalues, sorted by stack slot (descending).
     std::vector<std::shared_ptr<UpvalueObj>> open_upvalues;
 
+    // Locals buffers are pooled on the CompiledFunction itself; this just
+    // returns a frame's buffer there.
+    void recycle_locals(CallFrame& f) {
+        auto& pool = f.function->locals_pool;
+        if (pool.size() < 8) pool.push_back(std::move(f.locals));
+    }
+
     // ---- Stack helpers ----
     void push(ValuePtr v) { stack.push_back(v); }
-    ValuePtr pop() { ValuePtr v = stack.back(); stack.pop_back(); return v; }
+    ValuePtr pop() { ValuePtr v = std::move(stack.back()); stack.pop_back(); return v; }
     ValuePtr peek(int distance = 0) { return stack[stack.size() - 1 - distance]; }
 
     // ---- Frame helpers ----
@@ -86,7 +94,8 @@ private:
     bool call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line);
 
     // Set up a new call frame for a VM closure.
-    void push_frame(ClosurePtr closure, const std::vector<ValuePtr>& args, int line);
+    void push_frame(Closure* closure, const ValuePtr* args, size_t nargs, int line);
+    void push_frame_from_stack(Closure* closure, size_t nargs, int line);
 
     // ---- Error ----
     void runtime_error(int line, const std::string& msg);  // throws RuntimeError
@@ -107,5 +116,13 @@ private:
 
     // ---- Arithmetic helpers ----
     ValuePtr binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line);
+    // OP_INPLACE_* fast path; false means "not applicable, run the plain
+    // [load rhs operand] sequence instead".
+    bool exec_inplace(OpCode op, uint32_t packed, struct CallFrame& frame, int line);
+    void resolve_side(struct CallFrame& frame, uint32_t enc, ValuePtr& out);
+    // Cached global-cell access for fused instructions (idx = name
+    // constant index). The cell pointer is remembered per call site.
+    ValuePtr* global_write_cell(struct CallFrame& frame, uint32_t idx);
+    const ValuePtr* global_read_cell(struct CallFrame& frame, uint32_t idx);
     ValuePtr unary_op(OpCode op, const ValuePtr& a, int line);
 };

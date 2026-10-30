@@ -611,11 +611,110 @@ AstNodePtr Parser::dim_literal() {
     return std::make_shared<DimLiteralNode>(line, entries);
 }
 
+// A string with a name in braces is a text with a value in it:
+//
+//     say("Hello, {name}!")
+//
+// The value of name goes where the braces are.  "{{" and "}}" are the
+// braces themselves, and a brace that does not hold a name is just a
+// brace.
+//
+// A text without a name in it stays a plain literal, so the parts of a
+// story that are marked as text are still marked.
+AstNodePtr Parser::interpolated_string(const std::string& text, int line) {
+    std::vector<AstNodePtr> parts;
+    std::string piece;
+    bool interpolated = false;
+    size_t i = 0;
+    while (i < text.size()) {
+        char c = text[i];
+        // The braces themselves.
+        if (c == '{' && i + 1 < text.size() && text[i + 1] == '{') {
+            piece += '{';
+            i += 2;
+            continue;
+        }
+        if (c == '}' && i + 1 < text.size() && text[i + 1] == '}') {
+            piece += '}';
+            i += 2;
+            continue;
+        }
+        if (c == '{') {
+            // A name, maybe with parts after it: {name} or {story.name}
+            size_t end = i + 1;
+            while (end < text.size() &&
+                   (isalnum(static_cast<unsigned char>(text[end])) ||
+                    text[end] == '_' || text[end] == '.')) {
+                end++;
+            }
+            if (end > i + 1 && end < text.size() && text[end] == '}') {
+                std::string name = text.substr(i + 1, end - i - 1);
+                if (!piece.empty()) {
+                    parts.push_back(std::make_shared<LiteralNode>(
+                        line, std::make_shared<StringValue>(piece)));
+                    piece.clear();
+                }
+                parts.push_back(value_of_name(name, line));
+                interpolated = true;
+                i = end + 1;
+                continue;
+            }
+        }
+        piece += c;
+        i++;
+    }
+    if (!piece.empty()) {
+        parts.push_back(std::make_shared<LiteralNode>(
+            line, std::make_shared<StringValue>(piece)));
+    }
+    if (!interpolated) {
+        // No value in the text: it stays one literal.
+        std::string whole;
+        for (const auto& part : parts) {
+            whole += std::dynamic_pointer_cast<StringValue>(
+                std::dynamic_pointer_cast<LiteralNode>(part)->value)->value;
+        }
+        return std::make_shared<LiteralNode>(
+            line, std::make_shared<StringValue>(whole));
+    }
+    // The pieces, one after the other.
+    if (parts.empty()) {
+        return std::make_shared<LiteralNode>(
+            line, std::make_shared<StringValue>(""));
+    }
+    AstNodePtr result = parts[0];
+    Token plus;
+    plus.type = TokenType::PLUS;
+    plus.lexeme = "+";
+    plus.line = line;
+    for (size_t k = 1; k < parts.size(); k++) {
+        result = std::make_shared<BinaryOpNode>(line, result, plus, parts[k]);
+    }
+    return result;
+}
+
+// The value of a name: a variable, or a path of parts of one.
+AstNodePtr Parser::value_of_name(const std::string& name, int line) {
+    size_t dot = name.find('.');
+    if (dot == std::string::npos) {
+        return std::make_shared<VariableNode>(line, name);
+    }
+    AstNodePtr value = std::make_shared<VariableNode>(line, name.substr(0, dot));
+    std::string rest = name.substr(dot + 1);
+    while (!rest.empty()) {
+        size_t next = rest.find('.');
+        std::string part = (next == std::string::npos) ? rest : rest.substr(0, next);
+        value = std::make_shared<GetNode>(line, value, part);
+        rest = (next == std::string::npos) ? "" : rest.substr(next + 1);
+    }
+    return value;
+}
+
 AstNodePtr Parser::primary() {
     int line = current_token.line;
     if (match({TokenType::FN})) return fn_lambda(line);
     if (match({TokenType::NUMBER})) return std::make_shared<LiteralNode>(line, std::make_shared<NumberValue>(BigNumber(previous_token.lexeme)));
-    if (match({TokenType::STRING})) return std::make_shared<LiteralNode>(line, std::make_shared<StringValue>(previous_token.lexeme));
+    if (match({TokenType::STRING})) return interpolated_string(previous_token.lexeme, line);
     if (match({TokenType::HEX_LITERAL})) return std::make_shared<LiteralNode>(line, std::make_shared<BinaryValue>(previous_token.lexeme));
     if (match({TokenType::NULL_LITERAL})) return std::make_shared<LiteralNode>(line, std::make_shared<NullValue>());
     if (match({TokenType::LBRACKET})) return list_literal();

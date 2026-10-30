@@ -1,0 +1,8 @@
+// 模块演示：require 是懒加载的声明
+// 运行： ./PyRite tutorial/ex/06_modules/main.pr
+require "utils/math" as m
+
+// 第一次访问 m 时才真正加载并执行 utils/math.pr
+say(m.add(10, 20))
+say(m.mul(3, 4))
+say(m.PI)

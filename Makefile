@@ -1,5 +1,5 @@
 CXX      := g++
-CXXFLAGS := -std=c++11 -O2
+CXXFLAGS := -std=c++11 -O2 -MMD -MP
 LDFLAGS  :=
 TARGET   := PyRite
 
@@ -13,8 +13,12 @@ SRCS    := $(SRC_DIR)/main.cpp \
            $(SRC_DIR)/Interpreter.cpp \
            $(SRC_DIR)/VM.cpp \
            $(SRC_DIR)/Serializer.cpp \
-           $(SRC_DIR)/JsBytecodeSerializer.cpp
+           $(SRC_DIR)/JsBytecodeSerializer.cpp \
+           $(SRC_DIR)/MemPool.cpp
 OBJS    := $(SRCS:.cpp=.o)
+DEPS    := $(SRCS:.cpp=.d)
+
+-include $(DEPS)
 
 .PHONY: all clean release debug check check-opcodes
 

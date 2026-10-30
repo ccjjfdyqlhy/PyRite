@@ -4,7 +4,7 @@
 
 PyRite is an interpreted scripting language that blends syntax from Python, C++, and BASIC. Its standout feature is **transparent arbitrary-precision arithmetic**: every number is a `BigNumber` by default, with no import, no `Decimal()`, no precision ceiling.
 
-Version **v0.31.0** — hybrid AST/bytecode interpreter with `.prc`/`.prt` serialization.
+Version **v0.32.0** — hybrid AST/bytecode interpreter with `.prc`/`.prt` serialization and a standard library (`lib/`) that `require` inlines at compile time.
 
 ---
 
@@ -77,9 +77,52 @@ apply(5, fn(dec n) -> n * 3)       // higher-order
 | **Functions** | `fn` definition, `->` shorthand, lambdas, closures, default params, type hints |
 | **OOP** | `struct` (data-only), `ins` (class with methods), `new()`, `this` |
 | **Error handling** | `try`/`catch`/`fin`, `raise` |
-| **Modules** | `require` (lazy-loading), single-file and directory modules, `expose`, `_on_load()` hook |
+| **Modules** | `require` (the module is put into the program when it is compiled), single-file and directory modules, `expose`, `_on_load()` hook |
 | **I/O** | `say()`, `ask()` |
 | **Async** | `await`/`then` (polling-based) |
+
+---
+
+## The Standard Library
+
+The library that ships with the language lives in `lib/`.  A program
+takes what it needs with a `require`, and the compiler puts the module
+into the program itself:
+
+```python
+require "list" as list
+require "flow" as flow
+
+say(list.sum([1, 2, 3]))
+```
+
+| Module | What it holds |
+|--------|---------------|
+| `list` | `has` `index_of` `count` `sum` `first` `last` `take` `skip` `reverse` `range` `concat` `join` `map` `filter` `fold` |
+| `text` | `starts_with` `ends_with` `pad` `repeat` `lines` `words` `capitalize` |
+| `dict` | `get` `merge` `sorted_keys` `remove` |
+| `num` | `clamp` `sign` `is_even` `is_odd` `gcd` `lcm` `pick` `shuffle` |
+| `flow` | `cursor` `next` `first_where` `some` `every` `each` |
+
+`require "lib" as std` takes the whole library at once.
+
+The library is written in the plain part of the language - no classes,
+no structs, no try/catch, no await - so it runs everywhere the
+language runs.  The random in it is reproducible: the same seed always
+picks the same thing, so a story plays the same way twice.
+
+### Values in a text, and members
+
+```python
+str name = "World"
+say("Hello, {name}!")     // → Hello, World!
+say("{{name}}")           // → {name}
+
+ln xs = [10, 20, 30]
+say(xs.length)             // → 3
+say(xs.join("-"))         // → 10-20-30
+say("hello".upper())      // → HELLO
+```
 
 ---
 

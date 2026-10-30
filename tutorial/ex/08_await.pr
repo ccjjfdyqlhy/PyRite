@@ -1,0 +1,9 @@
+// 08 await：轮询式等待
+// 运行： ./PyRite tutorial/ex/08_await.pr
+
+dec timer = countdown(1)
+say("等待 1 秒...")
+await timer() then
+  say("时间到！")
+end
+say("继续执行")

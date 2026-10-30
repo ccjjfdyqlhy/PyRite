@@ -1,0 +1,63 @@
+// 01 基础：字面量、类型、变量、转换
+// 运行： ./PyRite tutorial/ex/01_basics.pr
+
+// ---- 注释 ----
+// 单行注释
+# 块注释
+   可以跨行
+#
+
+// ---- 字面量 ----
+dec dec_num = 42
+dec neg = -7
+dec real = 3.14
+str text = "hello"
+str single = 'world'
+ln list = [1, "two", 3.5]
+dim table = {"lang": "PyRite", "year": 2025}
+any nothing = nul
+bin bytes = 0xFF0A
+
+say(dec_num)
+say(text + " " + single)
+say(list)
+say(table)
+say(nothing)
+say(bytes)
+
+// ---- 类型关键字 = 运行期转换契约 ----
+dec from_str = "123"     // 字符串 -> 数字，运行时完成
+str from_num = 456       // 数字 -> 字符串
+say(from_str + 1)        // 124
+say(from_num)            // 456
+
+// 转换失败会在运行期报错（不是编译期）
+// dec bad = "abc"       // [运行时错误] 无法将字符串 'abc' 转换为数字
+
+// ---- 显式转换 as ----
+say("123" as dec)
+say(456 as str)
+say("0xFF" as bin)
+say([1, 2, 3] as str)
+say(nul as ln)
+say(nul as dim)
+
+// ---- 复合赋值 ----
+dec acc = 10
+acc += 5
+acc *= 2
+acc /= 4
+acc ^= 2
+acc = acc - 3            // 注意：'-=' 当前未被分词器支持，写成 -= 会解析失败
+say(acc)                 // 25
+
+// ---- 运算符 ----
+say(2 ^ 10)              // 1024
+say(10 % 3)              // 1（取模要求整数）
+say(7 / 2)               // 3.5（默认 50 位精度）
+say(5 == 5.0)            // 1
+say("5" == 5)            // 0（比较不做跨类型转换）
+say(not 0)               // 1
+say(not 5)               // 0
+say(1 and 2)             // 2（逻辑运算返回操作数，不是布尔）
+say(0 or 3)              // 3

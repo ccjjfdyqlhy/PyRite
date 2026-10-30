@@ -34,7 +34,10 @@
 class Compiler {
 public:
     Compiler();
-    BytecodeChunkPtr compile(const std::vector<AstNodePtr>& statements);
+    // The source path matters: a require is resolved relative to the file
+    // that asks for it, so the compiler has to know where that file is.
+    BytecodeChunkPtr compile(const std::vector<AstNodePtr>& statements,
+                             const std::string& source_path = "");
     bool has_error() const { return had_error; }
     const std::string& get_error() const { return error_msg; }
 
@@ -110,6 +113,23 @@ private:
     void load_variable(const std::string& name, int line);
     void store_variable(const std::string& name, int line);
 
+    // ---- Modules ----
+    //
+    // A require is resolved and inlined at compile time: the module
+    // becomes a function of the program and its exports become a
+    // dictionary the alias points at.  The shipped program stays one
+    // file, so the browser needs no file system and the module's code
+    // stays inside the encrypted pool.
+    std::string source_path_;      // the file being compiled
+    std::string source_dir_;       // its directory
+    std::vector<std::string> module_stack_;   // the modules being compiled
+    int module_counter_ = 0;
+
+    void compile_require(RequireNode* n);
+    void compile_module(const std::string& resolved, bool is_dir_module,
+                        const std::vector<AstNodePtr>& statements,
+                        const std::string& alias);
+
     // ---- Top-level dispatch ----
     void compile_block(const std::vector<AstNodePtr>& statements);
     void compile_statement(const AstNodePtr& node);
@@ -142,6 +162,18 @@ private:
     void compile_logical(LogicalOpNode* n);
     void compile_typecast(TypeConversionNode* n);
     void compile_assignment(AssignmentNode* n);
+    // Fuses `name = name <op> rhs` into one OP_INPLACE_* when name is a
+    // local and rhs is a variable, a small literal, or a local*literal.
+    bool try_compile_inplace(const std::string& name, AstNode* value, int line);
+    // Fuses `while lhs <op> rhs` into OP_CMP_JUMP; emits the jump with a
+    // placeholder target and returns the patch location, or -1 when the
+    // condition does not fit the pattern.
+    int try_compile_cmp_jump(AstNode* condition);
+    // One side of a fused instruction: bit23 global (name constant index
+    // in bits 22-12), else local slot; bits 11-9 kind, bits 8-0 payload.
+    bool encode_value_side(AstNode* node, bool allow_inline, uint32_t& out);
+    // s = s + i * k as one instruction.
+    bool try_compile_inplace_am(const std::string& name, AstNode* value);
     void compile_lambda(LambdaNode* n);
     void compile_call(CallNode* n);
     void compile_subscript(SubscriptNode* n);

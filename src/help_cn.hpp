@@ -322,7 +322,155 @@ to_double(number)
 
   示例:
     to_double(3.14159265358979)    # 返回浮点数表示
-)"}
+)"},
+    {"upper", R"PR(
+upper(text)
+  把字符串转成大写。
+
+  示例:
+    upper("pyrite")    # 返回 "PYRITE"
+)PR"},
+    {"lower", R"PR(
+lower(text)
+  把字符串转成小写。
+
+  示例:
+    lower("PYRITE")    # 返回 "pyrite"
+)PR"},
+    {"trim", R"PR(
+trim(text)
+  去掉字符串两头的空白。
+
+  示例:
+    trim("  a  ")      # 返回 "a"
+)PR"},
+    {"split", R"PR(
+split(text, separator)
+  按分隔符把字符串切成列表。
+
+  示例:
+    split("a,b", ",")  # 返回 ["a", "b"]
+)PR"},
+    {"join", R"PR(
+join(list, separator)
+  用分隔符把列表拼成字符串。
+
+  示例:
+    join(["a", "b"], "-")    # 返回 "a-b"
+)PR"},
+    {"replace", R"PR(
+replace(text, from, to)
+  把字符串里所有 from 换成 to。
+
+  示例:
+    replace("a-b", "-", "+")    # 返回 "a+b"
+)PR"},
+    {"substring", R"PR(
+substring(text, start, end)
+  取字符串的一段。
+
+  示例:
+    substring("abcdef", 1, 4)    # 返回 "bcd"
+)PR"},
+    {"char", R"PR(
+char(code)
+  把码位变成字符。
+
+  示例:
+    char(65)    # 返回 "A"
+)PR"},
+    {"ord", R"PR(
+ord(text)
+  取字符串第一个字符的码位。
+
+  示例:
+    ord("A")    # 返回 65
+)PR"},
+    {"range", R"PR(
+range(count)
+  生成一段数列（也有 range(start, stop, step)）。
+
+  示例:
+    range(3)    # 返回 [0, 1, 2]
+)PR"},
+    {"reverse", R"PR(
+reverse(list)
+  把列表反过来，返回新列表。
+
+  示例:
+    reverse([1, 2, 3])    # 返回 [3, 2, 1]
+)PR"},
+    {"keys", R"PR(
+keys(dict)
+  取字典的键。
+
+  示例:
+    keys({"a": 1})    # 返回 ["a"]
+)PR"},
+    {"values", R"PR(
+values(dict)
+  取字典的值。
+
+  示例:
+    values({"a": 1})    # 返回 [1]
+)PR"},
+    {"has", R"PR(
+has(dict, key)
+  字典里有没有这个键。
+
+  示例:
+    has({"a": 1}, "a")    # 返回 1
+)PR"},
+    {"type", R"PR(
+type(value)
+  取值的类型名。
+
+  示例:
+    type("a")    # 返回 "string"
+)PR"},
+    {"is_null", R"PR(
+is_null(value)
+  是不是空值。
+
+  示例:
+    is_null(nul)    # 返回 1
+)PR"},
+    {"is_number", R"PR(
+is_number(value)
+  是不是数字。
+
+  示例:
+    is_number(1)    # 返回 1
+)PR"},
+    {"is_string", R"PR(
+is_string(value)
+  是不是字符串。
+
+  示例:
+    is_string("a")    # 返回 1
+)PR"},
+    {"is_list", R"PR(
+is_list(value)
+  是不是列表。
+
+  示例:
+    is_list([1])    # 返回 1
+)PR"},
+    {"is_dict", R"PR(
+is_dict(value)
+  是不是字典。
+
+  示例:
+    is_dict({"a": 1})    # 返回 1
+)PR"},
+    {"is_function", R"PR(
+is_function(value)
+  是不是函数。
+
+  示例:
+    is_function(say)    # 返回 1
+)PR"},
+
 };
 
 inline std::string get_help(const std::string& func_name) {

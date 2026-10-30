@@ -75,7 +75,7 @@ ValuePtr Environment::get_type(const std::string& name) {
 // Class
 Class::Class(const std::string& n, const std::vector<ParameterDefinition>& f, const std::vector<AstNodePtr>& ib,
              const std::map<std::string, std::shared_ptr<Function>>& m, const std::shared_ptr<Environment>& c)
-    : name(n), fields(f), initializer_body(ib), methods(m), closure(c) {}
+    : Value(VTag::Class), name(n), fields(f), initializer_body(ib), methods(m), closure(c) {}
 
 bool Class::isEqualTo(const Value& other) const {
     if (const Class* o = dynamic_cast<const Class*>(&other)) return this->name == o->name;
@@ -83,7 +83,7 @@ bool Class::isEqualTo(const Value& other) const {
 }
 
 // Instance
-Instance::Instance(ClassPtr k) : klass(k) {
+Instance::Instance(ClassPtr k) : Value(VTag::Instance), klass(k) {
     if (DEBUG) std::cout << "DEBUG: Creating " << k->name << " instance with new environment "
                          << k->closure.get() << std::endl;
     instance_env = std::make_shared<Environment>(klass->closure);
@@ -117,7 +117,12 @@ ValuePtr Instance::get(const std::string& name) {
         auto it = klass->methods.find(name);
         if (it != klass->methods.end()) {
             if (DEBUG) std::cout << "DEBUG: Found method '" << name << "', creating bound method." << std::endl;
-            return std::make_shared<BoundMethodValue>(this->shared_from_this(), it->second);
+            // The only shared_from_this in play is Value's; the
+            // instance type itself carries no second base.
+            return std::make_shared<BoundMethodValue>(
+                std::static_pointer_cast<Instance>(
+                    std::enable_shared_from_this<Value>::shared_from_this()),
+                it->second);
         }
     }
     throw std::runtime_error(fmt(Msg::UNDEF_PROP, name));

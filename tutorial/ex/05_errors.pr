@@ -1,0 +1,40 @@
+// 05 错误处理：try / catch / fin、raise
+// 运行： ./PyRite tutorial/ex/05_errors.pr
+
+// ---- 捕获运行时错误 ----
+try
+  dec r = 10 / 0
+catch err
+  say("出错: " + (err as str))
+fin
+  say("清理块一定会执行")
+end
+
+// ---- raise 抛出自定义异常 ----
+fn check(dec age) do
+  if age < 18 then raise("未成年") endif
+  return "允许"
+end
+
+try
+  say(check(15))
+catch msg
+  say("拒绝: " + msg)
+end
+
+try
+  say(check(20))
+catch msg
+  say("拒绝: " + msg)
+end
+
+// ---- 异常对象 ----
+fn thrower() do
+  raise(Exception("自定义异常"))
+end
+
+try
+  thrower()
+catch e
+  say(e)
+end

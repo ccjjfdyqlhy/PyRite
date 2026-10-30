@@ -1,6 +1,12 @@
 #include "Compiler.hpp"
 #include "CastTypes.hpp"
+#include "Parser.hpp"
+#include "ModulePath.hpp"
 #include <sstream>
+#include <fstream>
+#include <cstdlib>
+#include <sys/stat.h>
+#include <unistd.h>
 
 // ============================================================================
 // Constructor
@@ -12,7 +18,10 @@ Compiler::Compiler() : had_error(false), current(nullptr), current_line(0) {
 // ============================================================================
 // Top-level entry: compile a program into a BytecodeChunk
 // ============================================================================
-BytecodeChunkPtr Compiler::compile(const std::vector<AstNodePtr>& statements) {
+BytecodeChunkPtr Compiler::compile(const std::vector<AstNodePtr>& statements,
+                                  const std::string& source_path) {
+    source_path_ = source_path;
+    source_dir_ = source_path.empty() ? "" : ModulePath::dir_of(source_path);
     chunk_root = std::make_shared<BytecodeChunk>();
     func_stack.emplace_back();
     current = &func_stack.back();
@@ -265,6 +274,7 @@ void Compiler::compile_statement(const AstNodePtr& node) {
     if (auto n = dynamic_cast<RaiseNode*>(node.get())) { compile_raise(n); return; }
     if (auto n = dynamic_cast<TryCatchNode*>(node.get())) { compile_try_catch(n); return; }
     if (auto n = dynamic_cast<ExpressionStatementNode*>(node.get())) { compile_expression_statement(n); return; }
+    if (auto n = dynamic_cast<RequireNode*>(node.get())) { compile_require(n); return; }
     // Complex statements -> OP_EVAL_AST
     emit_op_operand(OpCode::OP_EVAL_AST, add_ast_node(node));
     emit_op(OpCode::OP_POP);
@@ -334,9 +344,18 @@ void Compiler::compile_var_declaration(VarDeclarationNode* n) {
 }
 
 void Compiler::compile_if(IfStatementNode* n) {
-    compile_expression(n->condition);
-    size_t else_jump = emit_jump(OpCode::OP_JUMP_IF_FALSE);
-    emit_op(OpCode::OP_POP);  // pop condition
+    // Fused compare-and-jump when the condition is a plain comparison of
+    // variables/literals: same stack contract as the unfused form (the
+    // condition value rides the stack into the false branch).
+    int fused_patch = try_compile_cmp_jump(n->condition.get());
+    size_t else_jump;
+    if (fused_patch >= 0) {
+        else_jump = static_cast<size_t>(fused_patch);
+    } else {
+        compile_expression(n->condition);
+        else_jump = emit_jump(OpCode::OP_JUMP_IF_FALSE);
+        emit_op(OpCode::OP_POP);  // pop condition
+    }
     compile_block(n->then_branch);
     size_t end_jump = emit_jump(OpCode::OP_JUMP);
     patch_jump(else_jump);
@@ -349,9 +368,15 @@ void Compiler::compile_if(IfStatementNode* n) {
 
 void Compiler::compile_while(WhileStatementNode* n) {
     size_t loop_start = current->func->code.size();
-    compile_expression(n->condition);
-    size_t exit_jump = emit_jump(OpCode::OP_JUMP_IF_FALSE);
-    emit_op(OpCode::OP_POP);
+    int fused_patch = try_compile_cmp_jump(n->condition.get());
+    size_t exit_jump;
+    if (fused_patch >= 0) {
+        exit_jump = static_cast<size_t>(fused_patch);
+    } else {
+        compile_expression(n->condition);
+        exit_jump = emit_jump(OpCode::OP_JUMP_IF_FALSE);
+        emit_op(OpCode::OP_POP);
+    }
 
     std::vector<size_t> breaks, continues;
     current->loop_starts.push_back(loop_start);
@@ -708,6 +733,168 @@ void Compiler::compile_expression_statement(ExpressionStatementNode* n) {
 }
 
 // ============================================================================
+// Modules
+// ============================================================================
+//
+// A require is resolved and inlined at COMPILE time.  The module becomes a
+// function of the program; its exports become a dictionary that the alias
+// points at.
+//
+// Why compile time and not run time: the shipped program is one file.  The
+// page loads a bundle and the browser VM has no file system, so a module
+// that is read at run time would have to travel next to the program -- and
+// then the program is no longer the whole story.  Inlining keeps the
+// program self-contained and keeps the module's code inside the encrypted
+// pool.
+//
+// The browser VM cannot execute the AST fallbacks (classes, structs,
+// try/catch, await), so a module that uses them cannot be packaged.  The
+// JSON exporter refuses such a program and says which feature it is.
+
+void Compiler::compile_require(RequireNode* n) {
+    std::string resolved;
+    bool is_dir_module = false;
+    std::string tried;
+    if (!ModulePath::resolve(n->module_path, source_dir_, resolved,
+                             is_dir_module, tried)) {
+        error("cannot find the module '" + n->module_path +
+              "'; looked in: " + tried);
+        return;
+    }
+    for (const auto& seen : module_stack_) {
+        if (seen == resolved) {
+            error("circular require: '" + n->module_path +
+                  "' is already being compiled (" + resolved + ")");
+            return;
+        }
+    }
+
+    std::ifstream file(resolved);
+    if (!file.is_open()) {
+        error("cannot open the module '" + resolved + "'");
+        return;
+    }
+    std::string source_code((std::istreambuf_iterator<char>(file)),
+                            std::istreambuf_iterator<char>());
+    file.close();
+
+    Parser parser(source_code);
+    auto statements = parser.parse();
+    if (parser.has_error()) {
+        error("the module '" + resolved + "' does not parse");
+        return;
+    }
+
+    std::string alias = n->alias_name;
+    if (alias.empty()) {
+        size_t pos = n->module_path.find_last_of("/\\");
+        alias = (pos == std::string::npos) ? n->module_path
+                                           : n->module_path.substr(pos + 1);
+    }
+
+    // The module's own requires are relative to the module.
+    std::string saved_dir = source_dir_;
+    source_dir_ = ModulePath::dir_of(resolved);
+    module_stack_.push_back(resolved);
+    compile_module(resolved, is_dir_module, statements, alias);
+    module_stack_.pop_back();
+    source_dir_ = saved_dir;
+}
+
+void Compiler::compile_module(const std::string& resolved, bool is_dir_module,
+                              const std::vector<AstNodePtr>& statements,
+                              const std::string& alias) {
+    // What the module hands out.  A single file exports everything it
+    // defines; a directory module (an _index.pr) exports only what it
+    // marked with expose.  This is the same rule the interpreter uses.
+    std::vector<std::string> exports;
+    for (const auto& stmt : statements) {
+        if (auto fn = dynamic_cast<FnDefNode*>(stmt.get())) {
+            if (!is_dir_module || fn->is_exposed) exports.push_back(fn->name);
+        } else if (auto var = dynamic_cast<VarDeclarationNode*>(stmt.get())) {
+            if (!is_dir_module || var->is_exposed) exports.push_back(var->name);
+        }
+    }
+
+    // The module becomes a function of the program.  Its statements are the
+    // body, so its functions are closures over its own variables, exactly
+    // like the module environment the interpreter builds.
+    size_t saved_index = func_stack.size() - 1;
+    func_stack.emplace_back();
+    current = &func_stack.back();
+    current->func = std::make_shared<CompiledFunction>();
+    current->func->name = "__module_" + alias + "_" +
+                          std::to_string(module_counter_++);
+    current->scope_depth = 0;
+    current->locals.push_back({"", 0, false});
+
+    for (const auto& stmt : statements) {
+        compile_statement(stmt);
+    }
+
+    // A module may have a hook that runs when it is loaded.  The
+    // interpreter calls it when the module opens; here the module is
+    // part of the program, so it runs where the require stands.
+    for (const auto& stmt : statements) {
+        auto fn = dynamic_cast<FnDefNode*>(stmt.get());
+        if (!fn || fn->name != "_on_load") continue;
+        int slot = resolve_local("_on_load");
+        if (slot < 0) break;
+        emit_op_operand(OpCode::OP_GET_LOCAL, static_cast<uint32_t>(slot));
+        emit_op_operand(OpCode::OP_CALL, 0);
+        emit_op(OpCode::OP_POP);
+        break;
+    }
+
+    // The exports: a dictionary the alias points at.
+    //     dim __exports = {}
+    //     __exports["name"] = name
+    uint32_t dict_idx = add_constant(std::make_shared<DimValue>());
+    emit_op_operand(OpCode::OP_CONSTANT, dict_idx);
+    emit_op_operand(OpCode::OP_CAST, static_cast<uint32_t>(CastType::CAST_DIM));
+    declare_local("__exports");
+    int exports_slot = resolve_local("__exports");
+    emit_op_operand(OpCode::OP_SET_LOCAL, static_cast<uint32_t>(exports_slot));
+
+    for (const auto& name : exports) {
+        emit_op_operand(OpCode::OP_GET_LOCAL,
+                        static_cast<uint32_t>(exports_slot));
+        uint32_t key_idx = add_constant(std::make_shared<StringValue>(name));
+        emit_op_operand(OpCode::OP_CONSTANT, key_idx);
+        load_variable(name, current_line);
+        emit_op(OpCode::OP_SET_INDEX);
+    }
+
+    // return __exports
+    emit_op_operand(OpCode::OP_GET_LOCAL, static_cast<uint32_t>(exports_slot));
+    emit_op(OpCode::OP_RETURN);
+
+    CompiledFunctionPtr fn = current->func;
+    fn->upvalue_count = static_cast<int>(current->upvalues.size());
+    fn->upvalue_descriptors = current->upvalues;
+    func_stack.pop_back();
+    current = &func_stack[saved_index];
+
+    uint32_t fn_idx = static_cast<uint32_t>(chunk_root->all_functions.size());
+    chunk_root->all_functions.push_back(fn);
+    emit_op_operand(OpCode::OP_CLOSURE, fn_idx);
+    // Call it right away: the module is part of the program, so its
+    // exports exist from the first line.
+    emit_op_operand(OpCode::OP_CALL, 0);
+    // Bind the exports to the alias.  This is a definition, not an
+    // assignment: the name does not exist yet.  Both stores pop the
+    // value, so the stack is balanced afterwards.
+    if (func_stack.size() == 1) {
+        uint32_t name_idx = add_string_constant(alias);
+        emit_op_operand(OpCode::OP_DEFINE_GLOBAL, name_idx);
+    } else {
+        declare_local(alias);
+        int slot = resolve_local(alias);
+        emit_op_operand(OpCode::OP_SET_LOCAL, static_cast<uint32_t>(slot));
+    }
+}
+
+// ============================================================================
 // Expression compilers
 // ============================================================================
 void Compiler::compile_literal(LiteralNode* n) {
@@ -850,9 +1037,192 @@ void Compiler::compile_typecast(TypeConversionNode* n) {
     emit_op_operand(OpCode::OP_CAST, cast_code);
 }
 
+// Operand layout of the OP_INPLACE_* instructions: the single 24-bit
+// operand packs the destination and the right-hand side.
+//   bit 23: destination is a global (bits 22-12 hold its name constant index)
+//   otherwise: destination is a local slot (bits 22-12)
+//   bits 11-9: rhs kind - 0 constants-pool index, 1 local slot,
+//              2 value already on the stack top, 3 inline small integer
+//   bits  8-0: rhs payload (index or 0..511 value)
+// Anything that does not fit falls back to the plain sequence.
+static constexpr uint32_t INPLACE_GLOBAL_MASK = 0x800000;
+static constexpr uint32_t INPLACE_DST_MASK    = 0x7FF800;
+static constexpr uint32_t INPLACE_DST_SHIFT   = 12;
+static constexpr uint32_t INPLACE_KIND_SHIFT  = 9;
+static constexpr uint32_t INPLACE_PAY_MASK    = 0x01FF;
+static constexpr uint32_t INPLACE_KIND_CONST  = 0;
+static constexpr uint32_t INPLACE_KIND_LOCAL  = 1;
+static constexpr uint32_t INPLACE_KIND_STACK  = 2;
+static constexpr uint32_t INPLACE_KIND_INLINE = 3;
+
+// Encodes one side of a fused arithmetic/compare instruction.
+// bit23: global (bits 22-12 = name constant index) else local slot;
+// bits 11-9: 0 constant, 1 local, 3 inline small integer; bits 8-0 payload.
+// Returns false when the side cannot be encoded.
+bool Compiler::encode_value_side(AstNode* node, bool allow_inline, uint32_t& out) {
+    if (auto var = dynamic_cast<VariableNode*>(node)) {
+        int slot = resolve_local(var->name);
+        if (slot >= 0 && slot <= 511) {
+            out = (1 << 9) | static_cast<uint32_t>(slot);   // kind 1 = local, payload = slot
+            return true;
+        }
+        if (slot < 0 && resolve_upvalue(current, var->name) == -1) {
+            uint32_t idx = add_string_constant(var->name);
+            if (idx > 2047) return false;
+            out = 0x800000 | ((idx & 0x7FF) << 12);         // kind 0 payload unused: name index rides in bits 22-12
+            return true;
+        }
+        return false;
+    }
+    if (allow_inline) {
+        if (auto lit = dynamic_cast<LiteralNode*>(node)) {
+            if (auto num = std::dynamic_pointer_cast<NumberValue>(lit->value)) {
+                long long v = 0;
+                if (num->value.is_int_fast(v) && v >= 0 && v <= 511) {
+                    out = (3 << 9) | static_cast<uint32_t>(v);
+                    return true;
+                }
+                uint32_t idx = add_constant(lit->value);
+                if (idx > 511) return false;
+                out = idx;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+int Compiler::try_compile_cmp_jump(AstNode* condition) {
+    auto bin = dynamic_cast<BinaryOpNode*>(condition);
+    if (!bin) return -1;
+    uint32_t cmp;
+    switch (bin->op.type) {
+        case TokenType::LESS:          cmp = 0; break;
+        case TokenType::LESS_EQUAL:    cmp = 1; break;
+        case TokenType::GREATER:       cmp = 2; break;
+        case TokenType::GREATER_EQUAL: cmp = 3; break;
+        case TokenType::EQUAL_EQUAL:   cmp = 4; break;
+        case TokenType::BANG_EQUAL:    cmp = 5; break;
+        default: return -1;
+    }
+    // Both sides must be encodable before anything goes on the wire.
+    uint32_t lenc, renc;
+    if (!encode_value_side(bin->left.get(), false, lenc)) return -1;
+    if (!encode_value_side(bin->right.get(), true, renc)) return -1;
+    auto raw24 = [this](uint32_t v) {
+        emit_byte(static_cast<uint8_t>((v >> 16) & 0xFF));
+        emit_byte(static_cast<uint8_t>((v >> 8) & 0xFF));
+        emit_byte(static_cast<uint8_t>(v & 0xFF));
+    };
+    emit_op(OpCode::OP_CMP_JUMP);
+    raw24(lenc);
+    raw24(renc);
+    raw24(cmp);
+    size_t patch_loc = current->func->code.size();
+    raw24(0);                                     // target placeholder
+    return static_cast<int>(patch_loc);
+}
+
+bool Compiler::try_compile_inplace(const std::string& name, AstNode* value, int line) {
+    (void)line;
+    uint32_t dst;
+    int slot = resolve_local(name);
+    if (slot >= 0 && slot <= 2047) {
+        dst = INPLACE_DST_SHIFT <= 22 ? (static_cast<uint32_t>(slot) << INPLACE_DST_SHIFT) : 0;
+    } else if (slot < 0) {
+        if (resolve_upvalue(current, name) != -1) return false;   // closure variable: plain path
+        // Globals take the fused path too - that is what script-scope
+        // variables actually are.
+        uint32_t idx = add_string_constant(name);
+        if (idx > 2047) return false;
+        dst = INPLACE_GLOBAL_MASK | (idx << INPLACE_DST_SHIFT);
+    } else {
+        return false;
+    }
+    auto bin = dynamic_cast<BinaryOpNode*>(value);
+    if (!bin) return false;
+    OpCode op;
+    switch (bin->op.type) {
+        case TokenType::PLUS:  op = OpCode::OP_INPLACE_ADD; break;
+        case TokenType::MINUS: op = OpCode::OP_INPLACE_SUB; break;
+        case TokenType::STAR:  op = OpCode::OP_INPLACE_MUL; break;
+        default: return false;
+    }
+    auto lhs = dynamic_cast<VariableNode*>(bin->left.get());
+    if (!lhs || lhs->name != name) return false;
+
+    uint32_t kind, pay;
+    if (auto rvar = dynamic_cast<VariableNode*>(bin->right.get())) {
+        int rslot = resolve_local(rvar->name);
+        if (rslot < 0 || rslot > INPLACE_PAY_MASK) return false;   // global/upvalue rhs: plain path
+        kind = INPLACE_KIND_LOCAL; pay = static_cast<uint32_t>(rslot);
+    } else if (auto lit = dynamic_cast<LiteralNode*>(bin->right.get())) {
+        if (auto num = std::dynamic_pointer_cast<NumberValue>(lit->value)) {
+            long long v = 0;
+            if (num->value.is_int_fast(v) && v >= 0 && v <= INPLACE_PAY_MASK) {
+                kind = INPLACE_KIND_INLINE; pay = static_cast<uint32_t>(v);
+            } else {
+                // Big or negative literal: via the constants pool when it fits.
+                uint32_t idx = add_constant(lit->value);
+                if (idx > INPLACE_PAY_MASK) return false;
+                kind = INPLACE_KIND_CONST; pay = idx;
+            }
+        } else if (std::dynamic_pointer_cast<StringValue>(lit->value)) {
+            uint32_t idx = add_constant(lit->value);
+            if (idx > INPLACE_PAY_MASK) return false;
+            kind = INPLACE_KIND_CONST; pay = idx;
+        } else {
+            return false;
+        }
+    } else if (auto rbin = dynamic_cast<BinaryOpNode*>(bin->right.get())) {
+        // Accumulator idiom: s = s + i * 3 (and s * i).
+        if (rbin->op.type != TokenType::STAR) return false;
+        VariableNode* rv = nullptr;
+        LiteralNode* rlit = nullptr;
+        if (auto rl = dynamic_cast<VariableNode*>(rbin->left.get())) {
+            rv = rl; rlit = dynamic_cast<LiteralNode*>(rbin->right.get());
+        } else if (auto rr = dynamic_cast<VariableNode*>(rbin->right.get())) {
+            rv = rr; rlit = dynamic_cast<LiteralNode*>(rbin->left.get());
+        }
+        if (!rv || !rlit) return false;
+        auto rnum = std::dynamic_pointer_cast<NumberValue>(rlit->value);
+        if (!rnum) return false;
+        long long k = 0;
+        if (op == OpCode::OP_INPLACE_ADD && rnum->value.is_int_fast(k) && k >= 0 && k <= 4095) {
+            // dst += src * k in one instruction when the source is a
+            // variable (local slot or global name).
+            uint32_t senc;
+            if (encode_value_side(rv, false, senc)) {
+                emit_op(OpCode::OP_INPLACE_AM);
+                auto raw24 = [this](uint32_t v) {
+                    emit_byte(static_cast<uint8_t>((v >> 16) & 0xFF));
+                    emit_byte(static_cast<uint8_t>((v >> 8) & 0xFF));
+                    emit_byte(static_cast<uint8_t>(v & 0xFF));
+                };
+                raw24(dst);
+                raw24(senc | static_cast<uint32_t>(k));
+                return true;
+            }
+        }
+        // General product: compile i * k the ordinary way, consume it
+        // from the stack top.
+        compile_expression(bin->right);
+        kind = INPLACE_KIND_STACK; pay = 0;
+    } else {
+        return false;
+    }
+
+    uint32_t operand = dst | (kind << INPLACE_KIND_SHIFT) | pay;
+    emit_op_operand(op, operand);
+    return true;
+}
+
 void Compiler::compile_assignment(AssignmentNode* n) {
     // Handle different target types.
     if (auto var = dynamic_cast<VariableNode*>(n->target.get())) {
+        // Fused in-place arithmetic: one instruction instead of four,
+        // and no result object when the slot owns its number.
+        if (try_compile_inplace(var->name, n->value.get(), n->line)) return;
         // store_variable uses peek-based stores (OP_SET_LOCAL_KEEP,
         // OP_SET_GLOBAL, OP_SET_UPVALUE) that do NOT pop, so the assigned
         // value remains on the stack as the expression result. No DUP needed.

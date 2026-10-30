@@ -24,6 +24,16 @@ struct UpvalueDesc {
 // ============================================================================
 struct CompiledFunction {
     std::string name;
+    // Freelist of locals buffers for frames of this function, so a call
+    // neither allocates nor hashes: the pool rides on the function.
+    std::vector<std::vector<std::shared_ptr<Value>>> locals_pool;
+    // Per-call-site caches for global variable cells, indexed by the
+    // constants-pool index of the name. nullptr = not resolved yet.
+    // std::map nodes never move and nothing erases, so the pointers stay
+    // valid for the whole run; keeping them here shares them across all
+    // frames of the function instead of re-resolving once per frame.
+    std::vector<const std::shared_ptr<Value>*> gcache;
+    std::vector<std::shared_ptr<Value>*> wcache;
     std::vector<uint8_t> code;          // bytecode
     std::vector<ValuePtr> constants;    // constant pool (literals + global names as StringValue)
     std::vector<int> lines;             // line number per byte (parallel to code)
@@ -85,7 +95,7 @@ struct Closure : public Value {
     CompiledFunctionPtr function;
     std::vector<UpvalueObjPtr> upvalues;
 
-    Closure(CompiledFunctionPtr fn) : function(fn) {
+    Closure(CompiledFunctionPtr fn) : Value(VTag::Closure), function(fn) {
         upvalues.resize(fn->upvalue_count);
     }
     std::string toString() const override {

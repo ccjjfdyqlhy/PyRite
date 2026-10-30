@@ -1,0 +1,196 @@
+# ============================================================ #
+# PyRite 例程集 — 使用新特性（ln, dim, struct, fn->, lambda） #
+# ============================================================ #
+
+# ------------------------- #
+# 例程1：阶乘（fn 简写 + 递归） #
+# ------------------------- #
+say("--- 1. 阶乘 ---")
+fn fact(dec n) do if n == 0 then return 1 else return n * fact(n - 1) endif endfn
+say(fact(10))  # 3628800 #
+
+# --------------------------- #
+# 例程2：斐波那契数列（fn + ln） #
+# --------------------------- #
+say("--- 2. 斐波那契 ---")
+fn fib(dec n) do
+  if n <= 1 then return n endif
+  ln seq = [0, 1]
+  dec i = 2
+  while i <= n do
+    seq = seq + [seq[i-1] + seq[i-2]]
+    i = i + 1
+  endwhile
+  return seq[n]
+endfn
+say(fib(10))  # 55 #
+
+# ----------------------------- #
+# 例程3：冒泡排序（ln + swap） #
+# ----------------------------- #
+say("--- 3. 冒泡排序 ---")
+fn sort_bubble(ln arr) do
+  dec n = len(arr)
+  dec i = 0
+  while i < n - 1 do
+    dec j = 0
+    while j < n - i - 1 do
+      if arr[j] > arr[j+1] then swap(arr[j], arr[j+1]) endif
+      j = j + 1
+    endwhile
+    i = i + 1
+  endwhile
+  return arr
+endfn
+
+ln data = [64, 34, 25, 12, 22, 11, 90]
+say(sort_bubble(data))  # [11, 12, 22, 25, 34, 64, 90] #
+
+# 用 lambda 做降序比较器 #
+fn sort_with(ln arr, any cmp) do
+  dec n = len(arr)
+  dec i = 0
+  while i < n - 1 do
+    dec j = 0
+    while j < n - i - 1 do
+      if cmp(arr[j], arr[j+1]) then swap(arr[j], arr[j+1]) endif
+      j = j + 1
+    endwhile
+    i = i + 1
+  endwhile
+  return arr
+endfn
+
+ln desc = sort_with(data, fn(dec a, dec b) -> a < b)
+say(desc)  # [90, 64, 34, 25, 22, 12, 11] #
+
+# ------------------------------------ #
+# 例程4：栈（struct + 操作函数 + ins 版） #
+# ------------------------------------ #
+say("--- 4. 栈 ---")
+struct Stack(ln items = [])
+fn stack_push(any s, any item) -> s.items = s.items + [item]
+fn stack_pop(any s) do
+  if len(s.items) == 0 then raise("empty stack") endif
+  dec last = len(s.items) - 1
+  any val = s.items[last]
+  s.items = s.items[0:last]
+  return val
+endfn
+
+dec s = new(Stack)
+stack_push(s, 10)
+stack_push(s, 20)
+stack_push(s, 30)
+say(stack_pop(s))   # 30 #
+say(stack_pop(s))   # 20 #
+say(stack_pop(s))   # 10 #
+
+# 用 ins 的版本 #
+ins Stack2(ln items = []) contains
+  fn push(any item) do this.items = this.items + [item] endfn
+  fn pop() do
+    if len(this.items) == 0 then raise("empty") endif
+    any v = this.items[len(this.items)-1]
+    this.items = this.items[0:len(this.items)-1]
+    return v
+  endfn
+endins
+dec s2 = new(Stack2)
+s2.push(100)
+s2.push(200)
+say(s2.pop())  # 200 #
+say(s2.pop())  # 100 #
+
+# ----------------------------------- #
+# 例程5：队列（struct + 操作函数） #
+# ----------------------------------- #
+say("--- 5. 队列 ---")
+struct Queue(ln items = [])
+fn queue_enq(any q, any item) -> q.items = q.items + [item]
+fn queue_deq(any q) do
+  if len(q.items) == 0 then raise("empty queue") endif
+  any first = q.items[0]
+  q.items = q.items[1:]
+  return first
+endfn
+
+dec q = new(Queue)
+queue_enq(q, "A")
+queue_enq(q, "B")
+queue_enq(q, "C")
+say(queue_deq(q))    # A #
+say(queue_deq(q))    # B #
+say(queue_deq(q))    # C #
+
+# -------------------------------------- #
+# 例程6：二叉搜索树（struct + 递归） #
+# -------------------------------------- #
+say("--- 6. 二叉搜索树 ---")
+struct Node(dec key, any left = nul, any right = nul)
+struct BST(any root = nul)
+
+fn bst_insert(any self, dec key) do
+  if self.root == nul then
+    dec root = new(Node)
+    root.key = key
+    self.root = root
+  else
+    fn _ins(any node, dec k) do
+      if k < node.key then
+        if node.left == nul then
+          dec n = new(Node)
+          n.key = k
+          node.left = n
+        else _ins(node.left, k)
+        endif
+      else
+        if node.right == nul then
+          dec n = new(Node)
+          n.key = k
+          node.right = n
+        else _ins(node.right, k)
+        endif
+      endif
+    endfn
+    _ins(self.root, key)
+  endif
+endfn
+
+fn bst_search(any self, dec key) do
+  fn _srch(any node, dec k) do
+    if node == nul then return 0 endif
+    if node.key == k then return 1 endif
+    if k < node.key then return _srch(node.left, k)
+    else return _srch(node.right, k) endif
+  endfn
+  return _srch(self.root, key)
+endfn
+
+dec bst = new(BST)
+bst_insert(bst, 50)
+bst_insert(bst, 30)
+bst_insert(bst, 70)
+bst_insert(bst, 20)
+bst_insert(bst, 40)
+bst_insert(bst, 60)
+bst_insert(bst, 80)
+
+say(bst_search(bst, 40))  # 1 #
+say(bst_search(bst, 99))  # 0 #
+
+# 中序遍历 #
+fn bst_walk(any self) do
+  fn _walk(any node) do
+    if node != nul then
+      _walk(node.left)
+      say(node.key)
+      _walk(node.right)
+    endif
+  endfn
+  _walk(self.root)
+endfn
+say("  -- 中序遍历 --")
+bst_walk(bst)  # 20, 30, 40, 50, 60, 70, 80 #
+
+say("--- 全部例程完成 ---")

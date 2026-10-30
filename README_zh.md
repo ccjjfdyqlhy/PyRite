@@ -4,7 +4,7 @@
 
 PyRite 是一门解释型脚本语言，语法融合 Python、C++ 和 BASIC 的特点。其核心特色是**透明的高精度算术**：所有数字默认使用 `BigNumber`，无需 import、无需 `Decimal()`、没有精度上限。
 
-版本 **v0.31.0** — 混合 AST/字节码解释器，支持 `.prc`/`.prt` 序列化。
+版本 **v0.32.0** — 混合 AST/字节码解释器，支持 `.prc`/`.prt` 序列化，附带可用 `require` 在编译期内联的标准库（`lib/`）。
 
 ---
 
@@ -77,9 +77,50 @@ apply(5, fn(dec n) -> n * 3)       // 高阶函数
 | **函数** | `fn` 定义、`->` 简写、lambda、闭包、默认参数、类型提示 |
 | **面向对象** | `struct`（纯数据）、`ins`（含方法的类）、`new()`、`this` |
 | **错误处理** | `try`/`catch`/`fin`、`raise` |
-| **模块** | `require`（懒加载）、单文件和目录模块、`expose`、`_on_load()` 钩子 |
+| **模块** | `require`（编译时就把模块放进程序里）、单文件和目录模块、`expose`、`_on_load()` 钩子 |
 | **I/O** | `say()`、`ask()` |
 | **异步** | `await`/`then`（轮询式） |
+
+---
+
+## 标准库
+
+跟着语言一起走的库在 `lib/` 里。程序用 `require` 取它要的部分，
+编译器把模块**放进程序本身**：
+
+```python
+require "list" as list
+require "flow" as flow
+
+say(list.sum([1, 2, 3]))
+```
+
+| 模块 | 里面有什么 |
+|------|-----------|
+| `list` | `has` `index_of` `count` `sum` `first` `last` `take` `skip` `reverse` `range` `concat` `join` `map` `filter` `fold` |
+| `text` | `starts_with` `ends_with` `pad` `repeat` `lines` `words` `capitalize` |
+| `dict` | `get` `merge` `sorted_keys` `remove` |
+| `num` | `clamp` `sign` `is_even` `is_odd` `gcd` `lcm` `pick` `shuffle` |
+| `flow` | `cursor` `next` `first_where` `some` `every` `each` |
+
+`require "lib" as std` 一次取整个库。
+
+库是用语言最普通的那一部分写的：没有类，没有结构体，没有 try/catch，
+没有 await。所以它在哪都能跑。
+库里的随机是能重复的：同一个种子总是挑到同一个，故事玩两遍玩得一样。
+
+### 文本里的值与成员
+
+```python
+str name = "世界"
+say("你好，{name}！")     // → 你好，世界！
+say("{{name}}")           // → {name}
+
+ln xs = [10, 20, 30]
+say(xs.length)             // → 3
+say(xs.join("-"))         // → 10-20-30
+say("hello".upper())      // → HELLO
+```
 
 ---
 

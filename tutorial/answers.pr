@@ -1,0 +1,155 @@
+// PyRite 练习参考答案
+// 运行： ./PyRite tutorial/answers.pr
+
+// ============ 1. 箭头函数 ============
+fn c2f(dec c) -> c * 9 / 5 + 32
+// 注意：/ 是十进制除法，默认 50 位小数，所以结果是 212.000…0
+say(c2f(100))            // 212.00000000000000000000000000000000000000000000000000
+say(approx(c2f(100), 0)) // 212
+
+// ============ 2. 闰年 ============
+fn is_leap(dec y) do
+  if y % 400 == 0 then return 1 endif
+  if y % 100 == 0 then return 0 endif
+  if y % 4 == 0 then return 1 endif
+  return 0
+end
+say(is_leap(2024))       // 1
+say(is_leap(1900))       // 0
+say(is_leap(2026))       // 0
+
+// ============ 3. 高阶函数三件套 ============
+fn map(ln xs, any f) do
+  ln out = []
+  for x in xs do
+    out = out + [f(x)]
+  end
+  return out
+end
+
+fn filter(ln xs, any f) do
+  ln out = []
+  for x in xs do
+    if f(x) then out = out + [x] endif
+  end
+  return out
+end
+
+fn sum(ln xs) do
+  dec total = 0
+  for x in xs do total = total + x end
+  return total
+end
+
+say(map([1, 2, 3], fn(dec x) -> x * 2))       // [2, 4, 6]
+say(filter([1, 2, 3, 4], fn(dec x) -> x % 2 == 0))  // [2, 4]
+say(sum([1, 2, 3]))                          // 6
+
+// ============ 4. 字符串反转（切片） ============
+fn reverse(str s) do
+  str out = ""
+  dec i = len(s) - 1
+  while i >= 0 do
+    out = out + s[i]
+    i = i - 1
+  end
+  return out
+end
+say(reverse("PyRite"))   // etiRyP
+
+// ============ 5. 词频统计 ============
+fn count_words(ln words) do
+  dim freq = {}
+  for w in words do
+    // dim 读取不存在的键会抛运行时错误，且没有 has()/keys() 内置函数，
+    // 所以用 try/catch 判断键是否已存在。
+    try
+      dec cur = freq[w]
+      freq[w] = cur + 1
+    catch e
+      freq[w] = 1
+    end
+  end
+  return freq
+end
+say(count_words(["a", "b", "a", "c", "a", "b"]))  // {a: 3, b: 2, c: 1}
+
+// ============ 6. 自定义异常 ============
+fn parse_int(str s) do
+  try
+    return s as dec
+  catch e
+    raise("不是数字: " + s)
+  end
+end
+
+try
+  say(parse_int("42"))
+catch msg
+  say("捕获: " + msg)
+end
+
+try
+  say(parse_int("abc"))
+catch msg
+  say("捕获: " + msg)
+end
+
+// ============ 7. struct 队列 ============
+struct Queue(ln items = [])
+
+fn q_push(any self, any val) do
+  self.items = self.items + [val]
+end
+
+fn q_pop(any self) do
+  if len(self.items) == 0 then raise("队列为空") endif
+  any v = self.items[0]
+  self.items = self.items[1:len(self.items)]
+  return v
+end
+
+fn q_peek(any self) do
+  if len(self.items) == 0 then return nul endif
+  return self.items[0]
+end
+
+dec q = new(Queue)
+q_push(q, "a")
+q_push(q, "b")
+q_push(q, "c")
+say(q_peek(q))   // a
+say(q_pop(q))    // a
+say(q_pop(q))    // b
+
+// ============ 8. 闭包：累加器 ============
+fn makeAccumulator() do
+  dec total = 0
+  fn add(dec v) do
+    total = total + v
+    return total
+  end
+  return add
+end
+dec acc = makeAccumulator()
+say(acc(1))   // 1
+say(acc(2))   // 3
+say(acc(3))   // 6
+
+// ============ 9. 闭包捕获的是循环内的当前值 ============
+// PyRite 的 for-in 每轮都开新作用域，lambda 捕获的是那一轮的值，
+// 所以三个 lambda 各自记住自己的 x。
+fn make_getter(dec x) do
+  return fn() -> x
+end
+ln getters = []
+for x in [1, 2, 3] do
+  getters = getters + [make_getter(x)]
+end
+say(getters[0]())   // 1
+say(getters[1]())   // 2
+say(getters[2]())   // 3
+
+// ============ 10. 模块 ============
+// 见 tutorial/ex/06_modules/ ：require "utils/math" as m; m.mul(3, 4)
+say("见 tutorial/ex/06_modules/main.pr")

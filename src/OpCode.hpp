@@ -6,7 +6,7 @@
 // PyRite Bytecode Instruction Set
 // ============================================================================
 // GENERATED FILE -- DO NOT EDIT BY HAND.
-// Source: opcodes.def (sha256 d957ad6127a728b2fd13fd22422a4dc821fc06a6754b1374dce5092345df8a03)
+// Source: opcodes.def (sha256 22f5b41a5f7517bc468e4ef506f1ecdb5e9893276074bb4f5696a7523eca6201)
 // Regenerate: python3 tools/gen_opcodes.py
 //
 // Stack-based VM. Operands are big-endian 24-bit unsigned integers (0..2^24-1)
@@ -111,10 +111,23 @@ enum class OpCode : uint8_t {
 
     // ---- Halt ----
     OP_HALT,               // stop the VM
+    OP_INPLACE_ADD,        // locals[dst] += rhs; dst+rhs packed in one operand
+    OP_INPLACE_SUB,        // locals[dst] -= rhs
+    OP_INPLACE_MUL,        // locals[dst] *= rhs
+    OP_CMP_JUMP,           // 4 operands: lhs, rhs, cmp-code, jump target
+    OP_INPLACE_AM,         // dst += src * k; two packed operands
+    OP_RESERVED_1,         // reserved for future fused/superinstructions
+    OP_RESERVED_2,         // reserved
+    OP_RESERVED_3,         // reserved
+    OP_RESERVED_4,         // reserved
+    OP_RESERVED_5,         // reserved
+    OP_RESERVED_6,         // reserved
+    OP_RESERVED_7,         // reserved
+    OP_RESERVED_8,         // reserved
 };
 
 // Total number of opcodes (the permutation range used by the obfuscator).
-constexpr int OPCODE_COUNT = 58;
+constexpr int OPCODE_COUNT = 71;
 
 // Convert opcode to string for disassembly / debugging
 inline const char* op_name(OpCode op) {
@@ -177,6 +190,19 @@ inline const char* op_name(OpCode op) {
         case OpCode::OP_TRY_END:     return "TRY_END";
         case OpCode::OP_CATCH:       return "CATCH";
         case OpCode::OP_HALT:        return "HALT";
+        case OpCode::OP_INPLACE_ADD: return "INPLACE_ADD";
+        case OpCode::OP_INPLACE_SUB: return "INPLACE_SUB";
+        case OpCode::OP_INPLACE_MUL: return "INPLACE_MUL";
+        case OpCode::OP_CMP_JUMP:    return "CMP_JUMP";
+        case OpCode::OP_INPLACE_AM:  return "INPLACE_AM";
+        case OpCode::OP_RESERVED_1:  return "RESERVED_1";
+        case OpCode::OP_RESERVED_2:  return "RESERVED_2";
+        case OpCode::OP_RESERVED_3:  return "RESERVED_3";
+        case OpCode::OP_RESERVED_4:  return "RESERVED_4";
+        case OpCode::OP_RESERVED_5:  return "RESERVED_5";
+        case OpCode::OP_RESERVED_6:  return "RESERVED_6";
+        case OpCode::OP_RESERVED_7:  return "RESERVED_7";
+        case OpCode::OP_RESERVED_8:  return "RESERVED_8";
     }
     return "UNKNOWN";
 }

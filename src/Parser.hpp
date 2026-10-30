@@ -63,4 +63,7 @@ private:
     AstNodePtr list_literal();
     AstNodePtr dim_literal();
     AstNodePtr primary();
+    // A string with a name in braces: "Hello, {name}!"
+    AstNodePtr interpolated_string(const std::string& text, int line);
+    AstNodePtr value_of_name(const std::string& name, int line);
 };

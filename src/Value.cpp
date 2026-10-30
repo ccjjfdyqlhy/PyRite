@@ -101,7 +101,7 @@ bool NumberValue::isEqualTo(const Value& other) const { if (const NumberValue* o
 bool NumberValue::isLessThan(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return this->value < o->value; return Value::isLessThan(other); }
 
 // BinaryValue
-BinaryValue::BinaryValue(const std::string& hex_str) {
+BinaryValue::BinaryValue(const std::string& hex_str) : Value(VTag::Binary) {
     if (hex_str.rfind("0x", 0) != 0) throw std::invalid_argument(msg(Msg::HEX_PREFIX));
     std::string hex = hex_str.substr(2);
     if (hex.length() % 2 != 0) hex = "0" + hex;
@@ -158,8 +158,10 @@ ValuePtr StringValue::getSubscript(const Value& index) const {
     throw std::runtime_error(msg(Msg::LN_IDX_NUM));
 }
 std::string StringValue::repr() const {
+    // The browser runtime prints a string inside a list with double
+    // quotes, so the same list has to look the same in both.
     std::stringstream ss;
-    ss << "'" << value << "'";
+    ss << '"' << value << '"';
     return ss.str();
 }
 ValuePtr StringValue::getSlice(const ValuePtr& start_val, const ValuePtr& end_val, const ValuePtr& step_val) const {
@@ -327,11 +329,243 @@ std::string DimValue::toString() const {
     for (const auto& pair : dict) {
         if (!first) ss << ", ";
         first = false;
-        ss << pair.first << ": " << pair.second->repr();
+        // The browser runtime prints the key of a dictionary in quotes,
+        // so the same dictionary has to look the same in both.
+        ss << '"' << pair.first << "\": " << pair.second->repr();
     }
     ss << "}";
     return ss.str();
 }
+// ============================================================================
+// The members a value answers to
+// ============================================================================
+//
+// "abc".upper(), xs.push(1), d.keys().  They live with the value and not
+// with the runtime around it, so the interpreter and the bytecode VM
+// answer the same way, and the browser answers the same way too.
+//
+// The helpers a script reaches for most often live in the standard
+// library (~/PyRite/lib) as plain functions: list.map(xs, f) and the
+// like.  These are the ones that are about the value itself.
+
+namespace {
+
+bool is_space_char(char c) {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
+           c == '\f' || c == '\v';
+}
+
+std::string upper_text(const std::string& text) {
+    std::string out = text;
+    for (char& c : out) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return out;
+}
+
+std::string lower_text(const std::string& text) {
+    std::string out = text;
+    for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return out;
+}
+
+std::string trim_text(const std::string& text) {
+    size_t start = 0;
+    while (start < text.size() && is_space_char(text[start])) start++;
+    size_t stop = text.size();
+    while (stop > start && is_space_char(text[stop - 1])) stop--;
+    return text.substr(start, stop - start);
+}
+
+std::vector<ValuePtr> split_text(const std::string& text, const std::string& sep) {
+    std::vector<ValuePtr> parts;
+    if (sep.empty()) {
+        for (size_t i = 0; i < text.size(); i++)
+            parts.push_back(std::make_shared<StringValue>(text.substr(i, 1)));
+        return parts;
+    }
+    size_t pos = 0;
+    while (true) {
+        size_t hit = text.find(sep, pos);
+        if (hit == std::string::npos) {
+            parts.push_back(std::make_shared<StringValue>(text.substr(pos)));
+            break;
+        }
+        parts.push_back(std::make_shared<StringValue>(text.substr(pos, hit - pos)));
+        pos = hit + sep.size();
+    }
+    return parts;
+}
+
+std::string replace_text(const std::string& text, const std::string& from,
+                          const std::string& to) {
+    if (from.empty()) return text;
+    std::string out;
+    size_t pos = 0;
+    while (true) {
+        size_t hit = text.find(from, pos);
+        if (hit == std::string::npos) {
+            out.append(text, pos, std::string::npos);
+            break;
+        }
+        out.append(text, pos, hit - pos);
+        out.append(to);
+        pos = hit + from.size();
+    }
+    return out;
+}
+
+long long number_of(const ValuePtr& value, const char* who) {
+    auto number = dynamic_cast<NumberValue*>(value.get());
+    if (!number) throw std::runtime_error(std::string("Argument to ") + who +
+                                          "() must be a number.");
+    return number->value.toLongLong();
+}
+
+std::string text_of(const ValuePtr& value, const char* who) {
+    auto text = dynamic_cast<StringValue*>(value.get());
+    if (!text) throw std::runtime_error(std::string("Argument to ") + who +
+                                        "() must be a string.");
+    return text->value;
+}
+
+} // namespace
+
+// ---- A string ----
+ValuePtr StringValue::getMember(const std::string& name) const {
+    if (name == "length")
+        return std::make_shared<NumberValue>(BigNumber((long long)value.size()));
+    if (name == "upper")
+        return std::make_shared<NativeFnValue>("upper", [this](const std::vector<ValuePtr>&) {
+            return std::make_shared<StringValue>(upper_text(value));
+        });
+    if (name == "lower")
+        return std::make_shared<NativeFnValue>("lower", [this](const std::vector<ValuePtr>&) {
+            return std::make_shared<StringValue>(lower_text(value));
+        });
+    if (name == "trim")
+        return std::make_shared<NativeFnValue>("trim", [this](const std::vector<ValuePtr>&) {
+            return std::make_shared<StringValue>(trim_text(value));
+        });
+    if (name == "split")
+        return std::make_shared<NativeFnValue>("split", [this](const std::vector<ValuePtr>& args) {
+            // A member call passes only the explicit arguments, so the
+            // separator arrives at args[0] - the same place it sits for
+            // the other string members.
+            std::string sep = " ";
+            if (!args.empty()) sep = text_of(args[0], "split");
+            return std::make_shared<LnValue>(split_text(value, sep));
+        });
+    if (name == "replace")
+        return std::make_shared<NativeFnValue>("replace", [this](const std::vector<ValuePtr>& args) {
+            std::string from = text_of(args[0], "replace");
+            std::string to = args.size() > 1 ? text_of(args[1], "replace") : "";
+            return std::make_shared<StringValue>(replace_text(value, from, to));
+        });
+    if (name == "startsWith")
+        return std::make_shared<NativeFnValue>("startsWith", [this](const std::vector<ValuePtr>& args) {
+            std::string prefix = text_of(args[0], "startsWith");
+            return std::make_shared<NumberValue>(BigNumber(
+                value.compare(0, prefix.size(), prefix) == 0 ? 1 : 0));
+        });
+    if (name == "endsWith")
+        return std::make_shared<NativeFnValue>("endsWith", [this](const std::vector<ValuePtr>& args) {
+            std::string suffix = text_of(args[0], "endsWith");
+            if (suffix.size() > value.size()) return std::make_shared<NumberValue>(BigNumber(0));
+            return std::make_shared<NumberValue>(BigNumber(
+                value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0 ? 1 : 0));
+        });
+    if (name == "indexOf")
+        return std::make_shared<NativeFnValue>("indexOf", [this](const std::vector<ValuePtr>& args) {
+            std::string needle = text_of(args[0], "indexOf");
+            size_t hit = value.find(needle);
+            return std::make_shared<NumberValue>(BigNumber(
+                hit == std::string::npos ? -1 : (long long)hit));
+        });
+    return nullptr;
+}
+
+// ---- A list ----
+ValuePtr LnValue::getMember(const std::string& name) const {
+    // The list is shared with the script, so a method that changes it
+    // (push, pop) changes the list the script holds.
+    std::shared_ptr<LnValue> self =
+        std::static_pointer_cast<LnValue>(const_cast<LnValue*>(this)->shared_from_this());
+    if (name == "length")
+        return std::make_shared<NumberValue>(BigNumber((long long)elements.size()));
+    if (name == "push" || name == "append")
+        return std::make_shared<NativeFnValue>(name, [self](const std::vector<ValuePtr>& args) -> ValuePtr {
+            if (args.empty()) return std::make_shared<NullValue>();
+            self->elements.push_back(args[0]);
+            return std::make_shared<NumberValue>(BigNumber((long long)self->elements.size()));
+        });
+    if (name == "pop")
+        return std::make_shared<NativeFnValue>("pop", [self](const std::vector<ValuePtr>&) -> ValuePtr {
+            if (self->elements.empty()) return std::make_shared<NullValue>();
+            ValuePtr last = self->elements.back();
+            self->elements.pop_back();
+            return last;
+        });
+    if (name == "join")
+        return std::make_shared<NativeFnValue>("join", [self](const std::vector<ValuePtr>& args) {
+            std::string sep = ",";
+            if (!args.empty()) sep = text_of(args[0], "join");
+            std::string out;
+            for (size_t i = 0; i < self->elements.size(); i++) {
+                if (i > 0) out += sep;
+                out += self->elements[i]->toString();
+            }
+            return std::make_shared<StringValue>(out);
+        });
+    if (name == "slice")
+        return std::make_shared<NativeFnValue>("slice", [self](const std::vector<ValuePtr>& args) {
+            long long count = (long long)self->elements.size();
+            long long start = args.size() > 0 ? number_of(args[0], "slice") : 0;
+            long long stop = args.size() > 1 ? number_of(args[1], "slice") : count;
+            if (start < 0) start = count + start;
+            if (stop < 0) stop = count + stop;
+            if (start < 0) start = 0;
+            if (stop > count) stop = count;
+            if (stop < start) stop = start;
+            std::vector<ValuePtr> out;
+            for (long long i = start; i < stop; i++)
+                out.push_back(self->elements[(size_t)i]);
+            return std::make_shared<LnValue>(out);
+        });
+    if (name == "indexOf")
+        return std::make_shared<NativeFnValue>("indexOf", [self](const std::vector<ValuePtr>& args) -> ValuePtr {
+            if (args.empty()) return std::make_shared<NumberValue>(BigNumber(-1));
+            for (size_t i = 0; i < self->elements.size(); i++) {
+                if (self->elements[i]->isEqualTo(*args[0]))
+                    return std::make_shared<NumberValue>(BigNumber((long long)i));
+            }
+            return std::make_shared<NumberValue>(BigNumber(-1));
+        });
+    return nullptr;
+}
+
+// ---- A dictionary ----
+ValuePtr DimValue::getMember(const std::string& name) const {
+    if (name == "keys")
+        return std::make_shared<NativeFnValue>("keys", [this](const std::vector<ValuePtr>&) {
+            std::vector<ValuePtr> out;
+            for (const auto& pair : dict) out.push_back(std::make_shared<StringValue>(pair.first));
+            return std::make_shared<LnValue>(out);
+        });
+    if (name == "values")
+        return std::make_shared<NativeFnValue>("values", [this](const std::vector<ValuePtr>&) {
+            std::vector<ValuePtr> out;
+            for (const auto& pair : dict) out.push_back(pair.second);
+            return std::make_shared<LnValue>(out);
+        });
+    if (name == "has")
+        return std::make_shared<NativeFnValue>("has", [this](const std::vector<ValuePtr>& args) {
+            if (args.empty()) return std::make_shared<NumberValue>(BigNumber(0));
+            std::string key = text_of(args[0], "has");
+            return std::make_shared<NumberValue>(BigNumber(
+                dict.count(key) ? 1 : 0));
+        });
+    return nullptr;
+}
+
 ValuePtr DimValue::clone() const {
     std::map<std::string, ValuePtr> cloned;
     for (const auto& pair : dict) {

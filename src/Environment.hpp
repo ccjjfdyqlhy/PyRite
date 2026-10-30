@@ -17,6 +17,20 @@ public:
     ValuePtr get(const std::string& name) const;
     ValuePtr get_type(const std::string& name);
     const std::map<std::string, ValuePtr>& get_values() const { return values; }
+    // Direct pointer to the stored value of `name`, walking the scope
+    // chain. The map is node-based and nothing erases from it, so the
+    // pointer stays valid across later defines and assignments - which
+    // is what lets the VM cache it per call site.
+    const ValuePtr* cell(const std::string& name) {
+        auto it = values.find(name);
+        if (it != values.end()) return &it->second;
+        if (enclosing) return enclosing->cell(name);
+        return nullptr;
+    }
+    // Pointer for writing: creates the entry when missing.
+    ValuePtr* cell_mut(const std::string& name) {
+        return &values[name];
+    }
 private:
     std::shared_ptr<Environment> enclosing;
     std::map<std::string, ValuePtr> values;
@@ -37,7 +51,7 @@ struct Class : public Value {
     bool isEqualTo(const Value& other) const override;
 };
 
-struct Instance : public Value, public std::enable_shared_from_this<Instance> {
+struct Instance : public Value {
 public:
     ClassPtr klass;
     std::shared_ptr<Environment> instance_env;

@@ -15,6 +15,7 @@
 11. [模块系统](#11-模块系统)
 12. [字节码 VM 与序列化](#12-字节码-vm-与序列化)
 13. [算法与数据结构例程](#13-算法与数据结构例程)
+14. [标准库](#14-标准库)
 
 ---
 
@@ -110,6 +111,64 @@ say([1,2,3] as str)   // → "[1, 2, 3]"
 say(nul as ln)        // → []
 say(nul as dim)       // → {}
 ```
+
+#### 文本里放一个值
+
+双引号里的 {名字} 是这个变量的值，脚本运行时才放进去：
+
+```python
+str name = "世界"
+dec count = 3
+say("你好，{name}！")          // → 你好，世界！
+say("你有 {count} 把钥匙。")    // → 你有 3 把钥匙。
+say("{person.first} 到了。")    // → 名字里可以有点
+```
+
+{{ 和 }} 是花括号本身，{ 后面不是名字就只是花括号：
+
+```python
+say("{{name}}")        // → {name}
+say("a { b")           // → a { b
+```
+
+注意：这样的句子是**运行时拼出来的**，不是字面量。
+需要被水印标记的台词请写成字面量。
+
+#### 成员
+
+列表、字符串、字典都有成员，写法是 东西.名字：
+
+```python
+ln xs = [10, 20, 30]
+say(xs.length)            // → 3
+xs.push(40)               // 末尾加一个，返回新的长度
+say(xs.pop())             // → 40，弹出最后一个
+say(xs.join("-"))         // → 10-20-30
+say(xs.slice(1))          // → [20, 30]
+say(xs.indexOf(20))       // → 1
+
+str greeting = "  Hello  "
+say(greeting.length)       // → 9
+say(greeting.trim())       // → Hello
+say(greeting.upper())      // →   HELLO
+say(greeting.lower())      // →   hello
+say("a,b,c".split(","))    // → ["a", "b", "c"]
+say("a-b-c".replace("-", "+"))  // → a+b+c
+say("hello".startsWith("he"))  // → 1
+say("hello".endsWith("lo"))    // → 1
+say("hello".indexOf("ll"))     // → 2
+
+dim d = {"b": 2, "a": 1}
+say(d.keys())              // → ["a", "b"]
+say(d.values())            // → [1, 2]
+say(d.has("a"))            // → 1
+```
+
+字典里同名的一个键比成员优先：d 里有一个叫 keys 的键，
+d.keys 就是那个键。
+
+要一对一对地改列表，用标准库里的 list.map(xs, f)、
+list.filter(xs, f)——两个运行时都这么做。
 
 ### 3. 控制流
 
@@ -407,6 +466,33 @@ say(v)   // 42
 | `halt()` | 退出解释器 |
 | `Exception(payload)` | 创建异常对象 |
 
+字符串与列表的助手（原生运行时与浏览器运行时行为一致）：
+
+| 函数 | 说明 |
+|------|------|
+| `upper(s)` | 大写 |
+| `lower(s)` | 小写 |
+| `trim(s)` | 去掉两头的空白 |
+| `split(s, sep)` | 按分隔符切成 ln |
+| `join(ln, sep)` | 用分隔符把 ln 拼成字符串 |
+| `replace(s, from, to)` | 替换全部出现 |
+| `substring(s, start, end)` | 取子串 |
+| `char(n)` | 码位转字符 |
+| `ord(s)` | 字符转码位 |
+| `range(n)` | 数列（也有 range(start, stop, step)） |
+| `reverse(ln)` | 反转（返回新 ln） |
+| `keys(dim)` | 字典的键 |
+| `values(dim)` | 字典的值 |
+| `has(dim, key)` | 字典里有没有这个键 |
+| `type(x)` | 类型名（null/number/string/list/dict/...） |
+| `is_null/is_number/is_string/is_list/is_dict(x)` | 类型判断 |
+| `is_function(x)` | 是不是函数 |
+
+> 两处已知差异：原生运行时的字典是 map，`keys()`/`values()` 按字典序回答，浏览器按写入顺序；大小写转换在
+> 原生运行时只认 ASCII。
+>
+> 另外 `contains` 是语言的关键字（`ins` 块的那一个），所以同名内建在脚本里调不到。
+
 ### 9. REPL
 
 ```bash
@@ -596,6 +682,88 @@ require "path/to/dir"               // 目录引入（入口 _index.pr）
 ```
 
 `require` 是声明，不是函数调用，可出现在文件的任意位置。
+
+#### 模块在编译时就被放进程序里
+
+编译器在编译时就找到了模块，把它**写进程序本身**。
+所以程序还是一个文件：网页加载它，浏览器跑它，运行时不用读任何文件。
+
+```python
+require "list" as list
+
+say(list.sum([1, 2, 3]))    // → 6
+```
+
+#### 模块在哪里找
+
+按这个顺序找，找到一个就算：
+
+1. 要它的那份文件旁边（故事和它的模块可以放在一起），
+2. `PYRITE_LIB_PATH` 里的目录（多个用冒号隔开），
+3. 编译器旁边的 `lib` 目录，
+4. `~/PyRite/lib`，标准库在这里。
+
+最后才是程序启动时所在的目录。
+
+#### 单文件模块
+
+```python
+// utils/math.pr
+fn add(dec a, dec b) -> a + b
+dec PI = 3.14159
+```
+
+**所有顶层变量自动导出**，不需要额外关键字。
+
+#### 目录模块
+
+```
+utils/
+├── _index.pr      // 入口文件
+├── string.pr
+└── file.pr
+```
+
+目录模块的 `_index.pr` **必须用 `expose` 声明导出项**：
+
+```python
+// utils/_index.pr
+expose fn add(dec a, dec b) -> a + b
+expose dec PI = 3.14159
+
+fn _on_load() do
+  say("utils 模块已加载")
+end
+```
+
+未标 `expose` 的顶层变量不会进入模块字典。
+
+#### expose 关键字
+
+`expose` 是声明修饰符，放在 `fn`/`dec`/`ins`/`struct` 前面：
+
+```python
+expose dec VERSION = "1.0"     // 导出变量
+expose fn helper() -> ...      // 导出函数
+expose ins MyClass(...) ...    // 导出类
+expose struct Point(dec x, dec y)  // 导出结构体
+```
+
+- 单文件模块：所有顶层变量自动导出，`expose` 可选
+- 目录模块的 `_index.pr`：必须用 `expose`
+
+#### _on_load() 钩子
+
+模块里有 `_on_load()` 函数，加载时它会被调用：
+
+```python
+// database.pr
+fn connect() -> ...
+fn _on_load() do
+  say("数据库模块已加载")
+end
+```
+
 
 #### 懒加载
 
@@ -960,3 +1128,101 @@ say(pow(2, 10))  // 1024
 ---
 
 *PyRite v0.31.0 — 持续开发中*
+
+### 14. 标准库
+
+标准库在 `~/PyRite/lib`，用 `require` 取用：
+
+```python
+require "list" as list
+require "flow" as flow
+```
+
+也可以一次取全部：
+
+```python
+require "lib" as std
+
+say(std.list.sum([1, 2, 3]))
+```
+
+库里的代码是语言最普通的那一部分写的：没有类，没有结构体，
+没有 try/catch，没有 await。所以它在哪都能跑。
+
+#### list —— 列表
+
+```python
+list.has(xs, x)            // 里面有没有这个值
+list.index_of(xs, x)       // 在第几个，没有是 -1
+list.count(xs, x)          // 有几个
+list.sum(xs)               // 加起来
+list.first(xs)             // 第一个
+list.last(xs)              // 最后一个
+list.take(xs, n)           // 前 n 个
+list.skip(xs, n)           // 跳过前 n 个
+list.reverse(xs)           // 倒过来
+list.range(n)              // [0, 1, ... n-1]
+list.concat(a, b)          // 接起来
+list.join(xs, sep)         // 用 sep 连起来
+list.map(xs, f)            // 每个都过一遍 f
+list.filter(xs, f)         // 留下 f 说是的那些
+list.fold(xs, f, init)     // 折起来
+```
+
+#### text —— 文本
+
+```python
+text.starts_with(s, p)     // 开头是不是 p
+text.ends_with(s, p)       // 结尾是不是 p
+text.pad(s, width, fill)   // 补到那么宽
+text.repeat(s, n)          // 重复 n 次
+text.lines(s)              // 按行分开
+text.words(s)              // 按词分开
+text.capitalize(s)         // 首字母大写
+```
+
+内置函数里已经有 `upper`、`lower`、`trim`、`split`、`join`、`replace`，
+这些不用再从库里拿。
+
+#### dict —— 字典
+
+```python
+dict.get(d, key, fallback)  // 没有就用 fallback
+dict.merge(a, b)            // 合起来，b 覆盖 a
+dict.sorted_keys(d)         // 键，排好序
+dict.remove(d, key)         // 拿走一个键
+```
+
+#### num —— 数
+
+```python
+num.clamp(n, low, high)     // 夹在中间
+num.sign(n)                // -1、0、1
+num.is_even(n)             // 偶数
+num.is_odd(n)              // 奇数
+num.gcd(a, b)              // 最大公因数
+num.lcm(a, b)              // 最小公倍数
+num.pick(xs, seed)         // 按种子挑一个（同样的种子总是同一个）
+num.shuffle(xs, seed)       // 按种子洗一遍
+```
+
+库里的随机是**能重复的**：同一个种子总是挑到同一个。
+一个故事玩两遍应该玩得一样，一份构建每次都应该长得一样。
+
+#### flow —— 流程
+
+```python
+flow.cursor()              // 一个游标：一个装着一个数的字典
+flow.next(cursor, rows)    // 下一行，走完了是 nul
+flow.first_where(xs, f)    // 第一个符合条件的
+flow.some(xs, f)           // 有没有符合条件的
+flow.every(xs, f)          // 是不是都符合
+flow.each(xs, f)           // 每个都过一遍
+```
+
+游标是一个装着一个数的字典。故事要交出一行的时候，
+手里握着的就应该是这么一个数。
+
+库里的函数**从不把表留在手里**：要表就传进去，用完还给你。
+所以一个故事可以把表放在交出它的那个函数里，不用放到外面。
+

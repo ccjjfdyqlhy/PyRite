@@ -211,7 +211,7 @@ bool find_js_unsupported(const CompiledFunctionPtr& fn, std::string& why) {
             return true;
         }
         ip++;
-        if (OPCODE_HAS_OPERAND[raw]) {
+        for (int k = 0; k < OPCODE_OPERAND_COUNT[raw]; ++k) {
             if (ip + 3 > code.size()) {
                 why = "a truncated operand";
                 return true;
