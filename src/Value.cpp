@@ -1,4 +1,5 @@
 #include "Value.hpp"
+#include "Environment.hpp"
 #include "Ast.hpp"
 #include <iomanip>
 #include <cmath>
@@ -88,15 +89,15 @@ void Value::setSlice(const ValuePtr&, const ValuePtr&, const ValuePtr&, ValuePtr
 
 // NumberValue
 ValuePtr NumberValue::add(const Value& other) const {
-    if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return std::make_shared<NumberValue>(this->value + o->value);
-    if (const BinaryValue* o = dynamic_cast<const BinaryValue*>(&other)) return std::make_shared<NumberValue>(this->value + o->toBigNumber());
-    return std::make_shared<StringValue>(this->toString() + other.toString());
+    if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return make_value<NumberValue>(this->value + o->value);
+    if (const BinaryValue* o = dynamic_cast<const BinaryValue*>(&other)) return make_value<NumberValue>(this->value + o->toBigNumber());
+    return make_value<StringValue>(this->toString() + other.toString());
 }
-ValuePtr NumberValue::subtract(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return std::make_shared<NumberValue>(this->value - o->value); return Value::subtract(other); }
-ValuePtr NumberValue::multiply(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return std::make_shared<NumberValue>(this->value * o->value); return Value::multiply(other); }
-ValuePtr NumberValue::divide(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return std::make_shared<NumberValue>(this->value / o->value); return Value::divide(other); }
-ValuePtr NumberValue::power(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return std::make_shared<NumberValue>(this->value ^ o->value); return Value::power(other); }
-ValuePtr NumberValue::modulo(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return std::make_shared<NumberValue>(this->value % o->value); return Value::modulo(other); }
+ValuePtr NumberValue::subtract(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return make_value<NumberValue>(this->value - o->value); return Value::subtract(other); }
+ValuePtr NumberValue::multiply(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return make_value<NumberValue>(this->value * o->value); return Value::multiply(other); }
+ValuePtr NumberValue::divide(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return make_value<NumberValue>(this->value / o->value); return Value::divide(other); }
+ValuePtr NumberValue::power(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return make_value<NumberValue>(this->value ^ o->value); return Value::power(other); }
+ValuePtr NumberValue::modulo(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return make_value<NumberValue>(this->value % o->value); return Value::modulo(other); }
 bool NumberValue::isEqualTo(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return this->value == o->value; if (const BinaryValue* o = dynamic_cast<const BinaryValue*>(&other)) return this->value == o->toBigNumber(); return false; }
 bool NumberValue::isLessThan(const Value& other) const { if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return this->value < o->value; return Value::isLessThan(other); }
 
@@ -132,8 +133,8 @@ BigNumber BinaryValue::toBigNumber() const {
     return result;
 }
 ValuePtr BinaryValue::add(const Value& other) const {
-    if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return std::make_shared<NumberValue>(this->toBigNumber() + o->value);
-    return std::make_shared<StringValue>(this->toString() + other.toString());
+    if (const NumberValue* o = dynamic_cast<const NumberValue*>(&other)) return make_value<NumberValue>(this->toBigNumber() + o->value);
+    return make_value<StringValue>(this->toString() + other.toString());
 }
 bool BinaryValue::isEqualTo(const Value& other) const {
     if (const BinaryValue* o = dynamic_cast<const BinaryValue*>(&other)) return this->value == o->value;
@@ -142,7 +143,7 @@ bool BinaryValue::isEqualTo(const Value& other) const {
 }
 
 // StringValue
-ValuePtr StringValue::add(const Value& other) const { return std::make_shared<StringValue>(this->value + other.toString()); }
+ValuePtr StringValue::add(const Value& other) const { return make_value<StringValue>(this->value + other.toString()); }
 bool StringValue::isEqualTo(const Value& other) const { if (const StringValue* o = dynamic_cast<const StringValue*>(&other)) return this->value == o->value; return false; }
 bool StringValue::isLessThan(const Value& other) const { if (const StringValue* o = dynamic_cast<const StringValue*>(&other)) return this->value < o->value; return Value::isLessThan(other); }
 ValuePtr StringValue::getSubscript(const Value& index) const {
@@ -153,7 +154,7 @@ ValuePtr StringValue::getSubscript(const Value& index) const {
         if (i < 0 || i >= len) {
             throw std::runtime_error(msg(Msg::LN_IDX_OOB));
         }
-        return std::make_shared<StringValue>(std::string(1, this->value[i]));
+        return make_value<StringValue>(std::string(1, this->value[i]));
     }
     throw std::runtime_error(msg(Msg::LN_IDX_NUM));
 }
@@ -176,7 +177,7 @@ ValuePtr StringValue::getSlice(const ValuePtr& start_val, const ValuePtr& end_va
     } else {
         for (long long i = params.start; i > params.stop; i += params.step) result_str += this->value[i];
     }
-    return std::make_shared<StringValue>(result_str);
+    return make_value<StringValue>(result_str);
 }
 
 // LnValue
@@ -194,7 +195,7 @@ ValuePtr LnValue::add(const Value& other) const {
     if (const LnValue* o = dynamic_cast<const LnValue*>(&other)) {
         auto new_elements = this->elements;
         new_elements.insert(new_elements.end(), o->elements.begin(), o->elements.end());
-        return std::make_shared<LnValue>(new_elements);
+        return make_value<LnValue>(new_elements);
     }
     return Value::add(other);
 }
@@ -207,7 +208,7 @@ ValuePtr LnValue::multiply(const Value& other) const {
             for (long long i = 0; i < times; ++i) {
                 for (const auto& elem : this->elements) new_elements.push_back(elem->clone());
             }
-            return std::make_shared<LnValue>(new_elements);
+            return make_value<LnValue>(new_elements);
         } catch (...) {
             throw std::runtime_error(msg(Msg::LN_REPEAT_INT));
         }
@@ -260,7 +261,7 @@ ValuePtr LnValue::getSlice(const ValuePtr& start_val, const ValuePtr& end_val, c
     } else {
         for (long long i = params.start; i > params.stop; i += params.step) result_elements.push_back(this->elements[i]);
     }
-    return std::make_shared<LnValue>(result_elements);
+    return make_value<LnValue>(result_elements);
 }
 void LnValue::setSlice(const ValuePtr& start_val, const ValuePtr& end_val, const ValuePtr& step_val, ValuePtr value) {
     const LnValue* values_to_assign = dynamic_cast<const LnValue*>(value.get());
@@ -379,17 +380,17 @@ std::vector<ValuePtr> split_text(const std::string& text, const std::string& sep
     std::vector<ValuePtr> parts;
     if (sep.empty()) {
         for (size_t i = 0; i < text.size(); i++)
-            parts.push_back(std::make_shared<StringValue>(text.substr(i, 1)));
+            parts.push_back(make_value<StringValue>(text.substr(i, 1)));
         return parts;
     }
     size_t pos = 0;
     while (true) {
         size_t hit = text.find(sep, pos);
         if (hit == std::string::npos) {
-            parts.push_back(std::make_shared<StringValue>(text.substr(pos)));
+            parts.push_back(make_value<StringValue>(text.substr(pos)));
             break;
         }
-        parts.push_back(std::make_shared<StringValue>(text.substr(pos, hit - pos)));
+        parts.push_back(make_value<StringValue>(text.substr(pos, hit - pos)));
         pos = hit + sep.size();
     }
     return parts;
@@ -432,80 +433,84 @@ std::string text_of(const ValuePtr& value, const char* who) {
 // ---- A string ----
 ValuePtr StringValue::getMember(const std::string& name) const {
     if (name == "length")
-        return std::make_shared<NumberValue>(BigNumber((long long)value.size()));
+        return make_value<NumberValue>(BigNumber((long long)value.size()));
     if (name == "upper")
-        return std::make_shared<NativeFnValue>("upper", [this](const std::vector<ValuePtr>&) {
-            return std::make_shared<StringValue>(upper_text(value));
+        return make_value<NativeFnValue>("upper", [this](const std::vector<ValuePtr>&) {
+            return make_value<StringValue>(upper_text(value));
         });
     if (name == "lower")
-        return std::make_shared<NativeFnValue>("lower", [this](const std::vector<ValuePtr>&) {
-            return std::make_shared<StringValue>(lower_text(value));
+        return make_value<NativeFnValue>("lower", [this](const std::vector<ValuePtr>&) {
+            return make_value<StringValue>(lower_text(value));
         });
     if (name == "trim")
-        return std::make_shared<NativeFnValue>("trim", [this](const std::vector<ValuePtr>&) {
-            return std::make_shared<StringValue>(trim_text(value));
+        return make_value<NativeFnValue>("trim", [this](const std::vector<ValuePtr>&) {
+            return make_value<StringValue>(trim_text(value));
         });
     if (name == "split")
-        return std::make_shared<NativeFnValue>("split", [this](const std::vector<ValuePtr>& args) {
+        return make_value<NativeFnValue>("split", [this](const std::vector<ValuePtr>& args) {
             // A member call passes only the explicit arguments, so the
             // separator arrives at args[0] - the same place it sits for
             // the other string members.
             std::string sep = " ";
             if (!args.empty()) sep = text_of(args[0], "split");
-            return std::make_shared<LnValue>(split_text(value, sep));
+            return make_value<LnValue>(split_text(value, sep));
         });
     if (name == "replace")
-        return std::make_shared<NativeFnValue>("replace", [this](const std::vector<ValuePtr>& args) {
+        return make_value<NativeFnValue>("replace", [this](const std::vector<ValuePtr>& args) {
             std::string from = text_of(args[0], "replace");
             std::string to = args.size() > 1 ? text_of(args[1], "replace") : "";
-            return std::make_shared<StringValue>(replace_text(value, from, to));
+            return make_value<StringValue>(replace_text(value, from, to));
         });
     if (name == "startsWith")
-        return std::make_shared<NativeFnValue>("startsWith", [this](const std::vector<ValuePtr>& args) {
+        return make_value<NativeFnValue>("startsWith", [this](const std::vector<ValuePtr>& args) {
             std::string prefix = text_of(args[0], "startsWith");
-            return std::make_shared<NumberValue>(BigNumber(
+            return make_value<NumberValue>(BigNumber(
                 value.compare(0, prefix.size(), prefix) == 0 ? 1 : 0));
         });
     if (name == "endsWith")
-        return std::make_shared<NativeFnValue>("endsWith", [this](const std::vector<ValuePtr>& args) {
+        return make_value<NativeFnValue>("endsWith", [this](const std::vector<ValuePtr>& args) {
             std::string suffix = text_of(args[0], "endsWith");
-            if (suffix.size() > value.size()) return std::make_shared<NumberValue>(BigNumber(0));
-            return std::make_shared<NumberValue>(BigNumber(
+            if (suffix.size() > value.size()) return make_value<NumberValue>(BigNumber(0));
+            return make_value<NumberValue>(BigNumber(
                 value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0 ? 1 : 0));
         });
     if (name == "indexOf")
-        return std::make_shared<NativeFnValue>("indexOf", [this](const std::vector<ValuePtr>& args) {
+        return make_value<NativeFnValue>("indexOf", [this](const std::vector<ValuePtr>& args) {
             std::string needle = text_of(args[0], "indexOf");
             size_t hit = value.find(needle);
-            return std::make_shared<NumberValue>(BigNumber(
+            return make_value<NumberValue>(BigNumber(
                 hit == std::string::npos ? -1 : (long long)hit));
         });
     return nullptr;
 }
 
+BoundMethodValue::BoundMethodValue(InstancePtr inst, std::shared_ptr<Function> m)
+    : Value(VTag::BoundMethod), instance(inst), method(m) {}
+BoundMethodValue::~BoundMethodValue() = default;
+ValuePtr BoundMethodValue::clone() const { return make_value<BoundMethodValue>(instance, method); }
+
 // ---- A list ----
 ValuePtr LnValue::getMember(const std::string& name) const {
     // The list is shared with the script, so a method that changes it
     // (push, pop) changes the list the script holds.
-    std::shared_ptr<LnValue> self =
-        std::static_pointer_cast<LnValue>(const_cast<LnValue*>(this)->shared_from_this());
+    Ptr<LnValue> self = ptr_static_cast<LnValue>(Value::self());
     if (name == "length")
-        return std::make_shared<NumberValue>(BigNumber((long long)elements.size()));
+        return make_value<NumberValue>(BigNumber((long long)elements.size()));
     if (name == "push" || name == "append")
-        return std::make_shared<NativeFnValue>(name, [self](const std::vector<ValuePtr>& args) -> ValuePtr {
-            if (args.empty()) return std::make_shared<NullValue>();
+        return make_value<NativeFnValue>(name, [self](const std::vector<ValuePtr>& args) -> ValuePtr {
+            if (args.empty()) return make_value<NullValue>();
             self->elements.push_back(args[0]);
-            return std::make_shared<NumberValue>(BigNumber((long long)self->elements.size()));
+            return make_value<NumberValue>(BigNumber((long long)self->elements.size()));
         });
     if (name == "pop")
-        return std::make_shared<NativeFnValue>("pop", [self](const std::vector<ValuePtr>&) -> ValuePtr {
-            if (self->elements.empty()) return std::make_shared<NullValue>();
+        return make_value<NativeFnValue>("pop", [self](const std::vector<ValuePtr>&) -> ValuePtr {
+            if (self->elements.empty()) return make_value<NullValue>();
             ValuePtr last = self->elements.back();
             self->elements.pop_back();
             return last;
         });
     if (name == "join")
-        return std::make_shared<NativeFnValue>("join", [self](const std::vector<ValuePtr>& args) {
+        return make_value<NativeFnValue>("join", [self](const std::vector<ValuePtr>& args) {
             std::string sep = ",";
             if (!args.empty()) sep = text_of(args[0], "join");
             std::string out;
@@ -513,10 +518,10 @@ ValuePtr LnValue::getMember(const std::string& name) const {
                 if (i > 0) out += sep;
                 out += self->elements[i]->toString();
             }
-            return std::make_shared<StringValue>(out);
+            return make_value<StringValue>(out);
         });
     if (name == "slice")
-        return std::make_shared<NativeFnValue>("slice", [self](const std::vector<ValuePtr>& args) {
+        return make_value<NativeFnValue>("slice", [self](const std::vector<ValuePtr>& args) {
             long long count = (long long)self->elements.size();
             long long start = args.size() > 0 ? number_of(args[0], "slice") : 0;
             long long stop = args.size() > 1 ? number_of(args[1], "slice") : count;
@@ -528,16 +533,16 @@ ValuePtr LnValue::getMember(const std::string& name) const {
             std::vector<ValuePtr> out;
             for (long long i = start; i < stop; i++)
                 out.push_back(self->elements[(size_t)i]);
-            return std::make_shared<LnValue>(out);
+            return make_value<LnValue>(out);
         });
     if (name == "indexOf")
-        return std::make_shared<NativeFnValue>("indexOf", [self](const std::vector<ValuePtr>& args) -> ValuePtr {
-            if (args.empty()) return std::make_shared<NumberValue>(BigNumber(-1));
+        return make_value<NativeFnValue>("indexOf", [self](const std::vector<ValuePtr>& args) -> ValuePtr {
+            if (args.empty()) return make_value<NumberValue>(BigNumber(-1));
             for (size_t i = 0; i < self->elements.size(); i++) {
                 if (self->elements[i]->isEqualTo(*args[0]))
-                    return std::make_shared<NumberValue>(BigNumber((long long)i));
+                    return make_value<NumberValue>(BigNumber((long long)i));
             }
-            return std::make_shared<NumberValue>(BigNumber(-1));
+            return make_value<NumberValue>(BigNumber(-1));
         });
     return nullptr;
 }
@@ -545,22 +550,22 @@ ValuePtr LnValue::getMember(const std::string& name) const {
 // ---- A dictionary ----
 ValuePtr DimValue::getMember(const std::string& name) const {
     if (name == "keys")
-        return std::make_shared<NativeFnValue>("keys", [this](const std::vector<ValuePtr>&) {
+        return make_value<NativeFnValue>("keys", [this](const std::vector<ValuePtr>&) {
             std::vector<ValuePtr> out;
-            for (const auto& pair : dict) out.push_back(std::make_shared<StringValue>(pair.first));
-            return std::make_shared<LnValue>(out);
+            for (const auto& pair : dict) out.push_back(make_value<StringValue>(pair.first));
+            return make_value<LnValue>(out);
         });
     if (name == "values")
-        return std::make_shared<NativeFnValue>("values", [this](const std::vector<ValuePtr>&) {
+        return make_value<NativeFnValue>("values", [this](const std::vector<ValuePtr>&) {
             std::vector<ValuePtr> out;
             for (const auto& pair : dict) out.push_back(pair.second);
-            return std::make_shared<LnValue>(out);
+            return make_value<LnValue>(out);
         });
     if (name == "has")
-        return std::make_shared<NativeFnValue>("has", [this](const std::vector<ValuePtr>& args) {
-            if (args.empty()) return std::make_shared<NumberValue>(BigNumber(0));
+        return make_value<NativeFnValue>("has", [this](const std::vector<ValuePtr>& args) {
+            if (args.empty()) return make_value<NumberValue>(BigNumber(0));
             std::string key = text_of(args[0], "has");
-            return std::make_shared<NumberValue>(BigNumber(
+            return make_value<NumberValue>(BigNumber(
                 dict.count(key) ? 1 : 0));
         });
     return nullptr;
@@ -571,7 +576,7 @@ ValuePtr DimValue::clone() const {
     for (const auto& pair : dict) {
         cloned[pair.first] = pair.second->clone();
     }
-    return std::make_shared<DimValue>(cloned);
+    return make_value<DimValue>(cloned);
 }
 ValuePtr DimValue::getSubscript(const Value& index) const {
     if (const StringValue* s = dynamic_cast<const StringValue*>(&index)) {

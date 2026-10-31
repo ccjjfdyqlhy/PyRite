@@ -193,23 +193,23 @@ ValuePtr read_value(BinReader& r) {
     ValueTag tag = static_cast<ValueTag>(r.u8());
     switch (tag) {
         case ValueTag::NULL_VAL:
-            return std::make_shared<NullValue>();
+            return make_value<NullValue>();
         case ValueTag::NUMBER:
-            return std::make_shared<NumberValue>(BigNumber(r.string()));
+            return make_value<NumberValue>(BigNumber(r.string()));
         case ValueTag::STRING:
-            return std::make_shared<StringValue>(r.string());
+            return make_value<StringValue>(r.string());
         case ValueTag::BINARY: {
             uint32_t len = r.u32();
             std::vector<uint8_t> data(len);
             if (len > 0) r.raw(reinterpret_cast<char*>(data.data()), len);
-            return std::make_shared<BinaryValue>(data);
+            return make_value<BinaryValue>(data);
         }
         case ValueTag::LN: {
             uint32_t n = r.u32();
             std::vector<ValuePtr> elems;
             elems.reserve(n);
             for (uint32_t i = 0; i < n; ++i) elems.push_back(read_value(r));
-            return std::make_shared<LnValue>(elems);
+            return make_value<LnValue>(elems);
         }
         case ValueTag::DIM: {
             uint32_t n = r.u32();
@@ -218,7 +218,7 @@ ValuePtr read_value(BinReader& r) {
                 std::string key = r.string();
                 dict[key] = read_value(r);
             }
-            return std::make_shared<DimValue>(dict);
+            return make_value<DimValue>(dict);
         }
     }
     return nullptr;

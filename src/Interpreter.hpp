@@ -44,6 +44,14 @@ public:
     // that asks for it, then the library paths.
     std::string script_dir_;
     void interpret(const std::vector<AstNodePtr>& statements);
+    // Set by interpret() when a script error reached the top level; the
+    // shell runner turns it into a non-zero exit code.
+    bool had_error = false;
+    // Call depth of interpreted functions (both direct and from the VM's
+    // AST bridge), so runaway recursion fails with a catchable error
+    // instead of exhausting the C++ stack.
+    int call_depth = 0;
+    static constexpr int MAX_CALL_DEPTH = 1000;
     void execute(const AstNodePtr& stmt);
     ValuePtr evaluate(const AstNodePtr& expr);
     void execute_block(const std::vector<AstNodePtr>& statements, std::shared_ptr<Environment> block_env);

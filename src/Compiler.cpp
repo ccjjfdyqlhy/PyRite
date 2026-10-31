@@ -62,7 +62,7 @@ uint32_t Compiler::add_constant(ValuePtr value) {
 }
 
 uint32_t Compiler::add_string_constant(const std::string& s) {
-    return add_constant(std::make_shared<StringValue>(s));
+    return add_constant(make_value<StringValue>(s));
 }
 
 // Like add_constant, but never shares the entry with anything else. Used for
@@ -275,6 +275,7 @@ void Compiler::compile_statement(const AstNodePtr& node) {
     if (auto n = dynamic_cast<TryCatchNode*>(node.get())) { compile_try_catch(n); return; }
     if (auto n = dynamic_cast<ExpressionStatementNode*>(node.get())) { compile_expression_statement(n); return; }
     if (auto n = dynamic_cast<RequireNode*>(node.get())) { compile_require(n); return; }
+    if (auto n = dynamic_cast<StructDefNode*>(node.get())) { compile_struct_def(node, n); return; }
     // Complex statements -> OP_EVAL_AST
     emit_op_operand(OpCode::OP_EVAL_AST, add_ast_node(node));
     emit_op(OpCode::OP_POP);
@@ -331,6 +332,12 @@ void Compiler::compile_var_declaration(VarDeclarationNode* n) {
     // meaning of every already-compiled .prc file.
     uint32_t cast_code = static_cast<uint32_t>(CastType::CAST_ANY);
     cast_code_for(n->keyword.type, cast_code);
+    // A declaration is stricter than an `as` cast: dec/bin accept only
+    // what really converts (null becomes zero), everything else fails.
+    if (cast_code == static_cast<uint32_t>(CastType::CAST_DEC))
+        cast_code = static_cast<uint32_t>(CastType::CAST_DEC_DECL);
+    else if (cast_code == static_cast<uint32_t>(CastType::CAST_BIN))
+        cast_code = static_cast<uint32_t>(CastType::CAST_BIN_DECL);
     emit_op_operand(OpCode::OP_CAST, cast_code);
     // At script scope, define as global; otherwise as local.
     if (func_stack.size() == 1) {
@@ -380,12 +387,14 @@ void Compiler::compile_while(WhileStatementNode* n) {
 
     std::vector<size_t> breaks, continues;
     current->loop_starts.push_back(loop_start);
+    current->loop_entry_try_depths.push_back(current->try_depth);
     current->break_patches_ptr = &breaks;
     current->continue_patches_ptr = &continues;
 
     compile_block(n->do_branch);
 
     current->loop_starts.pop_back();
+    current->loop_entry_try_depths.pop_back();
     current->break_patches_ptr = nullptr;
     current->continue_patches_ptr = nullptr;
 
@@ -439,12 +448,14 @@ void Compiler::compile_loop_for(LoopForNode* n) {
 
     std::vector<size_t> breaks, continues;
     current->loop_starts.push_back(loop_start);
+    current->loop_entry_try_depths.push_back(current->try_depth);
     current->break_patches_ptr = &breaks;
     current->continue_patches_ptr = &continues;
 
     compile_block(n->body);
 
     current->loop_starts.pop_back();
+    current->loop_entry_try_depths.pop_back();
     current->break_patches_ptr = nullptr;
     current->continue_patches_ptr = nullptr;
 
@@ -500,12 +511,14 @@ void Compiler::compile_for_in(ForInNode* n) {
 
     std::vector<size_t> breaks, continues;
     current->loop_starts.push_back(loop_start);
+    current->loop_entry_try_depths.push_back(current->try_depth);
     current->break_patches_ptr = &breaks;
     current->continue_patches_ptr = &continues;
 
     compile_block(n->body);
 
     current->loop_starts.pop_back();
+    current->loop_entry_try_depths.pop_back();
     current->break_patches_ptr = nullptr;
     current->continue_patches_ptr = nullptr;
 
@@ -545,6 +558,7 @@ void Compiler::compile_loop_until(LoopUntilNode* n) {
 
     std::vector<size_t> breaks, continues;
     current->loop_starts.push_back(loop_start);
+    current->loop_entry_try_depths.push_back(current->try_depth);
     current->break_patches_ptr = &breaks;
     current->continue_patches_ptr = &continues;
 
@@ -559,6 +573,7 @@ void Compiler::compile_loop_until(LoopUntilNode* n) {
     compile_block(n->body);
 
     current->loop_starts.pop_back();
+    current->loop_entry_try_depths.pop_back();
     current->break_patches_ptr = nullptr;
     current->continue_patches_ptr = nullptr;
 
@@ -582,6 +597,12 @@ void Compiler::compile_break(BreakNode* n) {
         error("'break' used outside of a loop");
         return;
     }
+    // Leaving the loop also leaves its nested try blocks: pop their
+    // handlers on the way out or the jump will strand them.
+    while (current->try_depth > current->loop_entry_try_depths.back()) {
+        emit_op(OpCode::OP_TRY_END);
+        current->try_depth--;
+    }
     current->break_patches_ptr->push_back(emit_jump(OpCode::OP_JUMP));
 }
 
@@ -589,6 +610,10 @@ void Compiler::compile_continue(ContinueNode* n) {
     if (!current->continue_patches_ptr) {
         error("'continue' used outside of a loop");
         return;
+    }
+    while (current->try_depth > current->loop_entry_try_depths.back()) {
+        emit_op(OpCode::OP_TRY_END);
+        current->try_depth--;
     }
     current->continue_patches_ptr->push_back(emit_jump(OpCode::OP_JUMP));
 }
@@ -619,6 +644,51 @@ void Compiler::compile_inp(InpNode* n) {
     emit_op(OpCode::OP_INPUT);
 }
 
+// A struct travels as a descriptor constant: { name, fields: [ { name,
+// type (a stable cast code), default, has_default } ] }.  OP_DEF_STRUCT
+// turns it back into a Class at runtime, so struct declarations are plain
+// bytecode - no AST fallback - and survive the .prc / JSON pipelines.
+void Compiler::compile_struct_def(const AstNodePtr& node, StructDefNode* n) {
+    // A descriptor constant can carry literal defaults only. A struct
+    // with an expression default keeps the AST fallback so the
+    // expression still evaluates per instantiation.
+    for (const auto& f : n->fields) {
+        if (f.default_expr) {
+            // Exactly the generic statement fallback: the AST evaluator
+            // runs the definition and registers the class; nothing extra
+            // goes on the stack.
+            emit_op_operand(OpCode::OP_EVAL_AST, add_ast_node(node));
+            emit_op(OpCode::OP_POP);
+            return;
+        }
+    }
+    auto desc = make_value<DimValue>();
+    desc->dict["name"] = make_value<StringValue>(n->name);
+    auto fields = make_value<LnValue>(std::vector<ValuePtr>{});
+    for (const auto& f : n->fields) {
+        auto fd = make_value<DimValue>();
+        fd->dict["name"] = make_value<StringValue>(f.name);
+        uint32_t code = static_cast<uint32_t>(CastType::CAST_ANY);
+        cast_code_for(f.type_keyword, code);
+        fd->dict["type"] = make_value<NumberValue>(BigNumber((long long)code));
+        fd->dict["default"] = f.default_value ? f.default_value : make_value<NullValue>();
+        fd->dict["has_default"] = make_value<NumberValue>(f.default_value ? 1 : 0);
+        fields->elements.push_back(fd);
+    }
+    desc->dict["fields"] = fields;
+    uint32_t desc_idx = add_constant(desc);
+    emit_op_operand(OpCode::OP_DEF_STRUCT, desc_idx);
+    // The Class lands on the stack; bind the name like a fn definition.
+    if (func_stack.size() == 1) {
+        uint32_t name_idx = add_string_constant(n->name);
+        emit_op_operand(OpCode::OP_DEFINE_GLOBAL, name_idx);
+    } else {
+        declare_local(n->name);
+        int slot = resolve_local(n->name);
+        emit_op_operand(OpCode::OP_SET_LOCAL, static_cast<uint32_t>(slot));
+    }
+}
+
 void Compiler::compile_fn_def(FnDefNode* n) {
     // Declare the local BEFORE compiling the body so that recursive calls
     // inside the body can resolve the name as an upvalue.
@@ -637,6 +707,12 @@ void Compiler::compile_fn_def(FnDefNode* n) {
 }
 
 void Compiler::compile_return(ReturnNode* n) {
+    // Returning leaves every try block of this function: unwind their
+    // handlers here, or the VM keeps stale handlers after the jump.
+    while (current->try_depth > 0) {
+        emit_op(OpCode::OP_TRY_END);
+        current->try_depth--;
+    }
     if (n->value) {
         // A wholesale-returned literal is display data: the host shows it to
         // the player (a lyric table, a staged dialogue sequence). Its string
@@ -682,9 +758,11 @@ void Compiler::compile_try_catch(TryCatchNode* n) {
     emit_byte(0); emit_byte(0); emit_byte(0);  // placeholder
 
     // Compile try body.
+    current->try_depth++;
     for (const auto& stmt : n->try_branch) {
         compile_statement(stmt);
     }
+    current->try_depth--;
 
     // Try completed without exception: pop handler and jump past catch.
     emit_op(OpCode::OP_TRY_END);
@@ -728,6 +806,14 @@ void Compiler::compile_try_catch(TryCatchNode* n) {
 }
 
 void Compiler::compile_expression_statement(ExpressionStatementNode* n) {
+    // `s = s + i * 3;` as a statement: the fused in-place form leaves the
+    // assigned value on the stack only to have it popped here. When the
+    // statement IS a fused assignment, run the no-push variant instead.
+    if (auto asg = dynamic_cast<AssignmentNode*>(n->expression.get())) {
+        if (auto var = dynamic_cast<VariableNode*>(asg->target.get())) {
+            if (try_compile_inplace_np(var->name, asg->value.get())) return;
+        }
+    }
     compile_expression(n->expression);
     emit_op(OpCode::OP_POP);
 }
@@ -849,7 +935,7 @@ void Compiler::compile_module(const std::string& resolved, bool is_dir_module,
     // The exports: a dictionary the alias points at.
     //     dim __exports = {}
     //     __exports["name"] = name
-    uint32_t dict_idx = add_constant(std::make_shared<DimValue>());
+    uint32_t dict_idx = add_constant(make_value<DimValue>());
     emit_op_operand(OpCode::OP_CONSTANT, dict_idx);
     emit_op_operand(OpCode::OP_CAST, static_cast<uint32_t>(CastType::CAST_DIM));
     declare_local("__exports");
@@ -859,7 +945,7 @@ void Compiler::compile_module(const std::string& resolved, bool is_dir_module,
     for (const auto& name : exports) {
         emit_op_operand(OpCode::OP_GET_LOCAL,
                         static_cast<uint32_t>(exports_slot));
-        uint32_t key_idx = add_constant(std::make_shared<StringValue>(name));
+        uint32_t key_idx = add_constant(make_value<StringValue>(name));
         emit_op_operand(OpCode::OP_CONSTANT, key_idx);
         load_variable(name, current_line);
         emit_op(OpCode::OP_SET_INDEX);
@@ -899,13 +985,13 @@ void Compiler::compile_module(const std::string& resolved, bool is_dir_module,
 // ============================================================================
 void Compiler::compile_literal(LiteralNode* n) {
     if (!n->value) { emit_op(OpCode::OP_NULL); return; }
-    if (auto num = std::dynamic_pointer_cast<NumberValue>(n->value)) {
+    if (auto num = ptr_cast<NumberValue>(n->value)) {
         if (num->value == BigNumber(0)) { emit_op(OpCode::OP_FALSE); return; }
         if (num->value == BigNumber(1)) { emit_op(OpCode::OP_TRUE); return; }
     }
-    if (std::dynamic_pointer_cast<NullValue>(n->value)) { emit_op(OpCode::OP_NULL); return; }
+    if (ptr_cast<NullValue>(n->value)) { emit_op(OpCode::OP_NULL); return; }
     if (display_literal_depth_ > 0 &&
-        std::dynamic_pointer_cast<StringValue>(n->value)) {
+        ptr_cast<StringValue>(n->value)) {
         uint32_t idx = add_display_constant(n->value);
         current->func->display_constants.push_back(static_cast<int>(idx));
         emit_op_operand(OpCode::OP_CONSTANT, idx);
@@ -927,7 +1013,7 @@ int32_t Compiler::table_constant(ListLiteralNode* n) {
     for (const auto& el : n->elements) {
         int64_t slot = -1;
         if (auto lit = std::dynamic_pointer_cast<LiteralNode>(el)) {
-            if (std::dynamic_pointer_cast<StringValue>(lit->value)) {
+            if (ptr_cast<StringValue>(lit->value)) {
                 // A string in a table is a line the player reads: it gets
                 // its own constant and the packaging step can watermark
                 // it.
@@ -945,11 +1031,11 @@ int32_t Compiler::table_constant(ListLiteralNode* n) {
             // Not a literal: the list is built the old way.
             return -1;
         }
-        index_values.push_back(std::make_shared<NumberValue>(BigNumber(slot)));
+        index_values.push_back(make_value<NumberValue>(BigNumber(slot)));
     }
     std::map<std::string, ValuePtr> descriptor;
-    descriptor[table_key()] = std::make_shared<LnValue>(index_values);
-    return static_cast<int32_t>(add_constant(std::make_shared<DimValue>(descriptor)));
+    descriptor[table_key()] = make_value<LnValue>(index_values);
+    return static_cast<int32_t>(add_constant(make_value<DimValue>(descriptor)));
 }
 
 void Compiler::compile_list_literal(ListLiteralNode* n) {
@@ -1076,7 +1162,7 @@ bool Compiler::encode_value_side(AstNode* node, bool allow_inline, uint32_t& out
     }
     if (allow_inline) {
         if (auto lit = dynamic_cast<LiteralNode*>(node)) {
-            if (auto num = std::dynamic_pointer_cast<NumberValue>(lit->value)) {
+            if (auto num = ptr_cast<NumberValue>(lit->value)) {
                 long long v = 0;
                 if (num->value.is_int_fast(v) && v >= 0 && v <= 511) {
                     out = (3 << 9) | static_cast<uint32_t>(v);
@@ -1093,6 +1179,7 @@ bool Compiler::encode_value_side(AstNode* node, bool allow_inline, uint32_t& out
 }
 
 int Compiler::try_compile_cmp_jump(AstNode* condition) {
+    if (!allow_fusion) return -1;
     auto bin = dynamic_cast<BinaryOpNode*>(condition);
     if (!bin) return -1;
     uint32_t cmp;
@@ -1124,21 +1211,31 @@ int Compiler::try_compile_cmp_jump(AstNode* condition) {
 }
 
 bool Compiler::try_compile_inplace(const std::string& name, AstNode* value, int line) {
+    return try_compile_inplace_common(name, value, line, false);
+}
+
+bool Compiler::try_compile_inplace_np(const std::string& name, AstNode* value) {
+    return try_compile_inplace_common(name, value, 0, true);
+}
+
+bool Compiler::try_compile_inplace_common(const std::string& name, AstNode* value, int line, bool no_push) {
     (void)line;
+    if (!allow_fusion) return false;
     uint32_t dst;
     int slot = resolve_local(name);
-    if (slot >= 0 && slot <= 2047) {
+    if (slot >= 0 && slot <= 1023) {
         dst = INPLACE_DST_SHIFT <= 22 ? (static_cast<uint32_t>(slot) << INPLACE_DST_SHIFT) : 0;
     } else if (slot < 0) {
         if (resolve_upvalue(current, name) != -1) return false;   // closure variable: plain path
         // Globals take the fused path too - that is what script-scope
         // variables actually are.
         uint32_t idx = add_string_constant(name);
-        if (idx > 2047) return false;
+        if (idx > 1023) return false;
         dst = INPLACE_GLOBAL_MASK | (idx << INPLACE_DST_SHIFT);
     } else {
         return false;
     }
+    if (no_push) dst |= 1u << 22;   // no-push variant marker (bit 22; dst is bits 21-12)
     auto bin = dynamic_cast<BinaryOpNode*>(value);
     if (!bin) return false;
     OpCode op;
@@ -1157,7 +1254,7 @@ bool Compiler::try_compile_inplace(const std::string& name, AstNode* value, int 
         if (rslot < 0 || rslot > INPLACE_PAY_MASK) return false;   // global/upvalue rhs: plain path
         kind = INPLACE_KIND_LOCAL; pay = static_cast<uint32_t>(rslot);
     } else if (auto lit = dynamic_cast<LiteralNode*>(bin->right.get())) {
-        if (auto num = std::dynamic_pointer_cast<NumberValue>(lit->value)) {
+        if (auto num = ptr_cast<NumberValue>(lit->value)) {
             long long v = 0;
             if (num->value.is_int_fast(v) && v >= 0 && v <= INPLACE_PAY_MASK) {
                 kind = INPLACE_KIND_INLINE; pay = static_cast<uint32_t>(v);
@@ -1167,7 +1264,7 @@ bool Compiler::try_compile_inplace(const std::string& name, AstNode* value, int 
                 if (idx > INPLACE_PAY_MASK) return false;
                 kind = INPLACE_KIND_CONST; pay = idx;
             }
-        } else if (std::dynamic_pointer_cast<StringValue>(lit->value)) {
+        } else if (ptr_cast<StringValue>(lit->value)) {
             uint32_t idx = add_constant(lit->value);
             if (idx > INPLACE_PAY_MASK) return false;
             kind = INPLACE_KIND_CONST; pay = idx;
@@ -1185,7 +1282,7 @@ bool Compiler::try_compile_inplace(const std::string& name, AstNode* value, int 
             rv = rr; rlit = dynamic_cast<LiteralNode*>(rbin->left.get());
         }
         if (!rv || !rlit) return false;
-        auto rnum = std::dynamic_pointer_cast<NumberValue>(rlit->value);
+        auto rnum = ptr_cast<NumberValue>(rlit->value);
         if (!rnum) return false;
         long long k = 0;
         if (op == OpCode::OP_INPLACE_ADD && rnum->value.is_int_fast(k) && k >= 0 && k <= 4095) {
@@ -1262,6 +1359,26 @@ void Compiler::compile_lambda(LambdaNode* n) {
 }
 
 void Compiler::compile_call(CallNode* n) {
+    // obj.member(args) fuses into one instruction: the VM resolves the
+    // member and calls it without materializing the bound function value.
+    if (allow_fusion) {
+    if (auto get = dynamic_cast<GetNode*>(n->callee.get())) {
+        compile_expression(get->object);
+        for (const auto& arg : n->arguments) {
+            compile_expression(arg);
+        }
+        uint32_t name_idx = add_string_constant(get->name);
+        emit_op(OpCode::OP_CALL_MEMBER);
+        auto raw24 = [this](uint32_t v) {
+            emit_byte(static_cast<uint8_t>((v >> 16) & 0xFF));
+            emit_byte(static_cast<uint8_t>((v >> 8) & 0xFF));
+            emit_byte(static_cast<uint8_t>(v & 0xFF));
+        };
+        raw24(name_idx);
+        raw24(static_cast<uint32_t>(n->arguments.size()));
+        return;
+    }
+    }
     compile_expression(n->callee);
     for (const auto& arg : n->arguments) {
         compile_expression(arg);

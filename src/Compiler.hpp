@@ -23,16 +23,23 @@
 //     upvalues described by the CompiledFunction's upvalue descriptors.
 //
 // Hybrid execution:
-//   AST node types that are too complex to bytecode-compile cleanly
-//   (TryCatchNode, ClassDefNode, StructDefNode, RequireNode, UsingNode,
-//    AwaitStatementNode, RaiseNode, SwapNode) are emitted as OP_EVAL_AST,
-//   which delegates to the AST interpreter at runtime. This keeps the VM
-//   implementation tractable while still delivering bytecode speed for the
-//   hot paths (arithmetic, loops, function calls).
+//   Nearly everything compiles to bytecode, including try/catch
+//   (OP_TRY_BEGIN/END/CATCH), raise (OP_RAISE), for-in, struct
+//   declarations (OP_DEF_STRUCT) and inlined require modules. The few
+//   remaining constructs (ins classes, using, await, and structs whose
+//   field defaults are expressions) are emitted as OP_EVAL_AST, which
+//   delegates to the AST interpreter at runtime. This keeps the VM
+//   implementation tractable while still delivering bytecode speed for
+//   the hot paths (arithmetic, loops, function calls).
 // ============================================================================
 
 class Compiler {
 public:
+    // Fused superinstructions (OP_INPLACE_*, OP_CMP_JUMP, OP_INPLACE_AM)
+    // have no JavaScript implementation yet; the JSON exporter recompiles
+    // with this off so those programs still export.
+    bool allow_fusion = true;
+
     Compiler();
     // The source path matters: a require is resolved relative to the file
     // that asks for it, so the compiler has to know where that file is.
@@ -59,13 +66,21 @@ private:
         std::vector<size_t> loop_starts;
         std::vector<size_t>* break_patches_ptr;
         std::vector<size_t>* continue_patches_ptr;
-        FuncState() : scope_depth(0), break_patches_ptr(nullptr), continue_patches_ptr(nullptr) {}
+        // Try handlers alive at this point of the function, so break /
+        // continue / return know how many OP_TRY_END to emit on their way
+        // out (a jump would otherwise skip them and leave stale handlers).
+        int try_depth;
+        // Try depth recorded when each enclosing loop started; a break or
+        // continue only pops the handlers nested inside its own loop.
+        std::vector<int> loop_entry_try_depths;
+        FuncState() : scope_depth(0), break_patches_ptr(nullptr), continue_patches_ptr(nullptr), try_depth(0) {}
     };
 
     std::vector<FuncState> func_stack;
     FuncState* current;
     BytecodeChunkPtr chunk_root;
     bool had_error;
+
     std::string error_msg;
     int current_line;  // tracks the source line for bytecode line info
 
@@ -147,6 +162,7 @@ private:
     void compile_say(SayNode* n);
     void compile_inp(InpNode* n);
     void compile_fn_def(FnDefNode* n);
+    void compile_struct_def(const AstNodePtr& node, StructDefNode* n);
     void compile_return(ReturnNode* n);
     void compile_raise(RaiseNode* n);
     void compile_try_catch(TryCatchNode* n);
@@ -165,6 +181,10 @@ private:
     // Fuses `name = name <op> rhs` into one OP_INPLACE_* when name is a
     // local and rhs is a variable, a small literal, or a local*literal.
     bool try_compile_inplace(const std::string& name, AstNode* value, int line);
+    // Same fusion, but the result stays off the stack: statement-level
+    // assignments whose value nobody reads.
+    bool try_compile_inplace_np(const std::string& name, AstNode* value);
+    bool try_compile_inplace_common(const std::string& name, AstNode* value, int line, bool no_push);
     // Fuses `while lhs <op> rhs` into OP_CMP_JUMP; emits the jump with a
     // placeholder target and returns the patch location, or -1 when the
     // condition does not fit the pattern.

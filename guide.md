@@ -264,8 +264,7 @@ end
 ```python
 fn add(dec a, dec b) do
   return a + b
-endfn         // 也用 end
-end
+endfn         // 也可以只写 end
 ```
 
 #### 简写 fn->
@@ -413,7 +412,7 @@ end
 try
   check(15)
 catch msg
-  say("拒绝: " + msg)
+  say("拒绝: " + (msg as str))
 end
 ```
 
@@ -774,64 +773,26 @@ require "utils/math" as m    // 不加载任何文件
 say(m.add(1, 2))             // 此时才读取、解析、执行 utils/math.pr
 ```
 
-#### 单文件模块
 
-```python
-// utils/math.pr
-fn add(dec a, dec b) -> a + b
-dec PI = 3.14159
-```
 
-**所有顶层变量自动导出**，不需要额外关键字。
+#### 语义规范（已固化行为）
 
-#### 目录模块
+以下是已实现且在两种执行模式（原生解释器与 `--vm` 字节码）下一致的行为约定：
 
-```
-utils/
-├── _index.pr      // 入口文件
-├── string.pr
-└── file.pr
-```
+| 主题 | 规范 |
+|------|------|
+| 裸 `return` | 返回 `nul`（`return` 与 `return nul` 等价） |
+| `as` 转换失败 | 抛**可捕获**的 RuntimeError，例如字符串转数字失败时可用 try/catch 接住 |
+| `catch err` 的值 | `raise` 的字符串载荷、Exception 对象与内部 RuntimeError 都会进 catch 变量；统一用 `(err as str)` 转成字符串再拼接 |
+| `break` 层级 | 跳出**最内层**循环；跨过 try 边界时会正确清理异常处理器 |
+| for-in | 支持 list 与 string（逐字符）；dict 与其他类型报错，消息在两种模式一致 |
+| 迭代中修改集合 | 未定义行为：for-in 每轮重新读取长度，增删元素可能跳过或重复元素，请勿这样做 |
+| 转义字符 | 字符串支持 `\n`、`\t`、`\\"`、`\\` 等标准转义 |
+| 声明类型 | `dec`/`bin` 声明严格要求可转换的值（list/dict 直接报错，null 归零）；`dec` 是默认类型，可持有函数、闭包与实例 |
+| struct 字段默认值 | 字面量默认值编译进字节码；表达式默认值（如 `1 + 2`）在 `new()` 时求值；两者都缺的字段初始为 `nul`（教程的"先 new 后赋值"写法是合法的） |
+| 递归深度 | 两种模式上限均为 1000 层调用，超限抛可捕获的 RuntimeError（不会段错误） |
+| 退出码 | 未捕获异常 / 运行时错误统一以非零退出码结束（原生与 `--vm` 一致） |
 
-目录模块的 `_index.pr` **必须用 `expose` 声明导出项**：
-
-```python
-// utils/_index.pr
-expose fn add(dec a, dec b) -> a + b
-expose dec PI = 3.14159
-
-fn _on_load() do
-  say("utils 模块已加载")
-end
-```
-
-未标 `expose` 的顶层变量不会进入模块字典。
-
-#### expose 关键字
-
-`expose` 是声明修饰符，放在 `fn`/`dec`/`ins`/`struct` 前面：
-
-```python
-expose dec VERSION = "1.0"     // 导出变量
-expose fn helper() -> ...      // 导出函数
-expose ins MyClass(...) ...    // 导出类
-expose struct Point(dec x, dec y)  // 导出结构体
-```
-
-- 单文件模块：所有顶层变量自动导出，`expose` 可选
-- 目录模块的 `_index.pr`：必须用 `expose`
-
-#### _on_load() 钩子
-
-模块加载后，如果定义了 `_on_load()` 函数，会自动调用：
-
-```python
-// database.pr
-fn connect() -> ...
-fn _on_load() do
-  say("数据库模块已加载")
-end
-```
 
 #### 完整示例
 
@@ -897,7 +858,7 @@ PyRite v0.31.0 引入了混合执行引擎：AST 解释器（默认）和字节�
 
 #### 混合执行机制
 
-编译器为简单操作（算术、局部变量、控制流）发射纯字节码，为复杂特性（类、try-catch、模块、await、raise、using、require）发射 `OP_EVAL_AST` 指令。VM 遇到该指令时将其局部变量桥接到临时 Environment，委托 AST 解释器执行单个节点。
+编译器为绝大多数语言构造发射纯字节码：算术、局部/全局变量、控制流、函数与闭包调用、try-catch（原生 `OP_TRY_BEGIN/END/CATCH`）、raise（原生 `OP_RAISE`）、for-in、loop 计次、struct 声明（`OP_DEF_STRUCT`）、require（内联编译为 `__module_*` 函数）。只有少数仍依赖运行期求值的构造——带表达式默认值的 struct、`using`、`await`、类（ins）——发射 `OP_EVAL_AST`，VM 遇到该指令时将其局部变量桥接到临时 Environment，委托 AST 解释器执行单个节点。
 
 #### 实现架构
 

@@ -16,7 +16,69 @@ struct Class;
 struct Instance;
 class Environment;
 
-using ValuePtr = std::shared_ptr<class Value>;
+// A reference-counted pointer with a plain (non-atomic) counter on the
+// pointee. The runtime is single-threaded, and profiling showed the
+// atomic increment/decrement of std::shared_ptr dominating the hot
+// interpreter paths; here a count change is a single add instruction.
+template <typename T>
+class Ptr {
+public:
+    Ptr() : p_(nullptr) {}
+    Ptr(T* p) : p_(p) { inc(); }
+    Ptr(const Ptr& o) : p_(o.p_) { inc(); }
+    Ptr(Ptr&& o) noexcept : p_(o.p_) { o.p_ = nullptr; }
+    // Upcast: a derived value pointer converts to its base type.
+    template <typename U>
+    Ptr(const Ptr<U>& o, typename std::enable_if<std::is_convertible<U*, T*>::value, int>::type = 0) : p_(o.get()) { inc(); }
+    template <typename U>
+    Ptr(Ptr<U>&& o, typename std::enable_if<std::is_convertible<U*, T*>::value, int>::type = 0) noexcept : p_(o.release()) {}
+    Ptr& operator=(const Ptr& o) {
+        if (this != &o) { T* old = p_; p_ = o.p_; inc(); if (old) dec_ref(old); }
+        return *this;
+    }
+    template <typename U>
+    Ptr& operator=(Ptr<U>&& o) {
+        if (p_ != o.get()) { T* old = p_; p_ = o.release(); if (old) dec_ref(old); }
+        return *this;
+    }
+    Ptr& operator=(Ptr&& o) noexcept {
+        if (this != &o) { T* old = p_; p_ = o.p_; o.p_ = nullptr; if (old) dec_ref(old); }
+        return *this;
+    }
+    ~Ptr() { if (p_) dec_ref(p_); }
+
+    T* get() const { return p_; }
+    T* release() { T* t = p_; p_ = nullptr; return t; }
+    int use_count() const { return p_ ? p_->refcount_ : 0; }
+    T& operator*() const { return *p_; }
+    T* operator->() const { return p_; }
+    explicit operator bool() const { return p_ != nullptr; }
+    bool operator==(const Ptr& o) const { return p_ == o.p_; }
+    bool operator!=(const Ptr& o) const { return p_ != o.p_; }
+    void swap(Ptr& o) { T* t = p_; p_ = o.p_; o.p_ = t; }
+
+private:
+    void inc() { if (p_) ++p_->refcount_; }
+    static void dec_ref(T* p) { if (--p->refcount_ == 0) delete p; }
+    T* p_;
+};
+
+template <typename T, typename... A>
+static inline Ptr<T> make_value(A&&... a) {
+    return Ptr<T>(new T(std::forward<A>(a)...));
+}
+
+// Pointer casts between value types, mirroring the shared_ptr helpers.
+template <typename T, typename U>
+static inline Ptr<T> ptr_cast(const Ptr<U>& v) {
+    return Ptr<T>(dynamic_cast<T*>(v.get()));
+}
+template <typename T, typename U>
+static inline Ptr<T> ptr_static_cast(const Ptr<U>& v) {
+    return Ptr<T>(static_cast<T*>(v.get()));
+}
+
+using ValuePtr = Ptr<class Value>;
 
 // The key that marks a table descriptor.
 //
@@ -27,8 +89,8 @@ using ValuePtr = std::shared_ptr<class Value>;
 // The key starts with a control character, which no script can type, so
 // no dictionary a script writes can collide with it.
 inline const char* table_key() { return "\x01" "table"; }
-using ClassPtr = std::shared_ptr<Class>;
-using InstancePtr = std::shared_ptr<Instance>;
+using ClassPtr = Ptr<Class>;
+using InstancePtr = Ptr<Instance>;
 
 // Runtime type tags. A tag read from the object beats a dynamic_cast in
 // the hot arithmetic paths: no typeinfo walk, no virtual call.
@@ -38,9 +100,11 @@ enum class VTag : uint8_t {
     Class, Instance
 };
 
-struct Value : public std::enable_shared_from_this<Value> {
+struct Value {
     const VTag tag;
+    mutable int refcount_ = 0;      // plain counter: single-threaded runtime
     Value(VTag t) : tag(t) {}
+    ValuePtr self() const { return ValuePtr(const_cast<Value*>(this)); }
     virtual ~Value() {}
     VTag kind() const { return tag; }
     virtual std::string toString() const = 0;
@@ -72,7 +136,7 @@ public:
     std::string toString() const override { return "null"; }
     std::string repr() const override;
     bool isTruthy() const override { return false; }
-    ValuePtr clone() const override { return std::make_shared<NullValue>(); }
+    ValuePtr clone() const override { return make_value<NullValue>(); }
     bool isEqualTo(const Value& other) const override;
 };
 
@@ -83,7 +147,7 @@ public:
     std::string toString() const override { return value.toString(); }
     std::string repr() const override { return value.toString(); }
     bool isTruthy() const override { return !value.isZero(); }
-    ValuePtr clone() const override { return std::make_shared<NumberValue>(value); }
+    ValuePtr clone() const override { return make_value<NumberValue>(value); }
     ValuePtr add(const Value& other) const override;
     ValuePtr subtract(const Value& other) const override;
     ValuePtr multiply(const Value& other) const override;
@@ -102,7 +166,7 @@ public:
     std::string toString() const override;
     std::string repr() const override { return toString(); }
     bool isTruthy() const override;
-    ValuePtr clone() const override { return std::make_shared<BinaryValue>(value); }
+    ValuePtr clone() const override { return make_value<BinaryValue>(value); }
     ValuePtr add(const Value& other) const override;
     bool isEqualTo(const Value& other) const override;
     BigNumber toBigNumber() const;
@@ -115,7 +179,7 @@ public:
     std::string toString() const override { return value; }
     std::string repr() const override;
     bool isTruthy() const override { return !value.empty(); }
-    ValuePtr clone() const override { return std::make_shared<StringValue>(value); }
+    ValuePtr clone() const override { return make_value<StringValue>(value); }
     ValuePtr add(const Value& other) const override;
     bool isEqualTo(const Value& other) const override;
     bool isLessThan(const Value& other) const override;
@@ -135,7 +199,7 @@ public:
         std::vector<ValuePtr> cloned;
         cloned.reserve(elements.size());
         for (const auto& elem : elements) cloned.push_back(elem->clone());
-        return std::make_shared<LnValue>(cloned);
+        return make_value<LnValue>(cloned);
     }
     ValuePtr add(const Value& other) const override;
     ValuePtr multiply(const Value& other) const override;
@@ -172,7 +236,7 @@ public:
     std::string toString() const override;
     std::string repr() const override;
     bool isTruthy() const override { return true; }
-    ValuePtr clone() const override { return std::make_shared<FunctionValue>(value); }
+    ValuePtr clone() const override { return make_value<FunctionValue>(value); }
 };
 
 class NativeFnValue : public Value {
@@ -184,7 +248,7 @@ public:
     std::string toString() const override { return "<native function " + name + ">"; }
     std::string repr() const override { return toString(); }
     bool isTruthy() const override { return true; }
-    ValuePtr clone() const override { return std::make_shared<NativeFnValue>(name, fn); }
+    ValuePtr clone() const override { return make_value<NativeFnValue>(name, fn); }
     ValuePtr call(const std::vector<ValuePtr>& args) const { return fn(args); }
 };
 
@@ -192,11 +256,14 @@ class BoundMethodValue : public Value {
 public:
     InstancePtr instance;
     std::shared_ptr<Function> method;
-    BoundMethodValue(InstancePtr inst, std::shared_ptr<Function> m) : Value(VTag::BoundMethod), instance(inst), method(m) {}
+    BoundMethodValue(InstancePtr inst, std::shared_ptr<Function> m);
+    // Out of line: Instance is only forward-declared here, and the
+    // pointer's destructor must see the complete type to drop the count.
+    ~BoundMethodValue() override;
     std::string toString() const override;
     std::string repr() const override;
     bool isTruthy() const override { return true; }
-    ValuePtr clone() const override { return std::make_shared<BoundMethodValue>(instance, method); }
+    ValuePtr clone() const override;
 };
 
 class ExceptionValue : public Value {
@@ -206,7 +273,7 @@ public:
     std::string toString() const override { return "<Exception: " + payload->toString() + ">"; }
     std::string repr() const override;
     bool isTruthy() const override { return true; }
-    ValuePtr clone() const override { return std::make_shared<ExceptionValue>(payload->clone()); }
+    ValuePtr clone() const override { return make_value<ExceptionValue>(payload->clone()); }
     bool isEqualTo(const Value& other) const override;
 };
 
@@ -218,7 +285,7 @@ public:
     std::string toString() const override { return "<module " + file_path + ">"; }
     std::string repr() const override { return toString(); }
     bool isTruthy() const override { return true; }
-    ValuePtr clone() const override { return std::make_shared<ModuleProxy>(file_path); }
+    ValuePtr clone() const override { return make_value<ModuleProxy>(file_path); }
 };
 
 // Type checking helpers

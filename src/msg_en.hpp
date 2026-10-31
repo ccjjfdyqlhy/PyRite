@@ -28,6 +28,8 @@ inline const char* msg(Msg id) {
         case Msg::STR_TO_NUM: return "Cannot convert string '{}' to number.";
         case Msg::STR_TO_BIN: return "Cannot convert string '{}' to binary. Must be '0x...' format.";
         case Msg::LN_INIT_LN: return "Can only initialize an ln variable with an ln.";
+        case Msg::DEC_INIT_NUM: return "A dec declaration requires a number, or a value convertible to one.";
+        case Msg::BIN_INIT_BIN: return "A bin declaration requires binary data, or a string convertible to it.";
         case Msg::SET_NODE_ERR: return "SetNode should be handled by AssignmentNode.";
         case Msg::NO_PROP: return "Only instances have properties. Cannot get '{}'.";
         case Msg::NO_SET_PROP: return "Only instances can set properties.";

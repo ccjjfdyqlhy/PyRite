@@ -110,7 +110,10 @@
 50  OP_CAST          operand      # [type_token] pop; push converted value
 
 # ---- Compound assignment helpers ----
-# For `a += b` we emit: GET a, EVAL b, ADD, SET a
+# For `a += b` the compiler fuses `a = a + b` into one OP_INPLACE_* when
+# the target is a local slot or a global and the right side is a variable,
+# small literal or a local*literal; otherwise it emits the plain
+# GET a, <b>, OP_ADD, SET_LOCAL_KEEP a sequence.
 
 # ---- Swap ----
 @section Swap
@@ -139,14 +142,15 @@
 60  OP_INPLACE_MUL   operand      # locals[dst] *= rhs
 61  OP_CMP_JUMP      operand4     # 4 operands: lhs, rhs, cmp-code, jump target
 62  OP_INPLACE_AM    operand2     # dst += src * k; two packed operands
-63  OP_RESERVED_1    no-operand   # reserved for future fused/superinstructions
-64  OP_RESERVED_2    no-operand   # reserved
-65  OP_RESERVED_3    no-operand   # reserved
-66  OP_RESERVED_4    no-operand   # reserved
-67  OP_RESERVED_5    no-operand   # reserved
-68  OP_RESERVED_6    no-operand   # reserved
-69  OP_RESERVED_7    no-operand   # reserved
-70  OP_RESERVED_8    no-operand   # reserved
+63  OP_DEF_STRUCT    operand      # [struct descriptor constant] build Class, push
+64  OP_CALL_MEMBER   operand2     # [obj][args...] call member; 2 operands: name idx, arg count
+65  OP_RESERVED_2    no-operand   # reserved
+66  OP_RESERVED_3    no-operand   # reserved
+67  OP_RESERVED_4    no-operand   # reserved
+68  OP_RESERVED_5    no-operand   # reserved
+69  OP_RESERVED_6    no-operand   # reserved
+70  OP_RESERVED_7    no-operand   # reserved
+71  OP_RESERVED_8    no-operand   # reserved
 # ---- Cast type codes (operand of OP_CAST) ----
 # The operand of OP_CAST is one of these codes.
 #
@@ -162,6 +166,8 @@
 @cast LN   3  list
 @cast DIM  4  dict
 @cast ANY  5  any (no conversion)
+@cast DEC_DECL  6  strict declaration of a number (null -> 0, else must convert)
+@cast BIN_DECL  7  strict declaration of binary (null -> 00, else must convert)
 
 # ---- Opcodes the JavaScript VM cannot execute ----
 # The JS VM has no AST fallback and no native exception handling, so bytecode
@@ -170,7 +176,7 @@
 #
 #   @js-unsupported <OPCODE> [reason shown to the author]
 #
-@js-unsupported OP_EVAL_AST  classes, structs, require, using, await and other AST fallbacks
+@js-unsupported OP_EVAL_AST  ins classes, using, await and structs with expression defaults
 @js-unsupported OP_TRY_BEGIN  try/catch
 @js-unsupported OP_TRY_END    try/catch
 @js-unsupported OP_CATCH      try/catch
@@ -182,7 +188,7 @@
 @js-unsupported OP_CMP_JUMP     fused compare-and-jump
 @js-unsupported OP_INPLACE_AM   fused accumulate-multiply
 
-@js-unsupported OP_RESERVED_1  reserved opcode
+@js-unsupported OP_CALL_MEMBER  fused member call
 @js-unsupported OP_RESERVED_2  reserved opcode
 @js-unsupported OP_RESERVED_3  reserved opcode
 @js-unsupported OP_RESERVED_4  reserved opcode

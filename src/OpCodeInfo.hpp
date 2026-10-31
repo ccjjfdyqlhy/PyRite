@@ -5,7 +5,7 @@
 // PyRite opcode metadata.
 // ============================================================================
 // GENERATED FILE -- DO NOT EDIT BY HAND.
-// Source: opcodes.def (sha256 22f5b41a5f7517bc468e4ef506f1ecdb5e9893276074bb4f5696a7523eca6201)
+// Source: opcodes.def (sha256 12d591f75dd71877da0de718394052c1c571503ac24aef0d152b794e1f497dfc)
 // Regenerate: python3 tools/gen_opcodes.py
 //
 // Two tables live here:
@@ -83,14 +83,15 @@ constexpr bool OPCODE_HAS_OPERAND[OPCODE_COUNT] = {
     /* 60 */ true ,  // OP_INPLACE_MUL
     /* 61 */ true ,  // OP_CMP_JUMP
     /* 62 */ true ,  // OP_INPLACE_AM
-    /* 63 */ false,  // OP_RESERVED_1
-    /* 64 */ false,  // OP_RESERVED_2
-    /* 65 */ false,  // OP_RESERVED_3
-    /* 66 */ false,  // OP_RESERVED_4
-    /* 67 */ false,  // OP_RESERVED_5
-    /* 68 */ false,  // OP_RESERVED_6
-    /* 69 */ false,  // OP_RESERVED_7
-    /* 70 */ false,  // OP_RESERVED_8
+    /* 63 */ true ,  // OP_DEF_STRUCT
+    /* 64 */ true ,  // OP_CALL_MEMBER
+    /* 65 */ false,  // OP_RESERVED_2
+    /* 66 */ false,  // OP_RESERVED_3
+    /* 67 */ false,  // OP_RESERVED_4
+    /* 68 */ false,  // OP_RESERVED_5
+    /* 69 */ false,  // OP_RESERVED_6
+    /* 70 */ false,  // OP_RESERVED_7
+    /* 71 */ false,  // OP_RESERVED_8
 };
 
 // How many 3-byte big-endian operands the instruction carries (0, 1, or
@@ -159,14 +160,15 @@ constexpr int OPCODE_OPERAND_COUNT[OPCODE_COUNT] = {
     /* 60 */ 1,     // OP_INPLACE_MUL
     /* 61 */ 4,     // OP_CMP_JUMP
     /* 62 */ 2,     // OP_INPLACE_AM
-    /* 63 */ 0,     // OP_RESERVED_1
-    /* 64 */ 0,     // OP_RESERVED_2
-    /* 65 */ 0,     // OP_RESERVED_3
-    /* 66 */ 0,     // OP_RESERVED_4
-    /* 67 */ 0,     // OP_RESERVED_5
-    /* 68 */ 0,     // OP_RESERVED_6
-    /* 69 */ 0,     // OP_RESERVED_7
-    /* 70 */ 0,     // OP_RESERVED_8
+    /* 63 */ 1,     // OP_DEF_STRUCT
+    /* 64 */ 2,     // OP_CALL_MEMBER
+    /* 65 */ 0,     // OP_RESERVED_2
+    /* 66 */ 0,     // OP_RESERVED_3
+    /* 67 */ 0,     // OP_RESERVED_4
+    /* 68 */ 0,     // OP_RESERVED_5
+    /* 69 */ 0,     // OP_RESERVED_6
+    /* 70 */ 0,     // OP_RESERVED_7
+    /* 71 */ 0,     // OP_RESERVED_8
 };
 
 // Whether the JavaScript VM can execute the instruction. The JS VM has no AST
@@ -236,21 +238,22 @@ constexpr bool OPCODE_JS_UNSUPPORTED[OPCODE_COUNT] = {
     /* 60 */ true ,  // OP_INPLACE_MUL
     /* 61 */ true ,  // OP_CMP_JUMP
     /* 62 */ true ,  // OP_INPLACE_AM
-    /* 63 */ true ,  // OP_RESERVED_1
-    /* 64 */ true ,  // OP_RESERVED_2
-    /* 65 */ true ,  // OP_RESERVED_3
-    /* 66 */ true ,  // OP_RESERVED_4
-    /* 67 */ true ,  // OP_RESERVED_5
-    /* 68 */ true ,  // OP_RESERVED_6
-    /* 69 */ true ,  // OP_RESERVED_7
-    /* 70 */ true ,  // OP_RESERVED_8
+    /* 63 */ false,  // OP_DEF_STRUCT
+    /* 64 */ true ,  // OP_CALL_MEMBER
+    /* 65 */ true ,  // OP_RESERVED_2
+    /* 66 */ true ,  // OP_RESERVED_3
+    /* 67 */ true ,  // OP_RESERVED_4
+    /* 68 */ true ,  // OP_RESERVED_5
+    /* 69 */ true ,  // OP_RESERVED_6
+    /* 70 */ true ,  // OP_RESERVED_7
+    /* 71 */ true ,  // OP_RESERVED_8
 };
 
 // Human-readable reason an opcode is unsupported, shown to the author when
 // the JSON exporter refuses a program. Empty when the opcode is supported.
 inline const char* opcode_js_unsupported_reason(OpCode op) {
     switch (op) {
-        case OpCode::OP_EVAL_AST: return "classes, structs, require, using, await and other AST fallbacks";
+        case OpCode::OP_EVAL_AST: return "ins classes, using, await and structs with expression defaults";
         case OpCode::OP_TRY_BEGIN: return "try/catch";
         case OpCode::OP_TRY_END: return "try/catch";
         case OpCode::OP_CATCH: return "try/catch";
@@ -259,7 +262,7 @@ inline const char* opcode_js_unsupported_reason(OpCode op) {
         case OpCode::OP_INPLACE_MUL: return "in-place fused assignment";
         case OpCode::OP_CMP_JUMP: return "fused compare-and-jump";
         case OpCode::OP_INPLACE_AM: return "fused accumulate-multiply";
-        case OpCode::OP_RESERVED_1: return "reserved opcode";
+        case OpCode::OP_CALL_MEMBER: return "fused member call";
         case OpCode::OP_RESERVED_2: return "reserved opcode";
         case OpCode::OP_RESERVED_3: return "reserved opcode";
         case OpCode::OP_RESERVED_4: return "reserved opcode";

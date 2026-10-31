@@ -70,6 +70,7 @@ void run_prt_file(const std::string& filename, Interpreter& interpreter) {
         exit(1);
     }
     interpreter.interpret(statements);
+    if (interpreter.had_error) exit(1);
 }
 
 void run_file(const char* filename, Interpreter& interpreter, bool use_vm, bool dump_bytecode) {
@@ -120,6 +121,7 @@ void run_file(const char* filename, Interpreter& interpreter, bool use_vm, bool 
         }
     } else {
         interpreter.interpret(statements);
+        if (interpreter.had_error) exit(1);
     }
 }
 
@@ -412,6 +414,9 @@ int main(int argc, char* argv[]) {
 
         if (!emit_json_path.empty()) {
             Compiler compiler;
+            // The JavaScript VM cannot execute the fused superinstructions;
+            // export runs on it, so recompile without them.
+            compiler.allow_fusion = false;
             BytecodeChunkPtr chunk = compiler.compile(statements, script_file);
             if (compiler.has_error()) {
                 std::cerr << fmt(Msg::MAIN_COMPILE_ERR, compiler.get_error()) << std::endl;

@@ -18,22 +18,22 @@
 // it asked for a list.
 static ValuePtr build_table(const CompiledFunctionPtr& fn,
                             const ValuePtr& value) {
-    auto descriptor = std::dynamic_pointer_cast<DimValue>(value);
+    auto descriptor = ptr_cast<DimValue>(value);
     if (!descriptor) return value;
     auto found = descriptor->dict.find(table_key());
     if (found == descriptor->dict.end()) return value;
-    auto rows = std::dynamic_pointer_cast<LnValue>(found->second);
+    auto rows = ptr_cast<LnValue>(found->second);
     if (!rows) return value;
     std::vector<ValuePtr> built;
     for (const auto& row : rows->elements) {
-        auto slot_value = std::dynamic_pointer_cast<NumberValue>(row);
+        auto slot_value = ptr_cast<NumberValue>(row);
         if (!slot_value) continue;
         size_t slot = static_cast<size_t>(slot_value->value.toLongLong());
         if (slot < fn->constants.size()) {
             built.push_back(build_table(fn, fn->constants[slot]));
         }
     }
-    return std::make_shared<LnValue>(built);
+    return make_value<LnValue>(built);
 }
 
 // ============================================================================
@@ -75,6 +75,11 @@ int VM::current_line() {
 }
 
 bool VM::handle_exception(ValuePtr exc_value) {
+    // Discard handlers registered by frames that have already returned:
+    // they would otherwise catch exceptions from unrelated code.
+    while (!try_handlers.empty() && try_handlers.back().frame_depth > frames.size()) {
+        try_handlers.pop_back();
+    }
     if (try_handlers.empty()) return false;
     TryHandler handler = try_handlers.back();
     try_handlers.pop_back();
@@ -101,9 +106,9 @@ bool VM::handle_exception(ValuePtr exc_value) {
 // Shared immutable results. Comparisons can only produce these two
 // numbers and null never varies, so the hot opcodes hand out references
 // instead of allocating a fresh object every time.
-static const ValuePtr BOOL_TRUE = std::make_shared<NumberValue>(1);
-static const ValuePtr BOOL_FALSE = std::make_shared<NumberValue>(0);
-static const ValuePtr NULL_SINGLETON = std::make_shared<NullValue>();
+static const ValuePtr BOOL_TRUE = make_value<NumberValue>(1);
+static const ValuePtr BOOL_FALSE = make_value<NumberValue>(0);
+static const ValuePtr NULL_SINGLETON = make_value<NullValue>();
 
 // Truthiness
 // ============================================================================
@@ -121,7 +126,7 @@ void VM::resolve_side(CallFrame& frame, uint32_t enc, ValuePtr& out) {
         if (idx >= frame.function->gcache.size()) frame.function->gcache.resize(frame.function->constants.size(), nullptr);
         const ValuePtr* cell = frame.function->gcache[idx];
         if (!cell) {
-            std::string name = std::dynamic_pointer_cast<StringValue>(
+            std::string name = ptr_cast<StringValue>(
                 frame.function->constants[idx])->value;
             cell = globals->cell(name);
             frame.function->gcache[idx] = cell;
@@ -132,7 +137,7 @@ void VM::resolve_side(CallFrame& frame, uint32_t enc, ValuePtr& out) {
     uint32_t kind = (enc >> 9) & 0x7;
     uint32_t pay = enc & 0x1FF;
     if (kind == 1) { out = frame.locals[pay]; return; }
-    if (kind == 3) { out = std::make_shared<NumberValue>(BigNumber((long long)pay)); return; }
+    if (kind == 3) { out = make_value<NumberValue>(BigNumber((long long)pay)); return; }
     out = frame.function->constants[pay];
 }
 
@@ -149,7 +154,7 @@ bool VM::run(BytecodeChunkPtr c) {
     frames.reserve(64);
 
     // Set up the initial call frame for the script.
-    ClosurePtr script_closure = std::make_shared<Closure>(chunk->script);
+    ClosurePtr script_closure = make_value<Closure>(chunk->script);
     frames.push_back(CallFrame{});
     CallFrame& f = frames.back();
     f.function = chunk->script;
@@ -177,7 +182,7 @@ bool VM::run(BytecodeChunkPtr c) {
                 // rows, and the list the script asked for is built here.
                 // The JavaScript VM builds the same list lazily - the
                 // values are the same, only the memory strategy differs.
-                if (auto d = std::dynamic_pointer_cast<DimValue>(value)) {
+                if (auto d = ptr_cast<DimValue>(value)) {
                     if (d->dict.count(table_key())) {
                         push(build_table(frame.function, value));
                         break;
@@ -239,14 +244,14 @@ bool VM::run(BytecodeChunkPtr c) {
                 if (!cell) {
                     // First execution of this call site: resolve the name
                     // once and remember where the value lives.
-                    std::string name = std::dynamic_pointer_cast<StringValue>(
+                    std::string name = ptr_cast<StringValue>(
                         frame.function->constants[idx])->value;
                     cell = globals->cell(name);
                     frame.function->gcache[idx] = cell;   // may stay null: still undefined
                 }
                 ValuePtr val = cell ? *cell : nullptr;
                 if (!val) {
-                    std::string name = std::dynamic_pointer_cast<StringValue>(
+                    std::string name = ptr_cast<StringValue>(
                         frame.function->constants[idx])->value;
                     runtime_error(current_line(), fmt(Msg::UNDEFINED_VAR, name));
                     return false;
@@ -255,7 +260,7 @@ bool VM::run(BytecodeChunkPtr c) {
                 if (val->kind() == VTag::ModuleProxy) {
                     auto proxy = static_cast<ModuleProxy*>(val.get());
                     if (!proxy->loaded && interpreter) {
-                        std::string name = std::dynamic_pointer_cast<StringValue>(
+                        std::string name = ptr_cast<StringValue>(
                             frame.function->constants[idx])->value;
                         val = interpreter->load_module(proxy);
                         globals->assign(name, val);
@@ -270,7 +275,7 @@ bool VM::run(BytecodeChunkPtr c) {
                 if (idx >= frame.function->wcache.size()) frame.function->wcache.resize(frame.function->constants.size(), nullptr);
                 ValuePtr* cell = frame.function->wcache[idx];
                 if (!cell) {
-                    std::string name = std::dynamic_pointer_cast<StringValue>(
+                    std::string name = ptr_cast<StringValue>(
                         frame.function->constants[idx])->value;
                     cell = const_cast<ValuePtr*>(globals->cell(name));
                     if (!cell) cell = globals->cell_mut(name);
@@ -285,7 +290,7 @@ bool VM::run(BytecodeChunkPtr c) {
                 if (idx >= frame.function->wcache.size()) frame.function->wcache.resize(frame.function->constants.size(), nullptr);
                 ValuePtr* cell = frame.function->wcache[idx];
                 if (!cell) {
-                    std::string name = std::dynamic_pointer_cast<StringValue>(
+                    std::string name = ptr_cast<StringValue>(
                         frame.function->constants[idx])->value;
                     cell = globals->cell_mut(name);
                     frame.function->wcache[idx] = cell;
@@ -362,7 +367,7 @@ bool VM::run(BytecodeChunkPtr c) {
                             runtime_error(current_line(), msg(Msg::LN_IDX_OOB));
                             return false;
                         }
-                        push(std::make_shared<StringValue>(std::string(1, str->value[i])));
+                        push(make_value<StringValue>(std::string(1, str->value[i])));
                     } else {
                         runtime_error(current_line(), msg(Msg::LN_IDX_NUM));
                         return false;
@@ -411,7 +416,7 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_GET_PROPERTY: {
                 uint32_t idx = read_operand24(frame.ip);
                 frame.ip += 3;
-                std::string name = std::dynamic_pointer_cast<StringValue>(
+                std::string name = ptr_cast<StringValue>(
                     frame.function->constants[idx])->value;
                 ValuePtr obj = pop();
                 if (auto inst = dynamic_cast<Instance*>(obj.get())) {
@@ -423,7 +428,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     auto it = dm->dict.find(name);
                     if (it != dm->dict.end()) push(it->second);
                     else if (auto member = dm->getMember(name)) push(member);
-                    else push(std::make_shared<NullValue>());
+                    else push(make_value<NullValue>());
                 } else if (auto member = obj->getMember(name)) {
                     // The members of a list or a string.
                     push(member);
@@ -436,7 +441,7 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_SET_PROPERTY: {
                 uint32_t idx = read_operand24(frame.ip);
                 frame.ip += 3;
-                std::string name = std::dynamic_pointer_cast<StringValue>(
+                std::string name = ptr_cast<StringValue>(
                     frame.function->constants[idx])->value;
                 ValuePtr val = pop();
                 ValuePtr obj = pop();
@@ -454,7 +459,7 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_BUILD_LIST: {
                 uint32_t n = read_operand24(frame.ip);
                 frame.ip += 3;
-                auto ln = std::make_shared<LnValue>(std::vector<ValuePtr>{});
+                auto ln = make_value<LnValue>(std::vector<ValuePtr>{});
                 ln->elements.resize(n);
                 for (uint32_t i = 0; i < n; ++i) {
                     ln->elements[n - 1 - i] = pop();
@@ -465,7 +470,7 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_BUILD_DICT: {
                 uint32_t n = read_operand24(frame.ip);
                 frame.ip += 3;
-                auto dm = std::make_shared<DimValue>();
+                auto dm = make_value<DimValue>();
                 for (uint32_t i = 0; i < n; ++i) {
                     ValuePtr val = pop();
                     ValuePtr key = pop();
@@ -479,11 +484,11 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_GET_LEN: {
                 ValuePtr obj = pop();
                 if (auto ln = dynamic_cast<LnValue*>(obj.get())) {
-                    push(std::make_shared<NumberValue>(BigNumber(static_cast<long long>(ln->elements.size()))));
+                    push(make_value<NumberValue>(BigNumber(static_cast<long long>(ln->elements.size()))));
                 } else if (auto dm = dynamic_cast<DimValue*>(obj.get())) {
-                    push(std::make_shared<NumberValue>(BigNumber(static_cast<long long>(dm->dict.size()))));
+                    push(make_value<NumberValue>(BigNumber(static_cast<long long>(dm->dict.size()))));
                 } else if (auto str = dynamic_cast<StringValue*>(obj.get())) {
-                    push(std::make_shared<NumberValue>(BigNumber(static_cast<long long>(str->value.size()))));
+                    push(make_value<NumberValue>(BigNumber(static_cast<long long>(str->value.size()))));
                 } else {
                     runtime_error(current_line(), "Argument to len() must be a string or a list.");
                     return false;
@@ -499,9 +504,9 @@ bool VM::run(BytecodeChunkPtr c) {
                 bool start_null = !dynamic_cast<NumberValue*>(start_v.get());
                 bool end_null = !dynamic_cast<NumberValue*>(end_v.get());
                 bool step_null = !dynamic_cast<NumberValue*>(step_v.get());
-                if (!start_null) start = std::dynamic_pointer_cast<NumberValue>(start_v)->value.toLongLong();
-                if (!end_null) end = std::dynamic_pointer_cast<NumberValue>(end_v)->value.toLongLong();
-                if (!step_null) step = std::dynamic_pointer_cast<NumberValue>(step_v)->value.toLongLong();
+                if (!start_null) start = ptr_cast<NumberValue>(start_v)->value.toLongLong();
+                if (!end_null) end = ptr_cast<NumberValue>(end_v)->value.toLongLong();
+                if (!step_null) step = ptr_cast<NumberValue>(step_v)->value.toLongLong();
                 if (auto str = dynamic_cast<StringValue*>(obj.get())) {
                     long long len = static_cast<long long>(str->value.size());
                     if (start_null) start = 0;
@@ -515,7 +520,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     if (step > 0) {
                         for (long long i = start; i < end; i += step) result += str->value[i];
                     }
-                    push(std::make_shared<StringValue>(result));
+                    push(make_value<StringValue>(result));
                 } else if (auto ln = dynamic_cast<LnValue*>(obj.get())) {
                     long long len = static_cast<long long>(ln->elements.size());
                     if (start_null) start = 0;
@@ -525,13 +530,13 @@ bool VM::run(BytecodeChunkPtr c) {
                     if (end < 0) end += len;
                     if (start < 0) start = 0;
                     if (end > len) end = len;
-                    auto result = std::make_shared<LnValue>(std::vector<ValuePtr>{});
+                    auto result = make_value<LnValue>(std::vector<ValuePtr>{});
                     if (step > 0) {
                         for (long long i = start; i < end; i += step) result->elements.push_back(ln->elements[i]);
                     }
                     push(result);
                 } else {
-                    push(std::make_shared<NullValue>());
+                    push(make_value<NullValue>());
                 }
                 break;
             }
@@ -575,11 +580,20 @@ bool VM::run(BytecodeChunkPtr c) {
                     // Generic comparison with the exact stack shape of the
                     // unfused [expr] [JUMP_IF_FALSE] sequence.
                     if (!lv || !rv) { runtime_error(current_line(), "undefined variable"); return false; }
-                    OpCode cop = cmp == 0 ? OpCode::OP_LESS : cmp == 1 ? OpCode::OP_LESS_EQUAL
-                               : cmp == 2 ? OpCode::OP_GREATER : cmp == 3 ? OpCode::OP_GREATER_EQUAL
-                               : cmp == 4 ? OpCode::OP_EQUAL : OpCode::OP_NOT_EQUAL;
-                    ValuePtr res = binary_op(cop, lv, rv, current_line());
-                    if (is_truthy(res)) break;          // fall through to body
+                    // Equality never goes through binary_op: it works on
+                    // every value type via isEqualTo.
+                    bool truth;
+                    if (cmp == 4) {
+                        truth = lv->isEqualTo(*rv);
+                    } else if (cmp == 5) {
+                        truth = !lv->isEqualTo(*rv);
+                    } else {
+                        OpCode cop = cmp == 0 ? OpCode::OP_LESS : cmp == 1 ? OpCode::OP_LESS_EQUAL
+                                   : cmp == 2 ? OpCode::OP_GREATER : OpCode::OP_GREATER_EQUAL;
+                        ValuePtr res = binary_op(cop, lv, rv, current_line());
+                        truth = is_truthy(res);
+                    }
+                    if (truth) break;                   // fall through to body
                     frame.ip = frame.code_start + target;
                     break;
                 }
@@ -599,7 +613,8 @@ bool VM::run(BytecodeChunkPtr c) {
                 // dst += src * k for numbers; anything else falls back to
                 // the exact unfused sequence.
                 bool dst_global = packed_dst & 0x800000;
-                uint32_t dsti = (packed_dst >> 12) & 0x7FF;
+                bool no_push = packed_dst & 0x400000;
+                uint32_t dsti = (packed_dst >> 12) & 0x3FF;
                 bool src_global = packed_src & 0x800000;
                 (void)0;
                 uint32_t srci = (packed_src >> 12) & 0x7FF;
@@ -620,11 +635,11 @@ bool VM::run(BytecodeChunkPtr c) {
                     if (a.use_count() == 1) {
                         an->value = std::move(result);
                         if (dst_global) *dcell = a; else *dslot = a;
-                        push(a);
+                        if (!no_push) push(a);
                     } else {
-                        auto fresh = std::make_shared<NumberValue>(std::move(result));
+                        auto fresh = make_value<NumberValue>(std::move(result));
                         if (dst_global) *dcell = fresh; else *dslot = fresh;
-                        push(fresh);
+                        if (!no_push) push(fresh);
                     }
                     break;
                 }
@@ -632,14 +647,14 @@ bool VM::run(BytecodeChunkPtr c) {
                 if (!a || !sv) { runtime_error(current_line(), "undefined variable"); return false; }
                 push(a);
                 push(sv);
-                push(std::make_shared<NumberValue>(BigNumber(k)));
+                push(make_value<NumberValue>(BigNumber(k)));
                 {
                     ValuePtr kb = pop(); ValuePtr sb = pop();
                     push(binary_op(OpCode::OP_MUL, sb, kb, current_line()));
                     ValuePtr mb = pop(); ValuePtr ab = pop();
                     ValuePtr res = binary_op(OpCode::OP_ADD, ab, mb, current_line());
                     if (dst_global) *dcell = res; else *dslot = res;
-                    push(res);
+                    if (!no_push) push(res);
                 }
                 break;
             }
@@ -651,8 +666,9 @@ bool VM::run(BytecodeChunkPtr c) {
                     // Fallback: the plain [load dst] [load rhs] [op] [keep]
                     // sequence, byte-for-byte what the unfused compiler emit
                     // would have produced.
-                    uint32_t dst = (packed >> 12) & 0x7FF;
+                    uint32_t dst = (packed >> 12) & 0x3FF;
                     bool dst_global = packed & 0x800000;
+                    bool np = packed & 0x400000;
                     uint32_t rkind = (packed >> 9) & 0x7;
                     uint32_t rpay = packed & 0x1FF;
                     ValuePtr stack_rhs;
@@ -662,7 +678,7 @@ bool VM::run(BytecodeChunkPtr c) {
                         if (dst >= frame.function->wcache.size()) frame.function->wcache.resize(frame.function->constants.size(), nullptr);
                         ValuePtr* cell = frame.function->wcache[dst];
                         if (!cell) {
-                            std::string name = std::dynamic_pointer_cast<StringValue>(
+                            std::string name = ptr_cast<StringValue>(
                                 frame.function->constants[dst])->value;
                             cell = const_cast<ValuePtr*>(globals->cell(name));
                             if (!cell) cell = globals->cell_mut(name);
@@ -676,18 +692,19 @@ bool VM::run(BytecodeChunkPtr c) {
                     }
                     if (rkind == 1) push(frame.locals[rpay]);
                     else if (rkind == 2) push(stack_rhs);
-                    else if (rkind == 3) push(std::make_shared<NumberValue>(BigNumber((long long)rpay)));
+                    else if (rkind == 3) push(make_value<NumberValue>(BigNumber((long long)rpay)));
                     else push(frame.function->constants[rpay]);
                     ValuePtr rb2 = pop();
                     ValuePtr ra2 = pop();
                     OpCode plain = op == OpCode::OP_INPLACE_ADD ? OpCode::OP_ADD
                                  : op == OpCode::OP_INPLACE_SUB ? OpCode::OP_SUB : OpCode::OP_MUL;
                     ValuePtr res = binary_op(plain, ra2, rb2, 0);
+                    if (!np) {  // no-push variant: the value is not wanted
                     if (dst_global) {
                         if (dst >= frame.function->wcache.size()) frame.function->wcache.resize(frame.function->constants.size(), nullptr);
                         ValuePtr* cell = frame.function->wcache[dst];
                         if (!cell) {
-                            std::string name = std::dynamic_pointer_cast<StringValue>(
+                            std::string name = ptr_cast<StringValue>(
                                 frame.function->constants[dst])->value;
                             cell = const_cast<ValuePtr*>(globals->cell(name));
                             if (!cell) cell = globals->cell_mut(name);
@@ -698,6 +715,7 @@ bool VM::run(BytecodeChunkPtr c) {
                         frame.locals[dst] = res;
                     }
                     push(res);
+                    }
                 }
                 break;
             }
@@ -774,7 +792,7 @@ bool VM::run(BytecodeChunkPtr c) {
                 uint32_t fn_idx = read_operand24(frame.ip);
                 frame.ip += 3;
                 CompiledFunctionPtr fn = chunk->all_functions[fn_idx];
-                ClosurePtr closure = std::make_shared<Closure>(fn);
+                ClosurePtr closure = make_value<Closure>(fn);
                 closure->upvalues.resize(fn->upvalue_count);
                 // Capture upvalues
                 for (int i = 0; i < fn->upvalue_count; ++i) {
@@ -812,9 +830,58 @@ bool VM::run(BytecodeChunkPtr c) {
                 }
                 break;
             }
+            case OpCode::OP_CALL_MEMBER: {
+                uint32_t name_idx = read_operand24(frame.ip); frame.ip += 3;
+                uint32_t arg_count = read_operand24(frame.ip); frame.ip += 3;
+                std::string name = ptr_cast<StringValue>(
+                    frame.function->constants[name_idx])->value;
+                ValuePtr obj = peek(arg_count);
+                // Same member resolution as OP_GET_PROPERTY: instance
+                // methods and dict keys come first, then value members.
+                ValuePtr member;
+                if (obj->kind() == VTag::Instance) {
+                    member = static_cast<Instance*>(obj.get())->get(name);
+                } else if (obj->kind() == VTag::Dim) {
+                    auto dm = static_cast<DimValue*>(obj.get());
+                    auto it = dm->dict.find(name);
+                    if (it != dm->dict.end()) member = it->second;
+                    else member = dm->getMember(name);
+                } else {
+                    member = obj->getMember(name);
+                }
+                if (!member) {
+                    runtime_error(current_line(), fmt(Msg::NO_PROP, name));
+                    return false;
+                }
+                // Native and AST callees need the args as a vector: move
+                // them off the stack first. A closure callee reads them
+                // straight off the stack, so nothing is touched before it.
+                const size_t base = stack.size() - arg_count;
+                if (member->kind() == VTag::NativeFn) {
+                    std::vector<ValuePtr> native_args(
+                        std::make_move_iterator(stack.begin() + base),
+                        std::make_move_iterator(stack.end()));
+                    stack.resize(base - 1);        // drop the args and obj
+                    push(static_cast<NativeFnValue*>(member.get())->fn(native_args));
+                } else if (member->kind() == VTag::Closure) {
+                    push_frame_from_stack(static_cast<Closure*>(member.get()), arg_count, current_line());
+                    for (uint32_t i = 0; i <= arg_count; ++i) pop();  // arg slots (moved out) + obj
+                } else {
+                    std::vector<ValuePtr> native_args(
+                        std::make_move_iterator(stack.begin() + base),
+                        std::make_move_iterator(stack.end()));
+                    stack.resize(base - 1);
+                    if (!call_value(member, native_args, current_line())) return false;
+                }
+                break;
+            }
+
             case OpCode::OP_RETURN: {
                 ValuePtr result = pop();
                 close_upvalues(0);  // close all upvalues pointing to this frame
+                while (!try_handlers.empty() && try_handlers.back().frame_depth >= frames.size()) {
+                    try_handlers.pop_back();   // handler lived in the returning frame
+                }
                 bool was_script = (frames.size() == 1);
                 if (!was_script) recycle_locals(frames.back());
                 frames.pop_back();
@@ -824,6 +891,9 @@ bool VM::run(BytecodeChunkPtr c) {
             }
             case OpCode::OP_RETURN_NULL: {
                 close_upvalues(0);
+                while (!try_handlers.empty() && try_handlers.back().frame_depth >= frames.size()) {
+                    try_handlers.pop_back();
+                }
                 bool was_script = (frames.size() == 1);
                 if (!was_script) recycle_locals(frames.back());
                 frames.pop_back();
@@ -841,7 +911,7 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_INPUT: {
                 ValuePtr promptVal = pop();
                 std::string prompt;
-                if (auto s = std::dynamic_pointer_cast<StringValue>(promptVal)) {
+                if (auto s = ptr_cast<StringValue>(promptVal)) {
                     prompt = s->value;
                 } else {
                     prompt = promptVal->toString();
@@ -849,7 +919,7 @@ bool VM::run(BytecodeChunkPtr c) {
                 std::cout << prompt;
                 std::string line;
                 std::getline(std::cin, line);
-                push(std::make_shared<StringValue>(line));
+                push(make_value<StringValue>(line));
                 break;
             }
 
@@ -866,54 +936,93 @@ bool VM::run(BytecodeChunkPtr c) {
                     if (dynamic_cast<NumberValue*>(val.get())) {
                         push(val);
                     } else if (auto s = dynamic_cast<StringValue*>(val.get())) {
-                        try { push(std::make_shared<NumberValue>(BigNumber(s->value))); }
+                        try { push(make_value<NumberValue>(BigNumber(s->value))); }
                         catch (const std::invalid_argument&) {
                             runtime_error(current_line(), std::string("Cannot convert string '") + s->value + "' to a number.");
                             return false;
                         }
                     } else if (auto b = dynamic_cast<BinaryValue*>(val.get())) {
-                        push(std::make_shared<NumberValue>(b->toBigNumber()));
+                        push(make_value<NumberValue>(b->toBigNumber()));
                     } else if (dynamic_cast<NullValue*>(val.get())) {
-                        // VarDeclaration allows null -> 0
-                        push(std::make_shared<NumberValue>(BigNumber(0)));
+                        // `as dec` on null fails, like the AST interpreter.
+                        runtime_error(current_line(), "Unsupported conversion to 'dec'.");
+                        return false;
                     } else {
-                        // VarDeclaration keeps as-is; TypeConversion throws.
-                        // Since we can't distinguish, keep as-is (lenient).
+                        runtime_error(current_line(), "Unsupported conversion to 'dec'.");
+                        return false;
+                    }
+                } else if (type == CastType::CAST_DEC_DECL) {
+                    // Declaration of a dec: strict, but null becomes 0.
+                    if (dynamic_cast<NumberValue*>(val.get())) {
+                        push(val);
+                    } else if (auto s2 = dynamic_cast<StringValue*>(val.get())) {
+                        try { push(make_value<NumberValue>(BigNumber(s2->value))); }
+                        catch (const std::invalid_argument&) {
+                            runtime_error(current_line(), std::string("Cannot convert string '") + s2->value + "' to a number.");
+                            return false;
+                        }
+                    } else if (auto b2 = dynamic_cast<BinaryValue*>(val.get())) {
+                        push(make_value<NumberValue>(b2->toBigNumber()));
+                    } else if (dynamic_cast<NullValue*>(val.get())) {
+                        push(make_value<NumberValue>(BigNumber(0)));
+                    } else if (dynamic_cast<LnValue*>(val.get()) || dynamic_cast<DimValue*>(val.get())) {
+                        // Containers are what strictness is about: dec is
+                        // the language's default type and legitimately
+                        // holds functions, closures and instances.
+                        runtime_error(current_line(), msg(Msg::DEC_INIT_NUM));
+                        return false;
+                    } else {
                         push(val);
                     }
+                } else if (type == CastType::CAST_BIN_DECL) {
+                    // Declaration of a bin: strict, but null becomes 00.
+                    if (dynamic_cast<BinaryValue*>(val.get())) {
+                        push(val);
+                    } else if (auto s3 = dynamic_cast<StringValue*>(val.get())) {
+                        try { push(make_value<BinaryValue>(s3->value)); }
+                        catch (...) {
+                            runtime_error(current_line(), std::string("Cannot convert string '") + s3->value + "' to binary. Expected '0x...' format.");
+                            return false;
+                        }
+                    } else if (dynamic_cast<NullValue*>(val.get())) {
+                        push(make_value<BinaryValue>(std::vector<uint8_t>{0}));
+                    } else {
+                        runtime_error(current_line(), msg(Msg::BIN_INIT_BIN));
+                        return false;
+                    }
                 } else if (type == CastType::CAST_STR) {
-                    push(std::make_shared<StringValue>(val->toString()));
+                    push(make_value<StringValue>(val->toString()));
                 } else if (type == CastType::CAST_BIN) {
                     if (dynamic_cast<BinaryValue*>(val.get())) {
                         push(val);
                     } else if (auto s = dynamic_cast<StringValue*>(val.get())) {
-                        try { push(std::make_shared<BinaryValue>(s->value)); }
+                        try { push(make_value<BinaryValue>(s->value)); }
                         catch (...) {
                             runtime_error(current_line(), std::string("Cannot convert string '") + s->value + "' to binary. Expected '0x...' format.");
                             return false;
                         }
                     } else if (dynamic_cast<NullValue*>(val.get())) {
-                        push(std::make_shared<BinaryValue>(std::vector<uint8_t>{0}));
+                        push(make_value<BinaryValue>(std::vector<uint8_t>{0}));
                     } else {
-                        push(std::make_shared<BinaryValue>(std::vector<uint8_t>{0}));
+                        runtime_error(current_line(), "Unsupported conversion to 'bin'.");
+                        return false;
                     }
                 } else if (type == CastType::CAST_LN) {
                     if (dynamic_cast<LnValue*>(val.get())) {
                         push(val);
                     } else if (dynamic_cast<NullValue*>(val.get())) {
-                        push(std::make_shared<LnValue>(std::vector<ValuePtr>{}));
+                        push(make_value<LnValue>(std::vector<ValuePtr>{}));
                     } else {
-                        // VarDeclaration wraps in list; TypeConversion throws.
-                        // Since we can't distinguish, wrap in list (lenient).
-                        push(std::make_shared<LnValue>(std::vector<ValuePtr>{val}));
+                        runtime_error(current_line(), "Unsupported conversion to 'ln'.");
+                        return false;
                     }
                 } else if (type == CastType::CAST_DIM) {
                     if (dynamic_cast<DimValue*>(val.get())) {
                         push(val);
                     } else if (dynamic_cast<NullValue*>(val.get())) {
-                        push(std::make_shared<DimValue>());
+                        push(make_value<DimValue>());
                     } else {
-                        push(std::make_shared<DimValue>());
+                        push(make_value<DimValue>());
                     }
                 } else {
                     // ANY or unknown: keep value as-is
@@ -964,6 +1073,48 @@ bool VM::run(BytecodeChunkPtr c) {
                 break;
             }
 
+            case OpCode::OP_DEF_STRUCT: {
+                uint32_t idx = read_operand24(frame.ip);
+                frame.ip += 3;
+                ValuePtr desc = frame.function->constants[idx];
+                auto d = ptr_cast<DimValue>(desc);
+                if (!d) { runtime_error(current_line(), "bad struct descriptor"); return false; }
+                std::string name = ptr_cast<StringValue>(d->dict["name"])->value;
+                auto fields_ln = ptr_cast<LnValue>(d->dict["fields"]);
+                std::vector<ParameterDefinition> fields;
+                if (fields_ln) {
+                    for (auto& fv : fields_ln->elements) {
+                        auto fd = ptr_cast<DimValue>(fv);
+                        if (!fd) continue;
+                        std::string fname = ptr_cast<StringValue>(fd->dict["name"])->value;
+                        long long code = ptr_cast<NumberValue>(fd->dict["type"])->value.toLongLong();
+                        long long has_def = ptr_cast<NumberValue>(fd->dict["has_default"])->value.toLongLong();
+                        // The stable cast code maps back onto its token so
+                        // field type checks keep working.
+                        TokenType tk = TokenType::ANY;
+                        switch (static_cast<CastType>(code)) {
+                            case CastType::CAST_DEC: tk = TokenType::DEC; break;
+                            case CastType::CAST_STR: tk = TokenType::STR; break;
+                            case CastType::CAST_BIN: tk = TokenType::BIN; break;
+                            case CastType::CAST_LN: tk = TokenType::LN; break;
+                            case CastType::CAST_DIM: tk = TokenType::DIM; break;
+                            default: tk = TokenType::ANY; break;
+                        }
+                        ValuePtr defv = fd->dict.count("default") ? fd->dict["default"] : nullptr;
+                        if (has_def && defv && !dynamic_cast<NullValue*>(defv.get()))
+                            fields.push_back(ParameterDefinition(tk, fname, defv));
+                        else
+                            fields.push_back(ParameterDefinition(tk, fname));
+                    }
+                }
+                auto klass = make_value<Class>(name, fields,
+                    std::vector<AstNodePtr>{},
+                    std::map<std::string, std::shared_ptr<Function>>{},
+                    globals);
+                push(klass);
+                break;
+            }
+
             case OpCode::OP_HALT:
                 return true;
 
@@ -986,7 +1137,7 @@ bool VM::run(BytecodeChunkPtr c) {
         // Use the exception's line if available, otherwise the current VM line.
         int line = e.line > 0 ? e.line : current_line();
         // Wrap in ExceptionValue to match interpreter behavior
-        ValuePtr exc = std::make_shared<ExceptionValue>(std::make_shared<StringValue>(e.what()));
+        ValuePtr exc = make_value<ExceptionValue>(make_value<StringValue>(e.what()));
         // Try to handle the runtime error via a try-handler (catchable).
         if (handle_exception(exc)) {
             continue;  // resume execution at the catch handler
@@ -1052,7 +1203,7 @@ void VM::close_upvalues(int slot) {
 ValuePtr VM::eval_ast(const AstNodePtr& node) {
     if (!interpreter) {
         runtime_error(0, "No interpreter available for OP_EVAL_AST");
-        return std::make_shared<NullValue>();
+        return make_value<NullValue>();
     }
 
     CallFrame& f = frames.back();
@@ -1070,7 +1221,7 @@ ValuePtr VM::eval_ast(const AstNodePtr& node) {
     auto saved_env = interpreter->environment;
     interpreter->environment = env;
 
-    ValuePtr result = std::make_shared<NullValue>();
+    ValuePtr result = make_value<NullValue>();
     try {
         // Check if it's a statement or expression
         if (dynamic_cast<ExpressionStatementNode*>(node.get()) ||
@@ -1181,18 +1332,25 @@ bool VM::call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line
                 }
             }
         }
+        if (++interpreter->call_depth > Interpreter::MAX_CALL_DEPTH) {
+            interpreter->call_depth--;
+            runtime_error(line, "Recursion depth exceeds the limit (" + std::to_string(Interpreter::MAX_CALL_DEPTH) + ").");
+            return false;
+        }
         auto saved = interpreter->environment;
         interpreter->environment = call_env;
-        ValuePtr result = std::make_shared<NullValue>();
+        ValuePtr result = make_value<NullValue>();
         try {
             interpreter->execute_block(function->body, call_env);
         } catch (ReturnValueException& e) {
             result = e.value;
         } catch (RuntimeError& e) {
+            interpreter->call_depth--;
             interpreter->environment = saved;
             // Re-throw for the VM's run() loop to handle (may be caught by try/catch)
             throw;
         }
+        interpreter->call_depth--;
         interpreter->environment = saved;
         push(result);
         return true;
@@ -1223,16 +1381,23 @@ bool VM::call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line
         }
         auto saved = interpreter->environment;
         interpreter->environment = call_env;
-        ValuePtr result = std::make_shared<NullValue>();
+        ValuePtr result = make_value<NullValue>();
+        if (++interpreter->call_depth > Interpreter::MAX_CALL_DEPTH) {
+            interpreter->call_depth--;
+            runtime_error(line, "Recursion depth exceeds the limit (" + std::to_string(Interpreter::MAX_CALL_DEPTH) + ").");
+            return false;
+        }
         try {
             interpreter->execute_block(function->body, call_env);
         } catch (ReturnValueException& e) {
             result = e.value;
         } catch (RuntimeError& e) {
+            interpreter->call_depth--;
             interpreter->environment = saved;
             // Re-throw for the VM's run() loop to handle (may be caught by try/catch)
             throw;
         }
+        interpreter->call_depth--;
         interpreter->environment = saved;
         push(result);
         return true;
@@ -1245,6 +1410,10 @@ bool VM::call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line
 // Push a new call frame for a VM closure
 // ============================================================================
 void VM::push_frame(Closure* closure, const ValuePtr* args, size_t nargs, int line) {
+    if (frames.size() >= static_cast<size_t>(Interpreter::MAX_CALL_DEPTH)) {
+        runtime_error(line, "Recursion depth exceeds the limit (" + std::to_string(Interpreter::MAX_CALL_DEPTH) + ").");
+        return;
+    }
     CompiledFunctionPtr fn = closure->function;
     if (nargs < static_cast<size_t>(fn->arity)) {
         runtime_error(line, "Too few arguments to " + fn->name);
@@ -1284,6 +1453,10 @@ void VM::push_frame(Closure* closure, const ValuePtr* args, size_t nargs, int li
 // Same as push_frame, but the arguments are read straight off the value
 // stack (callee at stack[top - nargs - 1]): one copy instead of two.
 void VM::push_frame_from_stack(Closure* closure, size_t nargs, int line) {
+    if (frames.size() >= static_cast<size_t>(Interpreter::MAX_CALL_DEPTH)) {
+        runtime_error(line, "Recursion depth exceeds the limit (" + std::to_string(Interpreter::MAX_CALL_DEPTH) + ").");
+        return;
+    }
     CompiledFunctionPtr fn = closure->function;
     if (nargs < static_cast<size_t>(fn->arity)) {
         runtime_error(line, "Too few arguments to " + fn->name);
@@ -1300,10 +1473,10 @@ void VM::push_frame_from_stack(Closure* closure, size_t nargs, int line) {
     if (!pool.empty()) {
         f.locals = std::move(pool.back());
         pool.pop_back();
-        for (auto& l : f.locals) l = NULL_SINGLETON;
+        // No re-fill: the compiler emits an assignment before any read of
+        // a slot, so stale values from the previous call are never seen.
     } else {
         f.locals.resize(fn->max_locals > 0 ? fn->max_locals : fn->local_names.size());
-        for (auto& l : f.locals) l = NULL_SINGLETON;
     }
     for (size_t i = 0; i < fn->params.size(); ++i) {
         if (i < nargs) f.locals[i + 1] = std::move(stack[base + i]);
@@ -1322,7 +1495,7 @@ ValuePtr* VM::global_write_cell(CallFrame& frame, uint32_t idx) {
     if (idx >= frame.function->wcache.size()) frame.function->wcache.resize(frame.function->constants.size(), nullptr);
     ValuePtr* cell = frame.function->wcache[idx];
     if (!cell) {
-        std::string name = std::dynamic_pointer_cast<StringValue>(
+        std::string name = ptr_cast<StringValue>(
             frame.function->constants[idx])->value;
         cell = const_cast<ValuePtr*>(globals->cell(name));
         if (!cell) cell = globals->cell_mut(name);
@@ -1335,7 +1508,7 @@ const ValuePtr* VM::global_read_cell(CallFrame& frame, uint32_t idx) {
     if (idx >= frame.function->gcache.size()) frame.function->gcache.resize(frame.function->constants.size(), nullptr);
     const ValuePtr* cell = frame.function->gcache[idx];
     if (!cell) {
-        std::string name = std::dynamic_pointer_cast<StringValue>(
+        std::string name = ptr_cast<StringValue>(
             frame.function->constants[idx])->value;
         cell = globals->cell(name);
         frame.function->gcache[idx] = cell;
@@ -1348,7 +1521,8 @@ const ValuePtr* VM::global_read_cell(CallFrame& frame, uint32_t idx) {
 // ============================================================================
 bool VM::exec_inplace(OpCode op, uint32_t packed, CallFrame& frame, int line) {
     bool dst_global = packed & 0x800000;
-    uint32_t dst = (packed >> 12) & 0x7FF;
+    bool no_push = packed & 0x400000;
+    uint32_t dst = (packed >> 12) & 0x3FF;
     uint32_t rkind = (packed >> 9) & 0x7;
     uint32_t rpay = packed & 0x1FF;
 
@@ -1359,7 +1533,7 @@ bool VM::exec_inplace(OpCode op, uint32_t packed, CallFrame& frame, int line) {
         if (dst >= frame.function->wcache.size()) frame.function->wcache.resize(frame.function->constants.size(), nullptr);
         gcell = frame.function->wcache[dst];
         if (!gcell) {
-            std::string name = std::dynamic_pointer_cast<StringValue>(
+            std::string name = ptr_cast<StringValue>(
                 frame.function->constants[dst])->value;
             gcell = const_cast<ValuePtr*>(globals->cell(name));
             if (!gcell) gcell = globals->cell_mut(name);
@@ -1420,7 +1594,7 @@ bool VM::exec_inplace(OpCode op, uint32_t packed, CallFrame& frame, int line) {
             if (dst_global) *gcell = a; else *slot = a;
             push(a);
         } else {
-            auto fresh = std::make_shared<NumberValue>(std::move(result));
+            auto fresh = make_value<NumberValue>(std::move(result));
             if (dst_global) *gcell = fresh; else *slot = fresh;
             push(fresh);
         }
@@ -1433,11 +1607,11 @@ bool VM::exec_inplace(OpCode op, uint32_t packed, CallFrame& frame, int line) {
         if (a.use_count() == 1) {
             as->value += *rs;
             if (dst_global) *gcell = a; else *slot = a;
-            push(a);
+            if (!no_push) push(a);
         } else {
-            auto fresh = std::make_shared<StringValue>(as->value + *rs);
+            auto fresh = make_value<StringValue>(as->value + *rs);
             if (dst_global) *gcell = fresh; else *slot = fresh;
-            push(fresh);
+            if (!no_push) push(fresh);
         }
         return true;
     }
@@ -1457,28 +1631,28 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
     auto lb = tb2 == VTag::Ln ? static_cast<LnValue*>(b.get()) : nullptr;
 
     if (op == OpCode::OP_ADD) {
-        if (na && nb) return std::make_shared<NumberValue>(na->value + nb->value);
+        if (na && nb) return make_value<NumberValue>(na->value + nb->value);
         // Binary + Number or Number + Binary → number
-        if (ba && nb) return std::make_shared<NumberValue>(ba->toBigNumber() + nb->value);
-        if (na && bb) return std::make_shared<NumberValue>(na->value + bb->toBigNumber());
+        if (ba && nb) return make_value<NumberValue>(ba->toBigNumber() + nb->value);
+        if (na && bb) return make_value<NumberValue>(na->value + bb->toBigNumber());
         if (la && lb) {
-            auto result = std::make_shared<LnValue>(std::vector<ValuePtr>{});
+            auto result = make_value<LnValue>(std::vector<ValuePtr>{});
             result->elements = la->elements;
             for (auto& v : lb->elements) result->elements.push_back(v);
             return result;
         }
         // String or Binary with anything else → string concatenation
         if (sa || sb || ba || bb) {
-            return std::make_shared<StringValue>(a->toString() + b->toString());
+            return make_value<StringValue>(a->toString() + b->toString());
         }
     }
     if (op == OpCode::OP_MUL) {
-        if (na && nb) return std::make_shared<NumberValue>(na->value * nb->value);
+        if (na && nb) return make_value<NumberValue>(na->value * nb->value);
         // List * Number → repetition
         if (la && nb) {
             long long times = nb->value.toLongLong();
             if (times < 0) times = 0;
-            auto result = std::make_shared<LnValue>(std::vector<ValuePtr>{});
+            auto result = make_value<LnValue>(std::vector<ValuePtr>{});
             for (long long i = 0; i < times; ++i) {
                 for (const auto& elem : la->elements) result->elements.push_back(elem->clone());
             }
@@ -1488,7 +1662,7 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
         if (na && lb) {
             long long times = na->value.toLongLong();
             if (times < 0) times = 0;
-            auto result = std::make_shared<LnValue>(std::vector<ValuePtr>{});
+            auto result = make_value<LnValue>(std::vector<ValuePtr>{});
             for (long long i = 0; i < times; ++i) {
                 for (const auto& elem : lb->elements) result->elements.push_back(elem->clone());
             }
@@ -1497,14 +1671,14 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
     }
     if (na && nb) {
         switch (op) {
-            case OpCode::OP_SUB: return std::make_shared<NumberValue>(na->value - nb->value);
+            case OpCode::OP_SUB: return make_value<NumberValue>(na->value - nb->value);
             case OpCode::OP_DIV:
                 if (nb->value.isZero()) { runtime_error(line, "Division by zero."); return NULL_SINGLETON; }
-                return std::make_shared<NumberValue>(na->value / nb->value);
+                return make_value<NumberValue>(na->value / nb->value);
             case OpCode::OP_MOD:
                 if (nb->value.isZero()) { runtime_error(line, "Modulo by zero."); return NULL_SINGLETON; }
-                return std::make_shared<NumberValue>(na->value % nb->value);
-            case OpCode::OP_POW: return std::make_shared<NumberValue>(na->value ^ nb->value);
+                return make_value<NumberValue>(na->value % nb->value);
+            case OpCode::OP_POW: return make_value<NumberValue>(na->value ^ nb->value);
             case OpCode::OP_LESS: return na->value < nb->value ? BOOL_TRUE : BOOL_FALSE;
             case OpCode::OP_LESS_EQUAL: return na->value <= nb->value ? BOOL_TRUE : BOOL_FALSE;
             case OpCode::OP_GREATER: return na->value > nb->value ? BOOL_TRUE : BOOL_FALSE;
@@ -1516,29 +1690,29 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
     if (ba && nb) {
         BigNumber bv = ba->toBigNumber();
         switch (op) {
-            case OpCode::OP_LESS: return std::make_shared<NumberValue>(bv < nb->value ? 1 : 0);
-            case OpCode::OP_LESS_EQUAL: return std::make_shared<NumberValue>(bv <= nb->value ? 1 : 0);
-            case OpCode::OP_GREATER: return std::make_shared<NumberValue>(bv > nb->value ? 1 : 0);
-            case OpCode::OP_GREATER_EQUAL: return std::make_shared<NumberValue>(bv >= nb->value ? 1 : 0);
+            case OpCode::OP_LESS: return make_value<NumberValue>(bv < nb->value ? 1 : 0);
+            case OpCode::OP_LESS_EQUAL: return make_value<NumberValue>(bv <= nb->value ? 1 : 0);
+            case OpCode::OP_GREATER: return make_value<NumberValue>(bv > nb->value ? 1 : 0);
+            case OpCode::OP_GREATER_EQUAL: return make_value<NumberValue>(bv >= nb->value ? 1 : 0);
             default: break;
         }
     }
     if (na && bb) {
         BigNumber bv = bb->toBigNumber();
         switch (op) {
-            case OpCode::OP_LESS: return std::make_shared<NumberValue>(na->value < bv ? 1 : 0);
-            case OpCode::OP_LESS_EQUAL: return std::make_shared<NumberValue>(na->value <= bv ? 1 : 0);
-            case OpCode::OP_GREATER: return std::make_shared<NumberValue>(na->value > bv ? 1 : 0);
-            case OpCode::OP_GREATER_EQUAL: return std::make_shared<NumberValue>(na->value >= bv ? 1 : 0);
+            case OpCode::OP_LESS: return make_value<NumberValue>(na->value < bv ? 1 : 0);
+            case OpCode::OP_LESS_EQUAL: return make_value<NumberValue>(na->value <= bv ? 1 : 0);
+            case OpCode::OP_GREATER: return make_value<NumberValue>(na->value > bv ? 1 : 0);
+            case OpCode::OP_GREATER_EQUAL: return make_value<NumberValue>(na->value >= bv ? 1 : 0);
             default: break;
         }
     }
     if (sa && sb) {
         switch (op) {
-            case OpCode::OP_LESS: return std::make_shared<NumberValue>(sa->value < sb->value ? 1 : 0);
-            case OpCode::OP_LESS_EQUAL: return std::make_shared<NumberValue>(sa->value <= sb->value ? 1 : 0);
-            case OpCode::OP_GREATER: return std::make_shared<NumberValue>(sa->value > sb->value ? 1 : 0);
-            case OpCode::OP_GREATER_EQUAL: return std::make_shared<NumberValue>(sa->value >= sb->value ? 1 : 0);
+            case OpCode::OP_LESS: return make_value<NumberValue>(sa->value < sb->value ? 1 : 0);
+            case OpCode::OP_LESS_EQUAL: return make_value<NumberValue>(sa->value <= sb->value ? 1 : 0);
+            case OpCode::OP_GREATER: return make_value<NumberValue>(sa->value > sb->value ? 1 : 0);
+            case OpCode::OP_GREATER_EQUAL: return make_value<NumberValue>(sa->value >= sb->value ? 1 : 0);
             default: break;
         }
     }
@@ -1555,18 +1729,18 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
         default: err_msg = "Invalid operand types for operator"; break;
     }
     runtime_error(line, err_msg);
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr VM::unary_op(OpCode op, const ValuePtr& a, int line) {
     if (op == OpCode::OP_NEGATE) {
         if (a->kind() == VTag::Number) {
             auto na = static_cast<NumberValue*>(a.get());
-            return std::make_shared<NumberValue>(-na->value);
+            return make_value<NumberValue>(-na->value);
         }
     }
     runtime_error(line, msg(Msg::SUB_TYPE));
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 // ============================================================================

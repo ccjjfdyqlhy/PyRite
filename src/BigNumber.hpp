@@ -445,6 +445,21 @@ namespace BigNumberDetail {
     }
 
     inline UnsignedDigit UnsignedDigit::operator*(const UnsignedDigit& rhs) const {
+        // Single-limb multiplier (loop counters, small constants): one
+        // carry pass straight into the result, no convolution scratch.
+        if (rhs.digits.size() == 1) {
+            ll m = rhs.digits[0];
+            if (m == 0) return UnsignedDigit();
+            SmallVecInt r;
+            ll carry = 0;
+            for (size_t i = 0; i < digits.size(); ++i) {
+                ll cur = (ll)digits[i] * m + carry;
+                r.push_back((int)(cur % MOD));
+                carry = cur / MOD;
+            }
+            while (carry) { r.push_back((int)(carry % MOD)); carry /= MOD; }
+            return UnsignedDigit(std::move(r));
+        }
         std::vector<ll> tmp = ConvHelper::conv(digits, rhs.digits, this == &rhs);
         for (size_t i = 0; i + 1 < tmp.size(); ++i) {
             tmp[i + 1] += tmp[i] / MOD;

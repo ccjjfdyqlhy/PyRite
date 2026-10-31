@@ -20,7 +20,7 @@ PyRite 不是一个「用 Python 写的脚本」，而是一套**从零实现的
 | Compiler | `src/Compiler.*` | AST → 字节码 |
 | VM | `src/VM.*` | 栈式字节码虚拟机（`--vm`），约 50 条指令 |
 | Serializer | `src/Serializer.*` | `.prc`（字节码）/ `.prt`（AST）二进制序列化 |
-| JsBytecodeSerializer | `src/JsBytecodeSerializer.*` | 导出 PRC1 JSON，给浏览器里的 JS VM 用（见 `JS_VM.txt`） |
+| JsBytecodeSerializer | `src/JsBytecodeSerializer.*` | 导出 PRC1 JSON，给浏览器里的 JS VM 用（见 `read/` 与 PyRiteJS 仓库） |
 
 执行路径：
 
@@ -567,7 +567,7 @@ help() / about() / halt()
 2. **第 2 天**：`03_functions.pr` + `04_oop.pr` —— 函数、闭包、类。
 3. **第 3 天**：`05_errors.pr` + `06_modules/` —— 工程化能力。
 4. **第 4 天**：`07_bignum.pr` + `08_await.pr`，然后自己实现一个 JSON 序列化器 / 简易解释器。
-5. **进阶**：读 `read/`（源码精读笔记）理解实现，再看 `JS_VM.txt` 了解字节码如何搬到浏览器里。
+5. **进阶**：读 `read/`（源码精读笔记）理解实现，再看 PyRiteJS 仓库了解字节码如何搬到浏览器里。
 
 ### 延伸阅读
 
@@ -576,6 +576,5 @@ help() / about() / halt()
 | `guide.md` | 官方语言手册（注意第 12 章列出的 3 处错误） |
 | `README_zh.md` | 项目总览与架构 |
 | `read/0_overview.md` ~ `read/3_operations.md` | 源码精读笔记（Interpreter 内部机制） |
-| `JS_VM.txt` | PyRite → 浏览器 JS VM 的实现方案 |
 | `opcodes.def` | 字节码指令的唯一真源（`make check-opcodes` 可校验） |
 | `editor/editor.html` | 浏览器版编辑器，单文件、离线可用 |

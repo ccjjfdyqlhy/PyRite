@@ -24,7 +24,7 @@ ValuePtr LiteralNode::accept(Interpreter& visitor) {
 ValuePtr ListLiteralNode::accept(Interpreter& visitor) {
     std::vector<ValuePtr> evaluated_elements;
     for (const auto& elem : elements) evaluated_elements.push_back(visitor.evaluate(elem));
-    return std::make_shared<LnValue>(evaluated_elements);
+    return make_value<LnValue>(evaluated_elements);
 }
 
 ValuePtr DimLiteralNode::accept(Interpreter& visitor) {
@@ -35,7 +35,7 @@ ValuePtr DimLiteralNode::accept(Interpreter& visitor) {
         ValuePtr val = visitor.evaluate(entry.second);
         result[key] = val;
     }
-    return std::make_shared<DimValue>(result);
+    return make_value<DimValue>(result);
 }
 
 ValuePtr VariableNode::accept(Interpreter& visitor) {
@@ -58,7 +58,7 @@ ValuePtr AssignmentNode::accept(Interpreter& visitor) {
     if (auto get_node = dynamic_cast<GetNode*>(target.get())) {
         try {
             auto object = visitor.evaluate(get_node->object);
-            if (auto instance = std::dynamic_pointer_cast<Instance>(object)) {
+            if (auto instance = ptr_cast<Instance>(object)) {
                 instance->set(get_node->name, val);
             } else {
                 throw RuntimeError(line, msg(Msg::NO_SET_PROP));
@@ -73,30 +73,32 @@ ValuePtr AssignmentNode::accept(Interpreter& visitor) {
 }
 
 ValuePtr VarDeclarationNode::accept(Interpreter& visitor) {
-    ValuePtr val = std::make_shared<NullValue>();
+    ValuePtr val = make_value<NullValue>();
     if (initializer) { val = visitor.evaluate(initializer); }
     if (keyword.type == TokenType::DEC) {
         if (auto s_val = dynamic_cast<StringValue*>(val.get())) {
-            try { val = std::make_shared<NumberValue>(BigNumber(s_val->value)); }
+            try { val = make_value<NumberValue>(BigNumber(s_val->value)); }
             catch (const std::invalid_argument&) { throw RuntimeError(line, fmt(Msg::STR_TO_NUM, s_val->value)); }
-        } else if (auto b_val = dynamic_cast<BinaryValue*>(val.get())) { val = std::make_shared<NumberValue>(b_val->toBigNumber()); }
-        else if (dynamic_cast<NullValue*>(val.get())) { val = std::make_shared<NumberValue>(0); }
+        } else if (auto b_val = dynamic_cast<BinaryValue*>(val.get())) { val = make_value<NumberValue>(b_val->toBigNumber()); }
+        else if (dynamic_cast<NullValue*>(val.get())) { val = make_value<NumberValue>(0); }
+        else if (dynamic_cast<LnValue*>(val.get()) || dynamic_cast<DimValue*>(val.get())) { throw RuntimeError(line, msg(Msg::DEC_INIT_NUM)); }
     } else if (keyword.type == TokenType::STR) {
-        val = std::make_shared<StringValue>(val->toString());
+        val = make_value<StringValue>(val->toString());
     } else if (keyword.type == TokenType::BIN) {
-        if (auto s_val = dynamic_cast<StringValue*>(val.get())) { try { val = std::make_shared<BinaryValue>(s_val->value); } catch(...) { throw RuntimeError(line, fmt(Msg::STR_TO_BIN, s_val->value)); } }
-        else if (dynamic_cast<NullValue*>(val.get())) { val = std::make_shared<BinaryValue>(std::vector<uint8_t>{0}); }
+        if (auto s_val = dynamic_cast<StringValue*>(val.get())) { try { val = make_value<BinaryValue>(s_val->value); } catch(...) { throw RuntimeError(line, fmt(Msg::STR_TO_BIN, s_val->value)); } }
+        else if (dynamic_cast<NullValue*>(val.get())) { val = make_value<BinaryValue>(std::vector<uint8_t>{0}); }
+        else if (!dynamic_cast<BinaryValue*>(val.get())) { throw RuntimeError(line, msg(Msg::BIN_INIT_BIN)); }
     } else if (keyword.type == TokenType::LN) {
         if (!dynamic_cast<LnValue*>(val.get()) && !dynamic_cast<NullValue*>(val.get())) { throw RuntimeError(line, msg(Msg::LN_INIT_LN)); }
-        if (dynamic_cast<NullValue*>(val.get())) { val = std::make_shared<LnValue>(std::vector<ValuePtr>{}); }
+        if (dynamic_cast<NullValue*>(val.get())) { val = make_value<LnValue>(std::vector<ValuePtr>{}); }
     } else if (keyword.type == TokenType::DIM) {
         if (!dynamic_cast<DimValue*>(val.get()) && !dynamic_cast<NullValue*>(val.get())) { throw RuntimeError(line, msg(Msg::DIM_INIT_DIM)); }
-        if (dynamic_cast<NullValue*>(val.get())) { val = std::make_shared<DimValue>(); }
+        if (dynamic_cast<NullValue*>(val.get())) { val = make_value<DimValue>(); }
     } else if (keyword.type == TokenType::ANY) {
         // any type: keep value as-is
     }
     visitor.environment->define(name, val);
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr UsingNode::accept(Interpreter& visitor) {
@@ -104,18 +106,18 @@ ValuePtr UsingNode::accept(Interpreter& visitor) {
         ValuePtr val = visitor.environment->get(original_name);
         visitor.environment->define(alias_name, val);
     } catch (RuntimeError& e) { throw RuntimeError(line, e.what()); }
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr UnaryOpNode::accept(Interpreter& visitor) {
     ValuePtr right_val = visitor.evaluate(right);
     switch (op.type) {
         case TokenType::MINUS: {
-            auto zero = std::make_shared<NumberValue>(0);
+            auto zero = make_value<NumberValue>(0);
             try { return zero->subtract(*right_val); }
             catch (const std::runtime_error& e) { throw RuntimeError(op.line, e.what()); }
         }
-        case TokenType::NOT: return std::make_shared<NumberValue>(right_val->isTruthy() ? 0 : 1);
+        case TokenType::NOT: return make_value<NumberValue>(right_val->isTruthy() ? 0 : 1);
         default: throw RuntimeError(op.line, "Invalid unary operator.");
     }
 }
@@ -131,16 +133,16 @@ ValuePtr BinaryOpNode::accept(Interpreter& visitor) {
             case TokenType::SLASH: return left_val->divide(*right_val);
             case TokenType::CARET: return left_val->power(*right_val);
             case TokenType::MODULO: return left_val->modulo(*right_val);
-            case TokenType::EQUAL_EQUAL: return std::make_shared<NumberValue>(left_val->isEqualTo(*right_val) ? 1 : 0);
-            case TokenType::BANG_EQUAL: return std::make_shared<NumberValue>(!left_val->isEqualTo(*right_val) ? 1 : 0);
-            case TokenType::LESS: return std::make_shared<NumberValue>(left_val->isLessThan(*right_val) ? 1 : 0);
-            case TokenType::LESS_EQUAL: return std::make_shared<NumberValue>(!right_val->isLessThan(*left_val) ? 1 : 0);
-            case TokenType::GREATER: return std::make_shared<NumberValue>(right_val->isLessThan(*left_val) ? 1 : 0);
-            case TokenType::GREATER_EQUAL: return std::make_shared<NumberValue>(!left_val->isLessThan(*right_val) ? 1 : 0);
+            case TokenType::EQUAL_EQUAL: return make_value<NumberValue>(left_val->isEqualTo(*right_val) ? 1 : 0);
+            case TokenType::BANG_EQUAL: return make_value<NumberValue>(!left_val->isEqualTo(*right_val) ? 1 : 0);
+            case TokenType::LESS: return make_value<NumberValue>(left_val->isLessThan(*right_val) ? 1 : 0);
+            case TokenType::LESS_EQUAL: return make_value<NumberValue>(!right_val->isLessThan(*left_val) ? 1 : 0);
+            case TokenType::GREATER: return make_value<NumberValue>(right_val->isLessThan(*left_val) ? 1 : 0);
+            case TokenType::GREATER_EQUAL: return make_value<NumberValue>(!left_val->isLessThan(*right_val) ? 1 : 0);
             default: break;
         }
     } catch (const std::runtime_error& e) { throw RuntimeError(op.line, e.what()); }
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr LogicalOpNode::accept(Interpreter& visitor) {
@@ -158,22 +160,22 @@ ValuePtr TypeConversionNode::accept(Interpreter& visitor) {
     switch (type_keyword.type) {
         case TokenType::DEC:
             if (dynamic_cast<NumberValue*>(val.get())) return val;
-            if (auto s_val = dynamic_cast<StringValue*>(val.get())) { try { return std::make_shared<NumberValue>(BigNumber(s_val->value)); } catch (const std::invalid_argument&) { throw RuntimeError(line, std::string("Cannot convert string '") + s_val->value + "' to a number."); } }
-            if (auto b_val = dynamic_cast<BinaryValue*>(val.get())) { return std::make_shared<NumberValue>(b_val->toBigNumber()); }
+            if (auto s_val = dynamic_cast<StringValue*>(val.get())) { try { return make_value<NumberValue>(BigNumber(s_val->value)); } catch (const std::invalid_argument&) { throw RuntimeError(line, std::string("Cannot convert string '") + s_val->value + "' to a number."); } }
+            if (auto b_val = dynamic_cast<BinaryValue*>(val.get())) { return make_value<NumberValue>(b_val->toBigNumber()); }
             throw RuntimeError(line, "Unsupported conversion to 'dec'.");
         case TokenType::STR:
-            return std::make_shared<StringValue>(val->toString());
+            return make_value<StringValue>(val->toString());
         case TokenType::BIN:
             if (dynamic_cast<BinaryValue*>(val.get())) return val;
-            if (auto s_val = dynamic_cast<StringValue*>(val.get())) { try { return std::make_shared<BinaryValue>(s_val->value); } catch (...) { throw RuntimeError(line, std::string("Cannot convert string '") + s_val->value + "' to binary. Expected '0x...' format."); } }
+            if (auto s_val = dynamic_cast<StringValue*>(val.get())) { try { return make_value<BinaryValue>(s_val->value); } catch (...) { throw RuntimeError(line, std::string("Cannot convert string '") + s_val->value + "' to binary. Expected '0x...' format."); } }
             throw RuntimeError(line, "Unsupported conversion to 'bin'.");
         case TokenType::LN:
             if (dynamic_cast<LnValue*>(val.get())) return val;
-            if (dynamic_cast<NullValue*>(val.get())) return std::make_shared<LnValue>(std::vector<ValuePtr>{});
+            if (dynamic_cast<NullValue*>(val.get())) return make_value<LnValue>(std::vector<ValuePtr>{});
             throw RuntimeError(line, "Unsupported conversion to 'ln'.");
         case TokenType::DIM:
             if (dynamic_cast<DimValue*>(val.get())) return val;
-            if (dynamic_cast<NullValue*>(val.get())) return std::make_shared<DimValue>();
+            if (dynamic_cast<NullValue*>(val.get())) return make_value<DimValue>();
             throw RuntimeError(line, "Unsupported conversion to 'dim'.");
         default:
             throw RuntimeError(line, "Invalid type for 'as' conversion.");
@@ -187,9 +189,9 @@ ValuePtr SubscriptNode::accept(Interpreter& visitor) {
             auto index = visitor.evaluate(this->start);
             return object->getSubscript(*index);
         } else {
-            ValuePtr start_v = this->start ? visitor.evaluate(this->start) : std::make_shared<NullValue>();
-            ValuePtr end_v = this->end ? visitor.evaluate(this->end) : std::make_shared<NullValue>();
-            ValuePtr step_v = this->step ? visitor.evaluate(this->step) : std::make_shared<NullValue>();
+            ValuePtr start_v = this->start ? visitor.evaluate(this->start) : make_value<NullValue>();
+            ValuePtr end_v = this->end ? visitor.evaluate(this->end) : make_value<NullValue>();
+            ValuePtr step_v = this->step ? visitor.evaluate(this->step) : make_value<NullValue>();
             return object->getSlice(start_v, end_v, step_v);
         }
     } catch (const std::runtime_error& e) { throw RuntimeError(line, e.what()); }
@@ -205,18 +207,18 @@ ValuePtr ClassDefNode::accept(Interpreter& visitor) {
             methods_map[func_def_node->name] = method_func;
         }
     }
-    auto klass = std::make_shared<Class>(name, fields, initializer_body, methods_map, visitor.environment);
+    auto klass = make_value<Class>(name, fields, initializer_body, methods_map, visitor.environment);
     visitor.environment->define(name, klass);
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr GetNode::accept(Interpreter& visitor) {
     auto object_val = visitor.evaluate(object);
-    if (auto instance = std::dynamic_pointer_cast<Instance>(object_val)) {
+    if (auto instance = ptr_cast<Instance>(object_val)) {
         try { return instance->get(name); }
         catch (const std::runtime_error& e) { throw RuntimeError(line, e.what()); }
     }
-    if (auto dim_val = std::dynamic_pointer_cast<DimValue>(object_val)) {
+    if (auto dim_val = ptr_cast<DimValue>(object_val)) {
         // A key of the dictionary comes first: a dictionary may hold a
         // key called "keys".
         auto it = dim_val->dict.find(name);
@@ -235,16 +237,16 @@ ValuePtr SetNode::accept(Interpreter& visitor) {
 
 ValuePtr LambdaNode::accept(Interpreter& visitor) {
     auto function = std::make_shared<Function>("", params, body, visitor.environment);
-    return std::make_shared<FunctionValue>(function);
+    return make_value<FunctionValue>(function);
 }
 
 ValuePtr StructDefNode::accept(Interpreter& visitor) {
-    auto klass = std::make_shared<Class>(name, fields,
+    auto klass = make_value<Class>(name, fields,
         std::vector<AstNodePtr>{},
         std::map<std::string, std::shared_ptr<Function>>{},
         visitor.environment);
     visitor.environment->define(name, klass);
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr SwapNode::accept(Interpreter& visitor) {
@@ -252,7 +254,7 @@ ValuePtr SwapNode::accept(Interpreter& visitor) {
     ValuePtr val2 = visitor.evaluate(right);
     visitor.assignToLValue(left, val2, line);
     visitor.assignToLValue(right, val1, line);
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr RequireNode::accept(Interpreter& visitor) {
@@ -261,13 +263,13 @@ ValuePtr RequireNode::accept(Interpreter& visitor) {
         size_t pos = module_path.find_last_of("/\\");
         alias = (pos == std::string::npos) ? module_path : module_path.substr(pos + 1);
     }
-    auto proxy = std::make_shared<ModuleProxy>(module_path);
+    auto proxy = make_value<ModuleProxy>(module_path);
     // The module is loaded right here, not when it is first used: the
     // compiler puts the module into the program where the require
     // stands, and the two have to behave the same way.
     ValuePtr loaded = visitor.load_module(proxy.get());
     visitor.environment->define(alias, loaded);
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr IfStatementNode::accept(Interpreter& visitor) {
@@ -278,7 +280,7 @@ ValuePtr IfStatementNode::accept(Interpreter& visitor) {
     } else if (!else_branch.empty()) {
         visitor.execute_block(else_branch, std::make_shared<Environment>(visitor.environment));
     }
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr WhileStatementNode::accept(Interpreter& visitor) {
@@ -293,24 +295,45 @@ ValuePtr WhileStatementNode::accept(Interpreter& visitor) {
     if (!finally_branch.empty()) {
         visitor.execute_block(finally_branch, std::make_shared<Environment>(visitor.environment));
     }
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr ForInNode::accept(Interpreter& visitor) {
     ValuePtr iter_val = visitor.evaluate(iterable);
-    LnValue* ln_val = dynamic_cast<LnValue*>(iter_val.get());
-    if (!ln_val) throw RuntimeError(line, "for-in requires an ln (list) value.");
-    
-    for (size_t i = 0; i < ln_val->elements.size(); ++i) {
-        visitor.check_timeout(line);
-        try {
-            auto block_env = std::make_shared<Environment>(visitor.environment);
-            block_env->define(var_name, ln_val->elements[i]);
-            visitor.execute_block(body, block_env);
-        } catch (const BreakException&) { break; }
-        catch (const ContinueException&) { continue; }
+
+    // Same iterable semantics as the bytecode for-in expansion: lists walk
+    // their elements, strings their characters; anything else fails with
+    // the message the VM produces for the same value.
+    if (auto ln_val = ptr_cast<LnValue>(iter_val)) {
+        for (size_t i = 0; i < ln_val->elements.size(); ++i) {
+            visitor.check_timeout(line);
+            try {
+                auto block_env = std::make_shared<Environment>(visitor.environment);
+                block_env->define(var_name, ln_val->elements[i]);
+                visitor.execute_block(body, block_env);
+            } catch (const BreakException&) { break; }
+            catch (const ContinueException&) { continue; }
+        }
+        return make_value<NullValue>();
     }
-    return std::make_shared<NullValue>();
+    if (auto str_val = ptr_cast<StringValue>(iter_val)) {
+        for (size_t i = 0; i < str_val->value.size(); ++i) {
+            visitor.check_timeout(line);
+            try {
+                auto block_env = std::make_shared<Environment>(visitor.environment);
+                block_env->define(var_name, make_value<StringValue>(std::string(1, str_val->value[i])));
+                visitor.execute_block(body, block_env);
+            } catch (const BreakException&) { break; }
+            catch (const ContinueException&) { continue; }
+        }
+        return make_value<NullValue>();
+    }
+    // The VM's expansion does GET_LEN (dicts answer with their size) and
+    // then GET_INDEX with a number, which fails with this exact message.
+    if (ptr_cast<DimValue>(iter_val)) {
+        throw RuntimeError(line, msg(Msg::DIM_KEY_TYPE));
+    }
+    throw RuntimeError(line, "Argument to len() must be a string or a list.");
 }
 
 ValuePtr LoopForNode::accept(Interpreter& visitor) {
@@ -326,13 +349,13 @@ ValuePtr LoopForNode::accept(Interpreter& visitor) {
         try {
             auto block_env = std::make_shared<Environment>(visitor.environment);
             if (!index_var_name.empty()) {
-                block_env->define(index_var_name, std::make_shared<NumberValue>(BigNumber(std::to_string(i))));
+                block_env->define(index_var_name, make_value<NumberValue>(BigNumber(std::to_string(i))));
             }
             visitor.execute_block(body, block_env);
         } catch (const BreakException&) { break; }
         catch (const ContinueException&) { /* continue to next iteration */ }
     }
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr LoopUntilNode::accept(Interpreter& visitor) {
@@ -341,7 +364,7 @@ ValuePtr LoopUntilNode::accept(Interpreter& visitor) {
         visitor.check_timeout(line);
         auto block_env = std::make_shared<Environment>(visitor.environment);
         if (!index_var_name.empty()) {
-            block_env->define(index_var_name, std::make_shared<NumberValue>(BigNumber(std::to_string(i++))));
+            block_env->define(index_var_name, make_value<NumberValue>(BigNumber(std::to_string(i++))));
         }
         std::shared_ptr<Environment> previous = visitor.environment;
         try {
@@ -356,7 +379,7 @@ ValuePtr LoopUntilNode::accept(Interpreter& visitor) {
         catch (const ContinueException&) { visitor.environment = previous; /* continue */ }
         catch (...) { visitor.environment = previous; throw; }
     }
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr BreakNode::accept(Interpreter& visitor) { throw BreakException(); }
@@ -368,13 +391,13 @@ ValuePtr AwaitStatementNode::accept(Interpreter& visitor) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     visitor.execute_block(then_branch, std::make_shared<Environment>(visitor.environment));
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr SayNode::accept(Interpreter& visitor) {
     auto val = visitor.evaluate(expression);
     std::cout << val->toString() << std::endl;
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr InpNode::accept(Interpreter& visitor) {
@@ -382,13 +405,13 @@ ValuePtr InpNode::accept(Interpreter& visitor) {
     std::cout << prompt->toString();
     std::string input;
     std::getline(std::cin, input);
-    return std::make_shared<StringValue>(input);
+    return make_value<StringValue>(input);
 }
 
 ValuePtr FnDefNode::accept(Interpreter& visitor) {
     auto function = std::make_shared<Function>(name, params, body, visitor.environment);
-    visitor.environment->define(name, std::make_shared<FunctionValue>(function));
-    return std::make_shared<NullValue>();
+    visitor.environment->define(name, make_value<FunctionValue>(function));
+    return make_value<NullValue>();
 }
 
 ValuePtr CallNode::accept(Interpreter& visitor) {
@@ -456,9 +479,15 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
         }
 
         visitor.call_stack.push_back({function->name, line});
-        ValuePtr return_val = std::make_shared<NullValue>();
+        if (++visitor.call_depth > Interpreter::MAX_CALL_DEPTH) {
+            visitor.call_depth--;
+            visitor.call_stack.pop_back();
+            throw RuntimeError(line, "Recursion depth exceeds the limit (" + std::to_string(Interpreter::MAX_CALL_DEPTH) + ").");
+        }
+        ValuePtr return_val = make_value<NullValue>();
         try { visitor.execute_block(function->body, call_env); }
         catch (const ReturnValueException& rv) { return_val = rv.value; }
+        visitor.call_depth--;
         visitor.call_stack.pop_back();
         return return_val;
     }
@@ -506,9 +535,15 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
         }
 
         visitor.call_stack.push_back({function->name, line});
-        ValuePtr return_val = std::make_shared<NullValue>();
+        if (++visitor.call_depth > Interpreter::MAX_CALL_DEPTH) {
+            visitor.call_depth--;
+            visitor.call_stack.pop_back();
+            throw RuntimeError(line, "Recursion depth exceeds the limit (" + std::to_string(Interpreter::MAX_CALL_DEPTH) + ").");
+        }
+        ValuePtr return_val = make_value<NullValue>();
         try { visitor.execute_block(function->body, call_env); }
         catch (const ReturnValueException& rv) { return_val = rv.value; }
+        visitor.call_depth--;
         visitor.call_stack.pop_back();
         return return_val;
     }
@@ -517,7 +552,7 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
 }
 
 ValuePtr ReturnNode::accept(Interpreter& visitor) {
-    ValuePtr val = std::make_shared<NullValue>();
+    ValuePtr val = make_value<NullValue>();
     if (value) { val = visitor.evaluate(value); }
     throw ReturnValueException(val);
 }
@@ -536,7 +571,7 @@ ValuePtr TryCatchNode::accept(Interpreter& visitor) {
             catch_env->define(exception_var, ex.value);
             visitor.execute_block(catch_branch, catch_env);
         } catch (const RuntimeError& ex) {
-            auto exception_obj = std::make_shared<ExceptionValue>(std::make_shared<StringValue>(ex.what()));
+            auto exception_obj = make_value<ExceptionValue>(make_value<StringValue>(ex.what()));
             auto catch_env = std::make_shared<Environment>(visitor.environment);
             catch_env->define(exception_var, exception_obj);
             visitor.execute_block(catch_branch, catch_env);
@@ -548,12 +583,12 @@ ValuePtr TryCatchNode::accept(Interpreter& visitor) {
         visitor.execute_block(finally_branch, std::make_shared<Environment>(visitor.environment));
     }
     if (captured_exception) { std::rethrow_exception(*captured_exception); }
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 ValuePtr ExpressionStatementNode::accept(Interpreter& visitor) {
     visitor.evaluate(expression);
-    return std::make_shared<NullValue>();
+    return make_value<NullValue>();
 }
 
 // ===== Interpreter implementation =====
@@ -569,15 +604,19 @@ void Interpreter::interpret(const std::vector<AstNodePtr>& statements) {
             execute(stmt);
         }
     } catch (const BreakException&) {
+        had_error = true;
         std::cerr << msg(Msg::RUNTIME_PREFIX) << "0: break used outside loop." << std::endl;
         print_stack_trace();
     } catch (const ContinueException&) {
+        had_error = true;
         std::cerr << msg(Msg::RUNTIME_PREFIX) << "0: continue used outside loop." << std::endl;
         print_stack_trace();
     } catch (const PyRiteRaiseException& ex) {
+        had_error = true;
         std::cerr << msg(Msg::UNCAUGHT_EX) << ex.value->repr() << std::endl;
         print_stack_trace();
     } catch (const RuntimeError& error) {
+        had_error = true;
         std::cerr << msg(Msg::RUNTIME_PREFIX) << error.line << ": " << error.what() << std::endl;
         print_stack_trace();
     }
@@ -627,9 +666,9 @@ void Interpreter::assignToLValue(AstNodePtr target, ValuePtr val, int line) {
                 auto index = this->evaluate(sub_node->start);
                 object->setSubscript(*index, val);
             } else {
-                ValuePtr start_v = sub_node->start ? this->evaluate(sub_node->start) : std::make_shared<NullValue>();
-                ValuePtr end_v = sub_node->end ? this->evaluate(sub_node->end) : std::make_shared<NullValue>();
-                ValuePtr step_v = sub_node->step ? this->evaluate(sub_node->step) : std::make_shared<NullValue>();
+                ValuePtr start_v = sub_node->start ? this->evaluate(sub_node->start) : make_value<NullValue>();
+                ValuePtr end_v = sub_node->end ? this->evaluate(sub_node->end) : make_value<NullValue>();
+                ValuePtr step_v = sub_node->step ? this->evaluate(sub_node->step) : make_value<NullValue>();
                 object->setSlice(start_v, end_v, step_v, val);
             }
         } catch (const std::runtime_error& e) { throw RuntimeError(line, e.what()); }
@@ -727,7 +766,7 @@ ValuePtr Interpreter::load_module(ModuleProxy* proxy) {
         }
     }
 
-    auto module_dict = std::make_shared<DimValue>(exports);
+    auto module_dict = make_value<DimValue>(exports);
 
     try {
         ValuePtr on_req = module_env->get("_on_load");
@@ -753,37 +792,37 @@ void Interpreter::define_native_functions() {
 #define GET_NUM(val, var_name) auto var_name = dynamic_cast<NumberValue*>(val.get()); if(!var_name) throw std::runtime_error(msg(Msg::NATIVE_NUM));
 #define GET_LN(val, var_name) auto var_name = dynamic_cast<LnValue*>(val.get()); if(!var_name) throw std::runtime_error(msg(Msg::NATIVE_LN));
 
-    globals->define("Exception", std::make_shared<NativeFnValue>("Exception", [](const std::vector<ValuePtr>& args){
+    globals->define("Exception", make_value<NativeFnValue>("Exception", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("Exception", 1);
-        return std::make_shared<ExceptionValue>(args[0]);
+        return make_value<ExceptionValue>(args[0]);
     }));
-    globals->define("abs", std::make_shared<NativeFnValue>("abs", [](const std::vector<ValuePtr>& args){
+    globals->define("abs", make_value<NativeFnValue>("abs", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("abs", 1); GET_NUM(args[0], num_val);
-        return std::make_shared<NumberValue>(num_val->value.abs());
+        return make_value<NumberValue>(num_val->value.abs());
     }));
-    globals->define("len", std::make_shared<NativeFnValue>("len", [](const std::vector<ValuePtr>& args) {
+    globals->define("len", make_value<NativeFnValue>("len", [](const std::vector<ValuePtr>& args) {
         REQUIRE_ARGS("len", 1);
         if (auto str_val = dynamic_cast<StringValue*>(args[0].get()))
-            return std::make_shared<NumberValue>(BigNumber(std::to_string(str_val->value.length())));
+            return make_value<NumberValue>(BigNumber(std::to_string(str_val->value.length())));
         if (auto list_val = dynamic_cast<LnValue*>(args[0].get()))
-            return std::make_shared<NumberValue>(BigNumber(std::to_string(list_val->elements.size())));
+            return make_value<NumberValue>(BigNumber(std::to_string(list_val->elements.size())));
         throw std::runtime_error("Argument to len() must be a string or a list.");
     }));
-    globals->define("rt", std::make_shared<NativeFnValue>("rt", [](const std::vector<ValuePtr>& args){
+    globals->define("rt", make_value<NativeFnValue>("rt", [](const std::vector<ValuePtr>& args){
         if (args.size() < 1 || args.size() > 2) throw std::runtime_error(msg(Msg::NATIVE_RT));
         GET_NUM(args[0], num_val);
         BigNumber n = 2;
         if (args.size() == 2) { GET_NUM(args[1], n_val); n = n_val->value; }
-        return std::make_shared<NumberValue>(BigNumber::root(num_val->value, n));
+        return make_value<NumberValue>(BigNumber::root(num_val->value, n));
     }));
-    globals->define("sort", std::make_shared<NativeFnValue>("sort", [](const std::vector<ValuePtr>& args){
+    globals->define("sort", make_value<NativeFnValue>("sort", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("sort", 1); GET_LN(args[0], list_val);
-        auto new_list = std::make_shared<LnValue>(list_val->elements);
+        auto new_list = make_value<LnValue>(list_val->elements);
         std::sort(new_list->elements.begin(), new_list->elements.end(),
             [](const ValuePtr& a, const ValuePtr& b) { try { return a->isLessThan(*b); } catch (...) { return false; } });
         return new_list;
     }));
-    globals->define("setify", std::make_shared<NativeFnValue>("setify", [](const std::vector<ValuePtr>& args){
+    globals->define("setify", make_value<NativeFnValue>("setify", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("setify", 1); GET_LN(args[0], list_val);
         struct ValuePtrLess {
             bool operator()(const ValuePtr& a, const ValuePtr& b) const {
@@ -795,7 +834,7 @@ void Interpreter::define_native_functions() {
         for (const auto& elem : list_val->elements) {
             if (seen.find(elem) == seen.end()) { seen.insert(elem); unique_elements.push_back(elem); }
         }
-        return std::make_shared<LnValue>(unique_elements);
+        return make_value<LnValue>(unique_elements);
     }));
     auto min_max_logic = [](const std::vector<ValuePtr>& args, bool is_max) {
         if (args.empty()) throw std::runtime_error(msg(Msg::NATIVE_MINMAX_EMPTY));
@@ -817,19 +856,19 @@ void Interpreter::define_native_functions() {
         }
         return extreme;
     };
-    globals->define("max", std::make_shared<NativeFnValue>("max", [min_max_logic](const std::vector<ValuePtr>& args){ return min_max_logic(args, true); }));
-    globals->define("min", std::make_shared<NativeFnValue>("min", [min_max_logic](const std::vector<ValuePtr>& args){ return min_max_logic(args, false); }));
-    globals->define("countdown", std::make_shared<NativeFnValue>("countdown", [](const std::vector<ValuePtr>& args){
+    globals->define("max", make_value<NativeFnValue>("max", [min_max_logic](const std::vector<ValuePtr>& args){ return min_max_logic(args, true); }));
+    globals->define("min", make_value<NativeFnValue>("min", [min_max_logic](const std::vector<ValuePtr>& args){ return min_max_logic(args, false); }));
+    globals->define("countdown", make_value<NativeFnValue>("countdown", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("countdown", 1); GET_NUM(args[0], sec_val);
         auto end_time = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(sec_val->value.toLongLong() * 1000);
         auto timer_fn_body = [end_time](const std::vector<ValuePtr>& inner_args) -> ValuePtr {
             if (!inner_args.empty()) throw std::runtime_error(msg(Msg::NATIVE_TIMER));
             auto now = std::chrono::high_resolution_clock::now();
-            return std::make_shared<NumberValue>(now >= end_time ? 1 : 0);
+            return make_value<NumberValue>(now >= end_time ? 1 : 0);
         };
-        return std::make_shared<NativeFnValue>("timer", timer_fn_body);
+        return make_value<NativeFnValue>("timer", timer_fn_body);
     }));
-    globals->define("hash", std::make_shared<NativeFnValue>("hash", [](const std::vector<ValuePtr>& args){
+    globals->define("hash", make_value<NativeFnValue>("hash", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("hash", 2);
         std::string data_str = args[0]->toString();
         GET_NUM(args[1], key_val);
@@ -837,33 +876,33 @@ void Interpreter::define_native_functions() {
         unsigned long long hash_val = 5381;
         for (char c : data_str) hash_val = ((hash_val << 5) + hash_val) + c;
         hash_val ^= key;
-        return std::make_shared<NumberValue>(BigNumber((long long)hash_val));
+        return make_value<NumberValue>(BigNumber((long long)hash_val));
     }));
-    globals->define("sin", std::make_shared<NativeFnValue>("sin", [](const std::vector<ValuePtr>& args) {
+    globals->define("sin", make_value<NativeFnValue>("sin", [](const std::vector<ValuePtr>& args) {
         REQUIRE_ARGS("sin", 1); GET_NUM(args[0], x);
-        return std::make_shared<NumberValue>(BigNumber(std::to_string(sin(x->value.toLongLong()))));
+        return make_value<NumberValue>(BigNumber(std::to_string(sin(x->value.toLongLong()))));
     }));
-    globals->define("cos", std::make_shared<NativeFnValue>("cos", [](const std::vector<ValuePtr>& args) {
+    globals->define("cos", make_value<NativeFnValue>("cos", [](const std::vector<ValuePtr>& args) {
         REQUIRE_ARGS("cos", 1); GET_NUM(args[0], x);
-        return std::make_shared<NumberValue>(BigNumber(std::to_string(cos(x->value.toLongLong()))));
+        return make_value<NumberValue>(BigNumber(std::to_string(cos(x->value.toLongLong()))));
     }));
-    globals->define("tan", std::make_shared<NativeFnValue>("tan", [](const std::vector<ValuePtr>& args) {
+    globals->define("tan", make_value<NativeFnValue>("tan", [](const std::vector<ValuePtr>& args) {
         REQUIRE_ARGS("tan", 1); GET_NUM(args[0], x);
-        return std::make_shared<NumberValue>(BigNumber(std::to_string(tan(x->value.toLongLong()))));
+        return make_value<NumberValue>(BigNumber(std::to_string(tan(x->value.toLongLong()))));
     }));
-    globals->define("log", std::make_shared<NativeFnValue>("log", [](const std::vector<ValuePtr>& args) {
+    globals->define("log", make_value<NativeFnValue>("log", [](const std::vector<ValuePtr>& args) {
         REQUIRE_ARGS("log", 1); GET_NUM(args[0], x);
         if (x->value <= BigNumber(0)) throw std::runtime_error(msg(Msg::NATIVE_LOG_POS));
-        return std::make_shared<NumberValue>(BigNumber(std::to_string(log(x->value.toLongLong()))));
+        return make_value<NumberValue>(BigNumber(std::to_string(log(x->value.toLongLong()))));
     }));
-    globals->define("new", std::make_shared<NativeFnValue>("new", [this](const std::vector<ValuePtr>& args) -> ValuePtr {
+    globals->define("new", make_value<NativeFnValue>("new", [this](const std::vector<ValuePtr>& args) -> ValuePtr {
         REQUIRE_MIN_ARGS("new", 1);
-        auto class_val = std::dynamic_pointer_cast<Class>(args[0]);
+        auto class_val = ptr_cast<Class>(args[0]);
         if (!class_val) throw std::runtime_error(msg(Msg::NEW_CLASS));
         if (args.size() - 1 > class_val->fields.size())
             throw std::runtime_error(class_val->name + "() takes at most " +
                                      std::to_string(class_val->fields.size()) + " arguments.");
-        auto instance = std::make_shared<Instance>(class_val);
+        auto instance = make_value<Instance>(class_val);
         instance->instance_env->define("this", instance);
         // Constructor arguments fill the declared fields in order, with
         // the same type check a method call applies to its parameters.
@@ -874,45 +913,67 @@ void Interpreter::define_native_functions() {
                                          "' expects " + token_type_to_string(field.type_keyword) + ".");
             instance->instance_env->define(field.name, args[i]);
         }
+        // Fields without an argument fall back to their defaults; an
+        // expression default is evaluated now, in the instance scope. A
+        // field with neither an argument nor a default is an error
+        // instead of a silent null.
+        for (size_t i = args.size() - 1; i < class_val->fields.size(); ++i) {
+            const ParameterDefinition& field = class_val->fields[i];
+            if (field.default_expr) {
+                auto saved = this->environment;
+                this->environment = instance->instance_env;
+                ValuePtr dv;
+                try { dv = this->evaluate(field.default_expr); }
+                catch (...) { this->environment = saved; throw; }
+                this->environment = saved;
+                if (!is_type_compatible(field.type_keyword, dv))
+                    throw std::runtime_error(class_val->name + " field '" + field.name +
+                                             "' expects " + token_type_to_string(field.type_keyword) + ".");
+                instance->instance_env->define(field.name, dv);
+            }
+            // A field with neither an argument nor a default starts as
+            // null - the documented struct workflow assigns fields after
+            // new(), so this stays legal (see guide, struct section).
+        }
         if (!class_val->initializer_body.empty()) {
             try { this->execute_block(class_val->initializer_body, instance->instance_env); }
             catch (const ReturnValueException&) { throw std::runtime_error("Cannot return a value from an instance initializer."); }
         }
         return instance;
     }));
-    globals->define("set_precision", std::make_shared<NativeFnValue>("set_precision", [](const std::vector<ValuePtr>& args){
+    globals->define("set_precision", make_value<NativeFnValue>("set_precision", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("set_precision", 1); GET_NUM(args[0], num_val);
         try { BigNumber::set_default_precision(num_val->value.toLongLong()); }
         catch (const std::exception& e) { throw std::runtime_error(e.what()); }
-        return std::make_shared<NullValue>();
+        return make_value<NullValue>();
     }));
-    globals->define("get_precision", std::make_shared<NativeFnValue>("get_precision", [](const std::vector<ValuePtr>& args){
-        return std::make_shared<NumberValue>(BigNumber(BigNumber::get_default_precision()));
+    globals->define("get_precision", make_value<NativeFnValue>("get_precision", [](const std::vector<ValuePtr>& args){
+        return make_value<NumberValue>(BigNumber(BigNumber::get_default_precision()));
     }));
-    globals->define("approx", std::make_shared<NativeFnValue>("approx", [](const std::vector<ValuePtr>& args){
+    globals->define("approx", make_value<NativeFnValue>("approx", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("approx", 2); GET_NUM(args[0], num_to_approx); GET_NUM(args[1], precision_val);
-        try { return std::make_shared<NumberValue>(num_to_approx->value.approx(precision_val->value.toLongLong())); }
+        try { return make_value<NumberValue>(num_to_approx->value.approx(precision_val->value.toLongLong())); }
         catch (const std::exception& e) { throw std::runtime_error(e.what()); }
     }));
-    globals->define("is_int", std::make_shared<NativeFnValue>("is_int", [](const std::vector<ValuePtr>& args){
+    globals->define("is_int", make_value<NativeFnValue>("is_int", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("is_int", 1); GET_NUM(args[0], num_val);
-        return std::make_shared<NumberValue>(num_val->value.isInteger() ? 1 : 0);
+        return make_value<NumberValue>(num_val->value.isInteger() ? 1 : 0);
     }));
-    globals->define("is_neg", std::make_shared<NativeFnValue>("is_neg", [](const std::vector<ValuePtr>& args){
+    globals->define("is_neg", make_value<NativeFnValue>("is_neg", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("is_neg", 1); GET_NUM(args[0], num_val);
-        return std::make_shared<NumberValue>(num_val->value.isNegative() ? 1 : 0);
+        return make_value<NumberValue>(num_val->value.isNegative() ? 1 : 0);
     }));
-    globals->define("to_double", std::make_shared<NativeFnValue>("to_double", [](const std::vector<ValuePtr>& args){
+    globals->define("to_double", make_value<NativeFnValue>("to_double", [](const std::vector<ValuePtr>& args){
         REQUIRE_ARGS("to_double", 1); GET_NUM(args[0], num_val);
-        try { return std::make_shared<NumberValue>(BigNumber(std::to_string(num_val->value.toDouble()))); }
+        try { return make_value<NumberValue>(BigNumber(std::to_string(num_val->value.toDouble()))); }
         catch (const std::exception& e) { throw std::runtime_error(e.what()); }
     }));
-    globals->define("halt", std::make_shared<NativeFnValue>("halt", [](const std::vector<ValuePtr>& args){
+    globals->define("halt", make_value<NativeFnValue>("halt", [](const std::vector<ValuePtr>& args){
         exit(0);
-        return std::make_shared<NullValue>();
+        return make_value<NullValue>();
     }));
-    globals->define("run", std::make_shared<NativeFnValue>("run", [](const std::vector<ValuePtr>& args){
-        return std::make_shared<NullValue>();
+    globals->define("run", make_value<NativeFnValue>("run", [](const std::vector<ValuePtr>& args){
+        return make_value<NullValue>();
     }));
 
 
@@ -932,10 +993,10 @@ void Interpreter::define_native_functions() {
     // browser knows every alphabet.
     {
         auto number = [](long long v) -> ValuePtr {
-            return std::make_shared<NumberValue>(BigNumber(v));
+            return make_value<NumberValue>(BigNumber(v));
         };
         auto text_value = [](const std::string& s) -> ValuePtr {
-            return std::make_shared<StringValue>(s);
+            return make_value<StringValue>(s);
         };
         auto is_space = [](char c) -> bool {
             return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
@@ -947,28 +1008,28 @@ void Interpreter::define_native_functions() {
             return str_val->value;
         };
 
-        globals->define("upper", std::make_shared<NativeFnValue>("upper", [string_arg](const std::vector<ValuePtr>& args){
+        globals->define("upper", make_value<NativeFnValue>("upper", [string_arg](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("upper", 1);
             std::string out = string_arg(args[0], "upper");
             for (char& c : out) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-            return std::make_shared<StringValue>(out);
+            return make_value<StringValue>(out);
         }));
-        globals->define("lower", std::make_shared<NativeFnValue>("lower", [string_arg](const std::vector<ValuePtr>& args){
+        globals->define("lower", make_value<NativeFnValue>("lower", [string_arg](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("lower", 1);
             std::string out = string_arg(args[0], "lower");
             for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            return std::make_shared<StringValue>(out);
+            return make_value<StringValue>(out);
         }));
-        globals->define("trim", std::make_shared<NativeFnValue>("trim", [string_arg, is_space](const std::vector<ValuePtr>& args){
+        globals->define("trim", make_value<NativeFnValue>("trim", [string_arg, is_space](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("trim", 1);
             std::string text = string_arg(args[0], "trim");
             size_t start = 0;
             while (start < text.size() && is_space(text[start])) start++;
             size_t stop = text.size();
             while (stop > start && is_space(text[stop - 1])) stop--;
-            return std::make_shared<StringValue>(text.substr(start, stop - start));
+            return make_value<StringValue>(text.substr(start, stop - start));
         }));
-        globals->define("split", std::make_shared<NativeFnValue>("split", [string_arg](const std::vector<ValuePtr>& args){
+        globals->define("split", make_value<NativeFnValue>("split", [string_arg](const std::vector<ValuePtr>& args){
             REQUIRE_MIN_ARGS("split", 1);
             std::string text = string_arg(args[0], "split");
             std::string sep = " ";
@@ -976,22 +1037,22 @@ void Interpreter::define_native_functions() {
             std::vector<ValuePtr> parts;
             if (sep.empty()) {
                 for (size_t i = 0; i < text.size(); i++)
-                    parts.push_back(std::make_shared<StringValue>(text.substr(i, 1)));
+                    parts.push_back(make_value<StringValue>(text.substr(i, 1)));
             } else {
                 size_t pos = 0;
                 while (true) {
                     size_t hit = text.find(sep, pos);
                     if (hit == std::string::npos) {
-                        parts.push_back(std::make_shared<StringValue>(text.substr(pos)));
+                        parts.push_back(make_value<StringValue>(text.substr(pos)));
                         break;
                     }
-                    parts.push_back(std::make_shared<StringValue>(text.substr(pos, hit - pos)));
+                    parts.push_back(make_value<StringValue>(text.substr(pos, hit - pos)));
                     pos = hit + sep.size();
                 }
             }
-            return std::make_shared<LnValue>(parts);
+            return make_value<LnValue>(parts);
         }));
-        globals->define("join", std::make_shared<NativeFnValue>("join", [string_arg](const std::vector<ValuePtr>& args){
+        globals->define("join", make_value<NativeFnValue>("join", [string_arg](const std::vector<ValuePtr>& args){
             REQUIRE_MIN_ARGS("join", 1);
             GET_LN(args[0], list_val);
             std::string sep = "";
@@ -1001,14 +1062,14 @@ void Interpreter::define_native_functions() {
                 if (i > 0) out += sep;
                 out += list_val->elements[i]->toString();
             }
-            return std::make_shared<StringValue>(out);
+            return make_value<StringValue>(out);
         }));
-        globals->define("replace", std::make_shared<NativeFnValue>("replace", [string_arg](const std::vector<ValuePtr>& args){
+        globals->define("replace", make_value<NativeFnValue>("replace", [string_arg](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("replace", 3);
             std::string text = string_arg(args[0], "replace");
             std::string from = string_arg(args[1], "replace");
             std::string to = string_arg(args[2], "replace");
-            if (from.empty()) return std::make_shared<StringValue>(text);
+            if (from.empty()) return make_value<StringValue>(text);
             std::string out;
             size_t pos = 0;
             while (true) {
@@ -1021,9 +1082,9 @@ void Interpreter::define_native_functions() {
                 out += to;
                 pos = hit + from.size();
             }
-            return std::make_shared<StringValue>(out);
+            return make_value<StringValue>(out);
         }));
-        globals->define("contains", std::make_shared<NativeFnValue>("contains", [number](const std::vector<ValuePtr>& args){
+        globals->define("contains", make_value<NativeFnValue>("contains", [number](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("contains", 2);
             if (auto str_val = dynamic_cast<StringValue*>(args[0].get())) {
                 auto sub_val = dynamic_cast<StringValue*>(args[1].get());
@@ -1044,7 +1105,7 @@ void Interpreter::define_native_functions() {
             }
             return number(0);
         }));
-        globals->define("substring", std::make_shared<NativeFnValue>("substring", [number](const std::vector<ValuePtr>& args){
+        globals->define("substring", make_value<NativeFnValue>("substring", [number](const std::vector<ValuePtr>& args){
             REQUIRE_MIN_ARGS("substring", 1);
             auto str_val = dynamic_cast<StringValue*>(args[0].get());
             if (!str_val) throw std::runtime_error("Argument to substring() must be a string.");
@@ -1058,17 +1119,17 @@ void Interpreter::define_native_functions() {
             if (stop < 0) stop = 0;
             if (stop > length) stop = length;
             if (start > stop) { long long swap = start; start = stop; stop = swap; }
-            return std::make_shared<StringValue>(
+            return make_value<StringValue>(
                 str_val->value.substr(static_cast<size_t>(start),
                                       static_cast<size_t>(stop - start)));
         }));
-        globals->define("char", std::make_shared<NativeFnValue>("char", [number](const std::vector<ValuePtr>& args){
+        globals->define("char", make_value<NativeFnValue>("char", [number](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("char", 1); GET_NUM(args[0], code_val);
             long long code = code_val->value.toLongLong();
             std::string out(1, static_cast<char>(code & 0xFF));
-            return std::make_shared<StringValue>(out);
+            return make_value<StringValue>(out);
         }));
-        globals->define("ord", std::make_shared<NativeFnValue>("ord", [number](const std::vector<ValuePtr>& args){
+        globals->define("ord", make_value<NativeFnValue>("ord", [number](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("ord", 1);
             auto str_val = dynamic_cast<StringValue*>(args[0].get());
             if (!str_val) throw std::runtime_error("Argument to ord() must be a string.");
@@ -1077,7 +1138,7 @@ void Interpreter::define_native_functions() {
                 static_cast<unsigned char>(str_val->value[0])));
         }));
 
-        globals->define("range", std::make_shared<NativeFnValue>("range", [number](const std::vector<ValuePtr>& args){
+        globals->define("range", make_value<NativeFnValue>("range", [number](const std::vector<ValuePtr>& args){
             REQUIRE_MIN_ARGS("range", 1);
             long long start = 0;
             long long stop = 0;
@@ -1100,31 +1161,31 @@ void Interpreter::define_native_functions() {
             } else if (step < 0) {
                 for (long long i = start; i > stop; i += step) out.push_back(number(i));
             }
-            return std::make_shared<LnValue>(out);
+            return make_value<LnValue>(out);
         }));
-        globals->define("reverse", std::make_shared<NativeFnValue>("reverse", [](const std::vector<ValuePtr>& args){
+        globals->define("reverse", make_value<NativeFnValue>("reverse", [](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("reverse", 1); GET_LN(args[0], list_val);
             std::vector<ValuePtr> out(list_val->elements.rbegin(), list_val->elements.rend());
-            return std::make_shared<LnValue>(out);
+            return make_value<LnValue>(out);
         }));
-        globals->define("keys", std::make_shared<NativeFnValue>("keys", [](const std::vector<ValuePtr>& args){
+        globals->define("keys", make_value<NativeFnValue>("keys", [](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("keys", 1);
             auto dict_val = dynamic_cast<DimValue*>(args[0].get());
             if (!dict_val) throw std::runtime_error("Argument to keys() must be a dictionary.");
             std::vector<ValuePtr> out;
             for (const auto& entry : dict_val->dict)
-                out.push_back(std::make_shared<StringValue>(entry.first));
-            return std::make_shared<LnValue>(out);
+                out.push_back(make_value<StringValue>(entry.first));
+            return make_value<LnValue>(out);
         }));
-        globals->define("values", std::make_shared<NativeFnValue>("values", [](const std::vector<ValuePtr>& args){
+        globals->define("values", make_value<NativeFnValue>("values", [](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("values", 1);
             auto dict_val = dynamic_cast<DimValue*>(args[0].get());
             if (!dict_val) throw std::runtime_error("Argument to values() must be a dictionary.");
             std::vector<ValuePtr> out;
             for (const auto& entry : dict_val->dict) out.push_back(entry.second);
-            return std::make_shared<LnValue>(out);
+            return make_value<LnValue>(out);
         }));
-        globals->define("has", std::make_shared<NativeFnValue>("has", [number](const std::vector<ValuePtr>& args){
+        globals->define("has", make_value<NativeFnValue>("has", [number](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("has", 2);
             auto dict_val = dynamic_cast<DimValue*>(args[0].get());
             if (!dict_val) throw std::runtime_error("Argument to has() must be a dictionary.");
@@ -1133,7 +1194,7 @@ void Interpreter::define_native_functions() {
             return number(dict_val->dict.count(key_val->value) ? 1 : 0);
         }));
 
-        globals->define("type", std::make_shared<NativeFnValue>("type", [text_value](const std::vector<ValuePtr>& args){
+        globals->define("type", make_value<NativeFnValue>("type", [text_value](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("type", 1);
             const ValuePtr& value = args[0];
             if (dynamic_cast<NullValue*>(value.get())) return text_value("null");
@@ -1147,27 +1208,27 @@ void Interpreter::define_native_functions() {
             if (dynamic_cast<Instance*>(value.get())) return text_value("instance");
             return text_value("unknown");
         }));
-        globals->define("is_null", std::make_shared<NativeFnValue>("is_null", [number](const std::vector<ValuePtr>& args){
+        globals->define("is_null", make_value<NativeFnValue>("is_null", [number](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("is_null", 1);
             return number(dynamic_cast<NullValue*>(args[0].get()) ? 1 : 0);
         }));
-        globals->define("is_number", std::make_shared<NativeFnValue>("is_number", [number](const std::vector<ValuePtr>& args){
+        globals->define("is_number", make_value<NativeFnValue>("is_number", [number](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("is_number", 1);
             return number(dynamic_cast<NumberValue*>(args[0].get()) ? 1 : 0);
         }));
-        globals->define("is_string", std::make_shared<NativeFnValue>("is_string", [number](const std::vector<ValuePtr>& args){
+        globals->define("is_string", make_value<NativeFnValue>("is_string", [number](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("is_string", 1);
             return number(dynamic_cast<StringValue*>(args[0].get()) ? 1 : 0);
         }));
-        globals->define("is_list", std::make_shared<NativeFnValue>("is_list", [number](const std::vector<ValuePtr>& args){
+        globals->define("is_list", make_value<NativeFnValue>("is_list", [number](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("is_list", 1);
             return number(dynamic_cast<LnValue*>(args[0].get()) ? 1 : 0);
         }));
-        globals->define("is_dict", std::make_shared<NativeFnValue>("is_dict", [number](const std::vector<ValuePtr>& args){
+        globals->define("is_dict", make_value<NativeFnValue>("is_dict", [number](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("is_dict", 1);
             return number(dynamic_cast<DimValue*>(args[0].get()) ? 1 : 0);
         }));
-        globals->define("is_function", std::make_shared<NativeFnValue>("is_function", [number](const std::vector<ValuePtr>& args){
+        globals->define("is_function", make_value<NativeFnValue>("is_function", [number](const std::vector<ValuePtr>& args){
             REQUIRE_ARGS("is_function", 1);
             bool is_fn = dynamic_cast<FunctionValue*>(args[0].get()) ||
                          dynamic_cast<NativeFnValue*>(args[0].get());

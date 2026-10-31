@@ -28,6 +28,8 @@ inline const char* msg(Msg id) {
         case Msg::STR_TO_NUM: return "无法将字符串 '{}' 转换为数字。";
         case Msg::STR_TO_BIN: return "无法将字符串 '{}' 转换为二进制对象。必须为 '0x...' 格式。";
         case Msg::LN_INIT_LN: return "只能用 ln 初始化 ln 变量。";
+        case Msg::DEC_INIT_NUM: return "dec 声明要求一个数字，或可转换为数字的值。";
+        case Msg::BIN_INIT_BIN: return "bin 声明要求二进制数据，或可转换为二进制的字符串。";
         case Msg::SET_NODE_ERR: return "SetNode 应通过 AssignmentNode 处理。";
         case Msg::NO_PROP: return "只有实例才能拥有属性。无法获取 '{}'。";
         case Msg::NO_SET_PROP: return "只有实例才能设置属性。";

@@ -47,7 +47,7 @@ struct Class : public Value {
     std::string toString() const override { return "<class " + name + ">"; }
     std::string repr() const override { return toString(); }
     bool isTruthy() const override { return true; }
-    ValuePtr clone() const override { return std::make_shared<Class>(*this); }
+    ValuePtr clone() const override { return make_value<Class>(*this); }
     bool isEqualTo(const Value& other) const override;
 };
 

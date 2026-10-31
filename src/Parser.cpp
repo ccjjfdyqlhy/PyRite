@@ -87,31 +87,22 @@ ParameterDefinition Parser::parse_parameter() {
     AstNodePtr default_expr = nullptr;
     if (match({TokenType::EQUAL})) {
         if (DEBUG) std::cout << "DEBUG: Parsing default value for '" << param_name << "'..." << std::endl;
-        if (check(TokenType::NUMBER)) {
-            advance();
-            default_value = std::make_shared<NumberValue>(BigNumber(previous_token.lexeme));
-        } else if (check(TokenType::STRING)) {
-            advance();
-            default_value = std::make_shared<StringValue>(previous_token.lexeme);
-        } else if (check(TokenType::HEX_LITERAL)) {
-            advance();
-            default_value = std::make_shared<BinaryValue>(previous_token.lexeme);
-        } else if (check(TokenType::NULL_LITERAL)) {
-            advance();
-            default_value = std::make_shared<NullValue>();
-        } else if (check(TokenType::LBRACKET)) {
-            advance();
-            if (check(TokenType::RBRACKET)) {
-                advance();
-                default_value = std::make_shared<LnValue>(std::vector<ValuePtr>{});
-            } else {
-                default_expr = list_literal();
-            }
-        } else if (check(TokenType::LBRACE)) {
-            default_expr = dim_literal();
+        // Always parse a full expression. A plain literal is lifted back
+        // out as the cached default; anything else (1 + 2, a call, a
+        // variable) stays an expression and is evaluated where the
+        // default is needed. Parsing `1 + 2` used to stop at the 1 and
+        // leave `+ 2` dangling as a syntax error.
+        AstNodePtr dexpr = expression();
+        if (auto lit = dynamic_cast<LiteralNode*>(dexpr.get())) {
+            default_value = lit->value;
+        } else if (auto listlit = dynamic_cast<ListLiteralNode*>(dexpr.get())) {
+            if (listlit->elements.empty()) default_value = make_value<LnValue>(std::vector<ValuePtr>{});
+            else default_expr = dexpr;
+        } else if (auto dimlit = dynamic_cast<DimLiteralNode*>(dexpr.get())) {
+            if (dimlit->entries.empty()) default_value = make_value<DimValue>();
+            else default_expr = dexpr;
         } else {
-            // Try parsing as expression default (variable reference, fn call, etc.)
-            default_expr = expression();
+            default_expr = dexpr;
         }
     }
     if (default_expr) return ParameterDefinition(keyword.type, param_name, default_expr);
@@ -398,7 +389,7 @@ AstNodePtr Parser::say_statement() {
 
 AstNodePtr Parser::return_statement() {
     int line = previous_token.line;
-    ValuePtr v = std::make_shared<NullValue>();
+    ValuePtr v = make_value<NullValue>();
     AstNodePtr val_node = std::make_shared<LiteralNode>(line, v);
     if (!check(TokenType::ENDFN) && !check(TokenType::ENDIF) && !check(TokenType::ENDWHILE) && !check(TokenType::ENDTRY) && !check(TokenType::END) && !check(TokenType::ELIF) && !check(TokenType::ELSE)) {
         val_node = expression();
@@ -651,7 +642,7 @@ AstNodePtr Parser::interpolated_string(const std::string& text, int line) {
                 std::string name = text.substr(i + 1, end - i - 1);
                 if (!piece.empty()) {
                     parts.push_back(std::make_shared<LiteralNode>(
-                        line, std::make_shared<StringValue>(piece)));
+                        line, make_value<StringValue>(piece)));
                     piece.clear();
                 }
                 parts.push_back(value_of_name(name, line));
@@ -665,22 +656,22 @@ AstNodePtr Parser::interpolated_string(const std::string& text, int line) {
     }
     if (!piece.empty()) {
         parts.push_back(std::make_shared<LiteralNode>(
-            line, std::make_shared<StringValue>(piece)));
+            line, make_value<StringValue>(piece)));
     }
     if (!interpolated) {
         // No value in the text: it stays one literal.
         std::string whole;
         for (const auto& part : parts) {
-            whole += std::dynamic_pointer_cast<StringValue>(
+            whole += ptr_cast<StringValue>(
                 std::dynamic_pointer_cast<LiteralNode>(part)->value)->value;
         }
         return std::make_shared<LiteralNode>(
-            line, std::make_shared<StringValue>(whole));
+            line, make_value<StringValue>(whole));
     }
     // The pieces, one after the other.
     if (parts.empty()) {
         return std::make_shared<LiteralNode>(
-            line, std::make_shared<StringValue>(""));
+            line, make_value<StringValue>(""));
     }
     AstNodePtr result = parts[0];
     Token plus;
@@ -713,10 +704,10 @@ AstNodePtr Parser::value_of_name(const std::string& name, int line) {
 AstNodePtr Parser::primary() {
     int line = current_token.line;
     if (match({TokenType::FN})) return fn_lambda(line);
-    if (match({TokenType::NUMBER})) return std::make_shared<LiteralNode>(line, std::make_shared<NumberValue>(BigNumber(previous_token.lexeme)));
+    if (match({TokenType::NUMBER})) return std::make_shared<LiteralNode>(line, make_value<NumberValue>(BigNumber(previous_token.lexeme)));
     if (match({TokenType::STRING})) return interpolated_string(previous_token.lexeme, line);
-    if (match({TokenType::HEX_LITERAL})) return std::make_shared<LiteralNode>(line, std::make_shared<BinaryValue>(previous_token.lexeme));
-    if (match({TokenType::NULL_LITERAL})) return std::make_shared<LiteralNode>(line, std::make_shared<NullValue>());
+    if (match({TokenType::HEX_LITERAL})) return std::make_shared<LiteralNode>(line, make_value<BinaryValue>(previous_token.lexeme));
+    if (match({TokenType::NULL_LITERAL})) return std::make_shared<LiteralNode>(line, make_value<NullValue>());
     if (match({TokenType::LBRACKET})) return list_literal();
     if (match({TokenType::LBRACE})) return dim_literal();
     if (match({TokenType::IDENTIFIER})) return std::make_shared<VariableNode>(line, previous_token.lexeme);

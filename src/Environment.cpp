@@ -61,15 +61,15 @@ ValuePtr Environment::get(const std::string& name) const {
 
 ValuePtr Environment::get_type(const std::string& name) {
     ValuePtr val = get(name);
-    if (dynamic_cast<NumberValue*>(val.get())) return std::make_shared<StringValue>("dec");
-    if (dynamic_cast<StringValue*>(val.get())) return std::make_shared<StringValue>("str");
-    if (dynamic_cast<BinaryValue*>(val.get())) return std::make_shared<StringValue>("bin");
-    if (dynamic_cast<LnValue*>(val.get())) return std::make_shared<StringValue>("ln");
-    if (dynamic_cast<DimValue*>(val.get())) return std::make_shared<StringValue>("dim");
-    if (dynamic_cast<ExceptionValue*>(val.get())) return std::make_shared<StringValue>("exception");
-    if (dynamic_cast<Class*>(val.get())) return std::make_shared<StringValue>("class");
-    if (dynamic_cast<Instance*>(val.get())) return std::make_shared<StringValue>("instance");
-    return std::make_shared<StringValue>("unknown");
+    if (dynamic_cast<NumberValue*>(val.get())) return make_value<StringValue>("dec");
+    if (dynamic_cast<StringValue*>(val.get())) return make_value<StringValue>("str");
+    if (dynamic_cast<BinaryValue*>(val.get())) return make_value<StringValue>("bin");
+    if (dynamic_cast<LnValue*>(val.get())) return make_value<StringValue>("ln");
+    if (dynamic_cast<DimValue*>(val.get())) return make_value<StringValue>("dim");
+    if (dynamic_cast<ExceptionValue*>(val.get())) return make_value<StringValue>("exception");
+    if (dynamic_cast<Class*>(val.get())) return make_value<StringValue>("class");
+    if (dynamic_cast<Instance*>(val.get())) return make_value<StringValue>("instance");
+    return make_value<StringValue>("unknown");
 }
 
 // Class
@@ -90,16 +90,16 @@ Instance::Instance(ClassPtr k) : Value(VTag::Instance), klass(k) {
     for (const auto& field_def : klass->fields) {
         ValuePtr default_val;
         if (field_def.default_expr) {
-            default_val = std::make_shared<NullValue>();
+            default_val = make_value<NullValue>();
         } else {
-            default_val = field_def.default_value ? field_def.default_value->clone() : std::make_shared<NullValue>();
+            default_val = field_def.default_value ? field_def.default_value->clone() : make_value<NullValue>();
         }
         instance_env->define(field_def.name, default_val);
     }
 }
 
 ValuePtr Instance::clone() const {
-    auto new_inst = std::make_shared<Instance>(klass);
+    auto new_inst = make_value<Instance>(klass);
     for (const auto& field_def : klass->fields) {
         try {
             ValuePtr field_val = instance_env->get(field_def.name);
@@ -117,11 +117,8 @@ ValuePtr Instance::get(const std::string& name) {
         auto it = klass->methods.find(name);
         if (it != klass->methods.end()) {
             if (DEBUG) std::cout << "DEBUG: Found method '" << name << "', creating bound method." << std::endl;
-            // The only shared_from_this in play is Value's; the
-            // instance type itself carries no second base.
-            return std::make_shared<BoundMethodValue>(
-                std::static_pointer_cast<Instance>(
-                    std::enable_shared_from_this<Value>::shared_from_this()),
+            return make_value<BoundMethodValue>(
+                ptr_static_cast<Instance>(self()),
                 it->second);
         }
     }

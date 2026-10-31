@@ -6,7 +6,7 @@
 // PyRite Bytecode Instruction Set
 // ============================================================================
 // GENERATED FILE -- DO NOT EDIT BY HAND.
-// Source: opcodes.def (sha256 22f5b41a5f7517bc468e4ef506f1ecdb5e9893276074bb4f5696a7523eca6201)
+// Source: opcodes.def (sha256 12d591f75dd71877da0de718394052c1c571503ac24aef0d152b794e1f497dfc)
 // Regenerate: python3 tools/gen_opcodes.py
 //
 // Stack-based VM. Operands are big-endian 24-bit unsigned integers (0..2^24-1)
@@ -116,7 +116,8 @@ enum class OpCode : uint8_t {
     OP_INPLACE_MUL,        // locals[dst] *= rhs
     OP_CMP_JUMP,           // 4 operands: lhs, rhs, cmp-code, jump target
     OP_INPLACE_AM,         // dst += src * k; two packed operands
-    OP_RESERVED_1,         // reserved for future fused/superinstructions
+    OP_DEF_STRUCT,         // [struct descriptor constant] build Class, push
+    OP_CALL_MEMBER,        // [obj][args...] call member; 2 operands: name idx, arg count
     OP_RESERVED_2,         // reserved
     OP_RESERVED_3,         // reserved
     OP_RESERVED_4,         // reserved
@@ -127,7 +128,7 @@ enum class OpCode : uint8_t {
 };
 
 // Total number of opcodes (the permutation range used by the obfuscator).
-constexpr int OPCODE_COUNT = 71;
+constexpr int OPCODE_COUNT = 72;
 
 // Convert opcode to string for disassembly / debugging
 inline const char* op_name(OpCode op) {
@@ -195,7 +196,8 @@ inline const char* op_name(OpCode op) {
         case OpCode::OP_INPLACE_MUL: return "INPLACE_MUL";
         case OpCode::OP_CMP_JUMP:    return "CMP_JUMP";
         case OpCode::OP_INPLACE_AM:  return "INPLACE_AM";
-        case OpCode::OP_RESERVED_1:  return "RESERVED_1";
+        case OpCode::OP_DEF_STRUCT:  return "DEF_STRUCT";
+        case OpCode::OP_CALL_MEMBER: return "CALL_MEMBER";
         case OpCode::OP_RESERVED_2:  return "RESERVED_2";
         case OpCode::OP_RESERVED_3:  return "RESERVED_3";
         case OpCode::OP_RESERVED_4:  return "RESERVED_4";

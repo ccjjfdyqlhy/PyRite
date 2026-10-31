@@ -36,7 +36,7 @@ Token Tokenizer::next_token() {
         case '^': return make_token(match('=') ? TokenType::CARET_EQUAL : TokenType::CARET);
         case '%': return make_token(match('=') ? TokenType::MODULO_EQUAL : TokenType::MODULO);
         case '=': return make_token(match('=') ? TokenType::EQUAL_EQUAL : TokenType::EQUAL);
-        case '-': return make_token(match('>') ? TokenType::ARROW : TokenType::MINUS);
+        case '-': return make_token(match('>') ? TokenType::ARROW : (match('=') ? TokenType::MINUS_EQUAL : TokenType::MINUS));
         case '!': return make_token(match('=') ? TokenType::BANG_EQUAL : TokenType::UNKNOWN);
         case '<': return make_token(match('=') ? TokenType::LESS_EQUAL : TokenType::LESS); case '>': return make_token(match('=') ? TokenType::GREATER_EQUAL : TokenType::GREATER);
         case '"': case '\'': return string(c);

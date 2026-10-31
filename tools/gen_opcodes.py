@@ -295,6 +295,10 @@ def render_cast_cpp(casts, sha):
 
     cases = []
     for c in casts:
+        # Codes whose name ends in _DECL are internal declaration variants:
+        # no source token maps to them, only the compiler does.
+        if c.token.endswith("_DECL"):
+            continue
         cases.append("        case TokenType::%s: out = %d; return true;" % (c.token, c.code))
     cases.append("")
 
