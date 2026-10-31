@@ -137,7 +137,7 @@ void VM::resolve_side(CallFrame& frame, uint32_t enc, ValuePtr& out) {
     uint32_t kind = (enc >> 9) & 0x7;
     uint32_t pay = enc & 0x1FF;
     if (kind == 1) { out = frame.locals[pay]; return; }
-    if (kind == 3) { out = make_value<NumberValue>(BigNumber((long long)pay)); return; }
+    if (kind == 3) { out = intern_small((long long)pay); return; }
     out = frame.function->constants[pay];
 }
 
@@ -767,7 +767,7 @@ bool VM::run(BytecodeChunkPtr c) {
                         if (pay >= frame.nlocals) { runtime_error(current_line(), "callr: bad arg slot"); return false; }
                         argv[i] = frame.locals[pay];
                     } else if (kind == 1) {
-                        argv[i] = make_value<NumberValue>(BigNumber((long long)pay));
+                        argv[i] = intern_small((long long)pay);
                     } else if (kind == 2) {
                         const ValuePtr* c = global_read_cell(frame, pay);
                         argv[i] = c ? *c : nullptr;
@@ -871,7 +871,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     }
                     if (rkind == 1) push(frame.locals[rpay]);
                     else if (rkind == 2) push(stack_rhs);
-                    else if (rkind == 3) push(make_value<NumberValue>(BigNumber((long long)rpay)));
+                    else if (rkind == 3) push(intern_small((long long)rpay));
                     else push(frame.function->constants[rpay]);
                     ValuePtr rb2 = pop();
                     ValuePtr ra2 = pop();
