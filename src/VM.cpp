@@ -681,7 +681,9 @@ bool VM::run(BytecodeChunkPtr c) {
                         }
                         if (dglobal) *dcell = old; else *dslot = old;
                     }
-                    auto fresh = make_value<NumberValue>(std::move(result));
+                    long long iv;
+            ValuePtr fresh = (result.is_int_fast(iv) && iv >= -4096 && iv <= 4095)
+                ? intern_small(iv) : make_value<NumberValue>(std::move(result));
                     if (dglobal) *dcell = fresh; else *dslot = fresh;
                     break;
                 }
@@ -812,7 +814,9 @@ bool VM::run(BytecodeChunkPtr c) {
                         if (dst_global) *dcell = a; else *dslot = a;
                         if (!no_push) push(a);
                     } else {
-                        auto fresh = make_value<NumberValue>(std::move(result));
+                        long long iv;
+            ValuePtr fresh = (result.is_int_fast(iv) && iv >= -4096 && iv <= 4095)
+                ? intern_small(iv) : make_value<NumberValue>(std::move(result));
                         if (dst_global) *dcell = fresh; else *dslot = fresh;
                         if (!no_push) push(fresh);
                     }
@@ -1661,6 +1665,17 @@ void VM::push_frame_from_stack(Closure* closure, size_t nargs, int line) {
 // ============================================================================
 // Binary/unary operations
 // ============================================================================
+// Interned small integers in [-4096, 4095]: an 8K-entry table, filled
+// lazily. A loop counter or a small result finds its value here instead
+// of allocating; numbers are immutable so entries never go stale.
+ValuePtr VM::intern_small(long long v) {
+    static ValuePtr cache[8192];
+    size_t idx = (size_t)(v + 4096);
+    ValuePtr& slot = cache[idx];
+    if (!slot) slot = make_value<NumberValue>(BigNumber(v));
+    return slot;
+}
+
 // ============================================================================
 // Cached global-cell access for the fused instructions
 // ============================================================================
@@ -1767,7 +1782,9 @@ bool VM::exec_inplace(OpCode op, uint32_t packed, CallFrame& frame, int line) {
             if (dst_global) *gcell = a; else *slot = a;
             push(a);
         } else {
-            auto fresh = make_value<NumberValue>(std::move(result));
+            long long iv;
+            ValuePtr fresh = (result.is_int_fast(iv) && iv >= -4096 && iv <= 4095)
+                ? intern_small(iv) : make_value<NumberValue>(std::move(result));
             if (dst_global) *gcell = fresh; else *slot = fresh;
             push(fresh);
         }

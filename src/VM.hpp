@@ -74,6 +74,11 @@ private:
     // Open upvalues, sorted by stack slot (descending).
     std::vector<std::shared_ptr<UpvalueObj>> open_upvalues;
 
+    // Interned small integers: loop counters and small results come back
+    // here instead of a fresh allocation. Numbers are immutable, so the
+    // cached objects can never go stale.
+    static ValuePtr intern_small(long long v);
+
     // ---- Stack helpers ----
     void push(ValuePtr v) { stack.push_back(v); }
     ValuePtr pop() { ValuePtr v = std::move(stack.back()); stack.pop_back(); return v; }
