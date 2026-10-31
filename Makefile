@@ -24,8 +24,17 @@ DEPS    := $(SRCS:.cpp=.d)
 
 all: release
 
-release: CXXFLAGS += -O2 -DNDEBUG
+release: CXXFLAGS += -O3 -DNDEBUG
 release: $(TARGET)
+
+# Profile-guided build: run the workload once, rebuild with the profile.
+pgo: CXXFLAGS += -O3 -DNDEBUG
+pgo:
+	$(CXX) $(CXXFLAGS) -fprofile-generate -o $(TARGET) $(SRCS)
+	./$(TARGET) bench/pyrite/int_loop.pr > /dev/null
+	./$(TARGET) bench/pyrite/fib.pr > /dev/null
+	./$(TARGET) bench/pyrite/dict_ops.pr > /dev/null
+	$(CXX) $(CXXFLAGS) -fprofile-use -fprofile-correction -o $(TARGET) $(SRCS)
 
 debug: CXXFLAGS += -O0 -g -DDEBUG
 debug: $(TARGET)

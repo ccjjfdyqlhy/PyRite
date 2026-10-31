@@ -41,7 +41,6 @@ static ValuePtr build_table(CompiledFunction* fn,
 // ============================================================================
 VM::VM() : had_error(false), interpreter(nullptr) {
     stack.reserve(256);
-    frames.reserve(64);
 }
 
 // ============================================================================
@@ -63,8 +62,8 @@ void VM::set_error(int line, const std::string& msg) {
 }
 
 int VM::current_line() {
-    if (frames.empty()) return 0;
-    CallFrame& f = frames.back();
+    if (frame_top == 0) return 0;
+    CallFrame& f = frames[frame_top - 1];
     if (!f.function || f.function->code.empty()) return 0;
     size_t offset = static_cast<size_t>(f.ip - f.code_start);
     if (offset == 0) return 0;
@@ -77,7 +76,7 @@ int VM::current_line() {
 bool VM::handle_exception(ValuePtr exc_value) {
     // Discard handlers registered by frames that have already returned:
     // they would otherwise catch exceptions from unrelated code.
-    while (!try_handlers.empty() && try_handlers.back().frame_depth > frames.size()) {
+    while (!try_handlers.empty() && try_handlers.back().frame_depth > (size_t)frame_top) {
         try_handlers.pop_back();
     }
     if (try_handlers.empty()) return false;
@@ -85,10 +84,11 @@ bool VM::handle_exception(ValuePtr exc_value) {
     try_handlers.pop_back();
 
     // Unwind frames to the handler's frame depth.
-    while (frames.size() > handler.frame_depth) {
-        frames.pop_back();
+    while (frame_top > handler.frame_depth) {
+        frame_top--;
+        arena_top = frames[frame_top].locals_base;
     }
-    if (frames.empty()) return false;
+    if (frame_top == 0) return false;
 
     // Restore the stack to the depth it had when the try was entered,
     // then push the exception value.
@@ -98,7 +98,7 @@ bool VM::handle_exception(ValuePtr exc_value) {
     push(exc_value);
 
     // Jump to the catch handler.
-    frames.back().ip = handler.catch_ip;
+    frames[frame_top - 1].ip = handler.catch_ip;
     return true;
 }
 
@@ -149,19 +149,28 @@ bool VM::run(BytecodeChunkPtr c) {
     had_error = false;
     error_message.clear();
     stack.clear();
-    frames.clear();
     open_upvalues.clear();
-    frames.reserve(64);
 
-    // Set up the initial call frame for the script.
+    // One arena for every frame's locals, sized once for the worst case
+    // (FRAMES_MAX frames of the largest body): a call never allocates and
+    // locals pointers stay valid for the whole run.
+    size_t chunk_max_locals = 4;
+    for (auto& fn : chunk->all_functions)
+        if (fn->max_locals > (int)chunk_max_locals) chunk_max_locals = (size_t)fn->max_locals;
+    arena.assign((size_t)FRAMES_MAX * chunk_max_locals + 16, nullptr);
+    arena_top = 0;
+    frame_top = 0;
     ClosurePtr script_closure = make_value<Closure>(chunk->script);
-    frames.push_back(CallFrame{});
-    CallFrame& f = frames.back();
+    CallFrame& f = frames[frame_top++];
     f.function = chunk->script.get();
     f.code_start = chunk->script->code.data();
     f.ip = f.code_start;
-    f.locals.resize(chunk->script->max_locals > 0 ? chunk->script->max_locals : chunk->script->local_names.size());
-    for (auto& l : f.locals) l = NULL_SINGLETON;
+    f.upvalues = nullptr;
+    f.upvalue_count = 0;
+    f.locals_base = arena_top;
+    f.nlocals = (uint32_t)(chunk->script->max_locals > 0 ? chunk->script->max_locals : chunk->script->local_names.size());
+    f.locals = arena.data() + arena_top;
+    arena_top += f.nlocals;
 
     const BigNumber* pb_r = nullptr;   // second operand of the _R ops
 
@@ -170,7 +179,7 @@ bool VM::run(BytecodeChunkPtr c) {
     while (true) {
     try {
     while (true) {
-        CallFrame& frame = frames.back();
+        CallFrame& frame = frames[frame_top - 1];
         uint8_t instruction = *frame.ip++;
         OpCode op = static_cast<OpCode>(instruction);
 
@@ -221,9 +230,9 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_SET_LOCAL: {
                 uint32_t idx = read_operand24(frame.ip);
                 frame.ip += 3;
-                if (idx >= frame.locals.size()) {
+                if (idx >= frame.nlocals) {
                     runtime_error(0, "SET_LOCAL: slot " + std::to_string(idx) +
-                        " out of bounds (locals size=" + std::to_string(frame.locals.size()) +
+                        " out of bounds (locals size=" + std::to_string(frame.nlocals) +
                         ", func=" + frame.function->name + ")");
                     return false;
                 }
@@ -625,8 +634,8 @@ bool VM::run(BytecodeChunkPtr c) {
                 const BigNumber* pa;
                 BigNumber tmp_a, tmp_b;
                 if (akind == 0) {
-                    if (dst >= frame.locals.size() && false) {}
-                    if (apay >= frame.locals.size()) { runtime_error(current_line(), "r-op: bad slot"); return false; }
+                    if (dst >= frame.nlocals && false) {}
+                    if (apay >= frame.nlocals) { runtime_error(current_line(), "r-op: bad slot"); return false; }
                     ValuePtr& r = frame.locals[apay];
                     if (r->kind() != VTag::Number) goto r_slow;
                     pa = &static_cast<NumberValue*>(r.get())->value;
@@ -638,7 +647,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     pa = &static_cast<NumberValue*>(v.get())->value;
                 }
                 if (bkind == 0) {
-                    if (bpay >= frame.locals.size()) { runtime_error(current_line(), "r-op: bad slot"); return false; }
+                    if (bpay >= frame.nlocals) { runtime_error(current_line(), "r-op: bad slot"); return false; }
                     ValuePtr& r = frame.locals[bpay];
                     if (r->kind() != VTag::Number) goto r_slow;
                     pb_r = &static_cast<NumberValue*>(r.get())->value;
@@ -654,7 +663,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     ValuePtr* dslot; ValuePtr* dcell = nullptr;
                     if (dglobal) dcell = global_write_cell(frame, dst);
                     else {
-                        if (dst >= frame.locals.size()) { runtime_error(current_line(), "r-op: bad dst"); return false; }
+                        if (dst >= frame.nlocals) { runtime_error(current_line(), "r-op: bad dst"); return false; }
                         dslot = &frame.locals[dst];
                     }
                     ValuePtr old = dglobal ? *dcell : *dslot;
@@ -706,17 +715,21 @@ bool VM::run(BytecodeChunkPtr c) {
                     result = c ? *c : nullptr;
                 } else {
                     uint32_t slot = enc & 0x7FF;
-                    if (slot >= frame.locals.size()) { runtime_error(current_line(), "return: bad slot"); return false; }
+                    if (slot >= frame.nlocals) { runtime_error(current_line(), "return: bad slot"); return false; }
                     result = frame.locals[slot];
                 }
                 if (!result) { runtime_error(current_line(), "undefined variable"); return false; }
                 close_upvalues(0);
-                while (!try_handlers.empty() && try_handlers.back().frame_depth >= frames.size()) {
+                while (!try_handlers.empty() && try_handlers.back().frame_depth >= (size_t)frame_top) {
                     try_handlers.pop_back();
                 }
-                bool was_script = (frames.size() == 1);
-                if (!was_script) recycle_locals(frames.back());
-                frames.pop_back();
+                bool was_script = (frame_top == 1);
+                if (!was_script) {
+                    CallFrame& rf = frames[frame_top - 1];
+                    for (uint32_t k = 0; k < rf.nlocals; ++k) rf.locals[k] = nullptr;
+                    arena_top = rf.locals_base;
+                }
+                frame_top--;
                 if (was_script) return true;
                 push(std::move(result));
                 break;
@@ -730,7 +743,7 @@ bool VM::run(BytecodeChunkPtr c) {
                 uint32_t cpay = (w1 >> 9) & 0xFFF;
                 ValuePtr callee;
                 if (ckind == 1) {
-                    if (cpay >= frame.locals.size()) { runtime_error(current_line(), "callr: bad slot"); return false; }
+                    if (cpay >= frame.nlocals) { runtime_error(current_line(), "callr: bad slot"); return false; }
                     callee = frame.locals[cpay];
                 } else {
                     const ValuePtr* c = global_read_cell(frame, cpay);
@@ -749,7 +762,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     uint32_t kind = (desc[i] >> 10) & 0x3;
                     uint32_t pay = desc[i] & 0x3FF;
                     if (kind == 0) {
-                        if (pay >= frame.locals.size()) { runtime_error(current_line(), "callr: bad arg slot"); return false; }
+                        if (pay >= frame.nlocals) { runtime_error(current_line(), "callr: bad arg slot"); return false; }
                         argv[i] = frame.locals[pay];
                     } else if (kind == 1) {
                         argv[i] = make_value<NumberValue>(BigNumber((long long)pay));
@@ -784,9 +797,9 @@ bool VM::run(BytecodeChunkPtr c) {
                 ValuePtr* dcell = nullptr; const ValuePtr* scell = nullptr;
                 ValuePtr* dslot = nullptr; ValuePtr* sslot = nullptr;
                 if (dst_global) { dcell = global_write_cell(frame, dsti); }
-                else { if (dsti >= frame.locals.size()) { runtime_error(current_line(), "inplace: bad slot"); return false; } dslot = &frame.locals[dsti]; }
+                else { if (dsti >= frame.nlocals) { runtime_error(current_line(), "inplace: bad slot"); return false; } dslot = &frame.locals[dsti]; }
                 if (src_global) { scell = global_read_cell(frame, srci); }
-                else { if (srci >= frame.locals.size()) { runtime_error(current_line(), "inplace: bad rhs slot"); return false; } sslot = &frame.locals[srci]; }
+                else { if (srci >= frame.nlocals) { runtime_error(current_line(), "inplace: bad rhs slot"); return false; } sslot = &frame.locals[srci]; }
                 ValuePtr a = dst_global ? *dcell : *dslot;
                 ValuePtr sv = src_global ? (scell ? *scell : nullptr) : *sslot;
                 if (a && sv && a->kind() == VTag::Number && sv->kind() == VTag::Number) {
@@ -962,7 +975,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     if (desc.is_local) {
                         closure->upvalues[i] = capture_upvalue(desc.index);
                     } else {
-                        if (desc.index < static_cast<int>(frame.upvalues.size())) {
+                        if (desc.index < static_cast<int>(frame.upvalue_count)) {
                             closure->upvalues[i] = frame.upvalues[desc.index];
                         }
                     }
@@ -1041,24 +1054,35 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_RETURN: {
                 ValuePtr result = pop();
                 close_upvalues(0);  // close all upvalues pointing to this frame
-                while (!try_handlers.empty() && try_handlers.back().frame_depth >= frames.size()) {
+                while (!try_handlers.empty() && try_handlers.back().frame_depth >= (size_t)frame_top) {
                     try_handlers.pop_back();   // handler lived in the returning frame
                 }
-                bool was_script = (frames.size() == 1);
-                if (!was_script) recycle_locals(frames.back());
-                frames.pop_back();
+                bool was_script = (frame_top == 1);
+                if (!was_script) {
+                    // Roll the arena back and drop the frame's references:
+                    // stale slots would otherwise keep values alive and
+                    // defeat the caller's in-place reuse.
+                    CallFrame& rf = frames[frame_top - 1];
+                    for (uint32_t k = 0; k < rf.nlocals; ++k) rf.locals[k] = nullptr;
+                    arena_top = rf.locals_base;
+                }
+                frame_top--;
                 if (was_script) return true;
                 push(std::move(result));
                 break;
             }
             case OpCode::OP_RETURN_NULL: {
                 close_upvalues(0);
-                while (!try_handlers.empty() && try_handlers.back().frame_depth >= frames.size()) {
+                while (!try_handlers.empty() && try_handlers.back().frame_depth >= (size_t)frame_top) {
                     try_handlers.pop_back();
                 }
-                bool was_script = (frames.size() == 1);
-                if (!was_script) recycle_locals(frames.back());
-                frames.pop_back();
+                bool was_script = (frame_top == 1);
+                if (!was_script) {
+                    CallFrame& rf = frames[frame_top - 1];
+                    for (uint32_t k = 0; k < rf.nlocals; ++k) rf.locals[k] = nullptr;
+                    arena_top = rf.locals_base;
+                }
+                frame_top--;
                 if (was_script) return true;
                 push(NULL_SINGLETON);
                 break;
@@ -1221,7 +1245,7 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_TRY_BEGIN: {
                 uint32_t target = read_operand24(frame.ip);
                 frame.ip += 3;
-                try_handlers.push_back({frames.size(), stack.size(), frame.code_start + target});
+                try_handlers.push_back({(size_t)frame_top, stack.size(), frame.code_start + target});
                 break;
             }
             case OpCode::OP_TRY_END: {
@@ -1319,7 +1343,7 @@ bool VM::run(BytecodeChunkPtr c) {
 // ============================================================================
 std::shared_ptr<UpvalueObj> VM::capture_upvalue(int slot) {
     // The slot index refers to the current frame's locals vector.
-    CallFrame& f = frames.back();
+    CallFrame& f = frames[frame_top - 1];
     ValuePtr* loc = &f.locals[slot];
 
     // Reuse an existing open upvalue pointing to the same location.
@@ -1338,10 +1362,10 @@ void VM::close_upvalues(int slot) {
     // upvalue's `closed` field and redirecting `location` to point at it,
     // so the upvalue remains valid after the frame's locals vector is
     // destroyed.
-    if (frames.empty()) return;
-    CallFrame& f = frames.back();
-    ValuePtr* frame_begin = f.locals.data();
-    ValuePtr* frame_end = frame_begin + f.locals.size();
+    if (frame_top == 0) return;
+    CallFrame& f = frames[frame_top - 1];
+    ValuePtr* frame_begin = f.locals;
+    ValuePtr* frame_end = frame_begin + f.nlocals;
 
     auto it = open_upvalues.begin();
     while (it != open_upvalues.end()) {
@@ -1368,7 +1392,7 @@ ValuePtr VM::eval_ast(const AstNodePtr& node) {
         return make_value<NullValue>();
     }
 
-    CallFrame& f = frames.back();
+    CallFrame& f = frames[frame_top - 1];
 
     // Build a temporary environment from the current locals.
     auto env = std::make_shared<Environment>(globals);
@@ -1572,34 +1596,32 @@ bool VM::call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line
 // Push a new call frame for a VM closure
 // ============================================================================
 void VM::push_frame(Closure* closure, const ValuePtr* args, size_t nargs, int line) {
-    if (frames.size() >= static_cast<size_t>(Interpreter::MAX_CALL_DEPTH)) {
+    if (frame_top >= FRAMES_MAX) {
         runtime_error(line, "Recursion depth exceeds the limit (" + std::to_string(Interpreter::MAX_CALL_DEPTH) + ").");
         return;
     }
-    CompiledFunctionPtr fn = closure->function;
+    CompiledFunction* fn = closure->function.get();
     if (nargs < static_cast<size_t>(fn->arity)) {
         runtime_error(line, "Too few arguments to " + fn->name);
         return;
     }
-    frames.push_back(CallFrame{});
-    CallFrame& f = frames.back();
-    f.function = fn.get();
+    size_t nlocals = fn->max_locals > 0 ? (size_t)fn->max_locals : fn->local_names.size();
+    if (arena_top + nlocals > arena.size()) {
+        runtime_error(line, "frame arena exhausted");
+        return;
+    }
+    CallFrame& f = frames[frame_top++];
+    f.function = fn;
     f.code_start = fn->code.data();
     f.ip = f.code_start;
-    f.upvalues = closure->upvalues;
-    // Reuse a locals buffer pooled per function when one is free; the
-    // slots are re-initialized either way, and every upvalue into a
-    // returned frame was closed, so nothing points into the buffer.
-    auto& pool = fn->locals_pool;
-    if (!pool.empty()) {
-        f.locals = std::move(pool.back());
-        pool.pop_back();
-        for (auto& l : f.locals) l = NULL_SINGLETON;
-    } else {
-        f.locals.resize(fn->max_locals > 0 ? fn->max_locals : fn->local_names.size());
-        for (auto& l : f.locals) l = NULL_SINGLETON;
-    }
-    // Bind parameters (locals[0] is reserved, params start at slot 1)
+    f.upvalues = closure->upvalues.empty() ? nullptr : closure->upvalues.data();
+    f.upvalue_count = (uint32_t)closure->upvalues.size();
+    f.locals_base = arena_top;
+    f.nlocals = (uint32_t)nlocals;
+    f.locals = arena.data() + arena_top;
+    arena_top += nlocals;
+    // Slots are not re-initialized: the compiler emits an assignment
+    // before any read of a slot, so stale values are never observed.
     for (size_t i = 0; i < fn->params.size(); ++i) {
         if (i < nargs) {
             f.locals[i + 1] = args[i];
@@ -1619,36 +1641,21 @@ void VM::push_frame_from_slots(Closure* closure, const ValuePtr* args, size_t na
 }
 
 void VM::push_frame_from_stack(Closure* closure, size_t nargs, int line) {
-    if (frames.size() >= static_cast<size_t>(Interpreter::MAX_CALL_DEPTH)) {
-        runtime_error(line, "Recursion depth exceeds the limit (" + std::to_string(Interpreter::MAX_CALL_DEPTH) + ").");
-        return;
-    }
-    CompiledFunctionPtr fn = closure->function;
-    if (nargs < static_cast<size_t>(fn->arity)) {
-        runtime_error(line, "Too few arguments to " + fn->name);
-        return;
-    }
-    frames.push_back(CallFrame{});
-    CallFrame& f = frames.back();
-    f.function = fn.get();
-    f.code_start = fn->code.data();
-    f.ip = f.code_start;
-    f.upvalues = closure->upvalues;
-    auto& pool = fn->locals_pool;
-    const size_t base = stack.size() - nargs;   // arg1 lives here
-    if (!pool.empty()) {
-        f.locals = std::move(pool.back());
-        pool.pop_back();
-        // No re-fill: the compiler emits an assignment before any read of
-        // a slot, so stale values from the previous call are never seen.
+    // Args are on the value stack above the callee: [.., callee, a1..aN].
+    // The moved-out slots stay; the caller pops callee + args.
+    const size_t base = stack.size() - nargs;
+    ValuePtr argv[4];
+    std::vector<ValuePtr> heap_args;
+    const ValuePtr* args;
+    if (nargs <= 4) {
+        for (size_t k = 0; k < nargs; ++k) argv[k] = std::move(stack[base + k]);
+        args = argv;
     } else {
-        f.locals.resize(fn->max_locals > 0 ? fn->max_locals : fn->local_names.size());
+        heap_args.reserve(nargs);
+        for (size_t k = 0; k < nargs; ++k) heap_args.push_back(std::move(stack[base + k]));
+        args = heap_args.data();
     }
-    for (size_t i = 0; i < fn->params.size(); ++i) {
-        if (i < nargs) f.locals[i + 1] = std::move(stack[base + i]);
-        else if (fn->params[i].has_default && fn->params[i].default_value)
-            f.locals[i + 1] = fn->params[i].default_value;
-    }
+    push_frame(closure, args, nargs, line);
 }
 
 // ============================================================================
@@ -1706,7 +1713,7 @@ bool VM::exec_inplace(OpCode op, uint32_t packed, CallFrame& frame, int line) {
             frame.function->wcache[dst] = gcell;
         }
     } else {
-        if (dst >= frame.locals.size()) { runtime_error(line, "inplace: bad slot"); return true; }
+        if (dst >= frame.nlocals) { runtime_error(line, "inplace: bad slot"); return true; }
         slot = &frame.locals[dst];
     }
     ValuePtr a = dst_global ? *gcell : *slot;
@@ -1723,7 +1730,7 @@ bool VM::exec_inplace(OpCode op, uint32_t packed, CallFrame& frame, int line) {
         rb = &rhs_bn;
     } else if (rkind == 1) {          // local slot
         uint32_t ridx = rpay;
-        if (ridx >= frame.locals.size()) { runtime_error(line, "inplace: bad rhs slot"); return true; }
+        if (ridx >= frame.nlocals) { runtime_error(line, "inplace: bad rhs slot"); return true; }
         ValuePtr& r = frame.locals[ridx];
         if (r->kind() == VTag::Number) rb = &static_cast<NumberValue*>(r.get())->value;
         else if (r->kind() == VTag::String) { rhs_str = static_cast<StringValue*>(r.get())->value; rs = &rhs_str; }

@@ -46,18 +46,26 @@ public:
 
 private:
     // ---- Call frame ----
+    // Frames live in a preallocated array; their locals share one arena.
+    // A call is a handful of pointer writes, a return rolls the arena
+    // top back - no heap traffic anywhere on the call path.
     struct CallFrame {
-        // Raw pointer: the chunk's all_functions list owns the function,
-        // so a frame does not need to pay two atomic ops per call.
         CompiledFunction* function;
         const uint8_t* ip;
         const uint8_t* code_start;
-        std::vector<ValuePtr> locals;
-        // Upvalues captured by the closure running in this frame.
-        std::vector<std::shared_ptr<UpvalueObj>> upvalues;
+        ValuePtr* locals;            // into the arena; stable (pre-sized)
+        uint32_t nlocals;
+        size_t locals_base;          // arena index, for unwinding
+        std::shared_ptr<UpvalueObj>* upvalues;   // into the closure; null = none
+        uint32_t upvalue_count;
     };
 
-    std::vector<CallFrame> frames;
+    static constexpr int FRAMES_MAX = 1000;   // == Interpreter::MAX_CALL_DEPTH
+    CallFrame frames[FRAMES_MAX];
+    int frame_top = 0;
+    std::vector<ValuePtr> arena;             // all frames' locals
+    size_t arena_top = 0;
+
     std::vector<ValuePtr> stack;
     BytecodeChunkPtr chunk;
     std::shared_ptr<Environment> globals;
@@ -66,21 +74,14 @@ private:
     // Open upvalues, sorted by stack slot (descending).
     std::vector<std::shared_ptr<UpvalueObj>> open_upvalues;
 
-    // Locals buffers are pooled on the CompiledFunction itself; this just
-    // returns a frame's buffer there.
-    void recycle_locals(CallFrame& f) {
-        auto& pool = f.function->locals_pool;
-        if (pool.size() < 8) pool.push_back(std::move(f.locals));
-    }
-
     // ---- Stack helpers ----
     void push(ValuePtr v) { stack.push_back(v); }
     ValuePtr pop() { ValuePtr v = std::move(stack.back()); stack.pop_back(); return v; }
     ValuePtr peek(int distance = 0) { return stack[stack.size() - 1 - distance]; }
 
     // ---- Frame helpers ----
-    CallFrame& frame() { return frames.back(); }
-    CompiledFunction* current_function() { return frames.back().function; }
+    CallFrame& frame() { return frames[frame_top - 1]; }
+    CompiledFunction* current_function() { return frames[frame_top - 1].function; }
 
     // ---- Upvalue management ----
     std::shared_ptr<UpvalueObj> capture_upvalue(int slot);
