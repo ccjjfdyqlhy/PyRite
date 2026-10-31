@@ -6,7 +6,7 @@
 // PyRite Bytecode Instruction Set
 // ============================================================================
 // GENERATED FILE -- DO NOT EDIT BY HAND.
-// Source: opcodes.def (sha256 12d591f75dd71877da0de718394052c1c571503ac24aef0d152b794e1f497dfc)
+// Source: opcodes.def (sha256 587826d8810eefc3d51531e01acb8d92c13e741f20583d3bad504b7237905633)
 // Regenerate: python3 tools/gen_opcodes.py
 //
 // Stack-based VM. Operands are big-endian 24-bit unsigned integers (0..2^24-1)
@@ -118,7 +118,11 @@ enum class OpCode : uint8_t {
     OP_INPLACE_AM,         // dst += src * k; two packed operands
     OP_DEF_STRUCT,         // [struct descriptor constant] build Class, push
     OP_CALL_MEMBER,        // [obj][args...] call member; 2 operands: name idx, arg count
-    OP_RESERVED_2,         // reserved
+    OP_ADD_R,              // slot[dst] = a + b; operands packed, no stack
+    OP_SUB_R,              // slot[dst] = a - b
+    OP_MUL_R,              // slot[dst] = a * b
+    OP_CALLR,              // call via descriptors: ctrl word + 2 arg words (max 4 args)
+    OP_RETURN_R,           // push slot value and return
     OP_RESERVED_3,         // reserved
     OP_RESERVED_4,         // reserved
     OP_RESERVED_5,         // reserved
@@ -128,7 +132,7 @@ enum class OpCode : uint8_t {
 };
 
 // Total number of opcodes (the permutation range used by the obfuscator).
-constexpr int OPCODE_COUNT = 72;
+constexpr int OPCODE_COUNT = 76;
 
 // Convert opcode to string for disassembly / debugging
 inline const char* op_name(OpCode op) {
@@ -198,7 +202,11 @@ inline const char* op_name(OpCode op) {
         case OpCode::OP_INPLACE_AM:  return "INPLACE_AM";
         case OpCode::OP_DEF_STRUCT:  return "DEF_STRUCT";
         case OpCode::OP_CALL_MEMBER: return "CALL_MEMBER";
-        case OpCode::OP_RESERVED_2:  return "RESERVED_2";
+        case OpCode::OP_ADD_R:       return "ADD_R";
+        case OpCode::OP_SUB_R:       return "SUB_R";
+        case OpCode::OP_MUL_R:       return "MUL_R";
+        case OpCode::OP_CALLR:       return "CALLR";
+        case OpCode::OP_RETURN_R:    return "RETURN_R";
         case OpCode::OP_RESERVED_3:  return "RESERVED_3";
         case OpCode::OP_RESERVED_4:  return "RESERVED_4";
         case OpCode::OP_RESERVED_5:  return "RESERVED_5";

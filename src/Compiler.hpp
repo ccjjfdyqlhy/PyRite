@@ -70,10 +70,14 @@ private:
         // continue / return know how many OP_TRY_END to emit on their way
         // out (a jump would otherwise skip them and leave stale handlers).
         int try_depth;
+        // Register-scratch slots: temporaries for fused arithmetic and
+        // call arguments. They live past the declared locals; the count
+        // is folded into max_locals when the function ends.
+        int scratch_used;
         // Try depth recorded when each enclosing loop started; a break or
         // continue only pops the handlers nested inside its own loop.
         std::vector<int> loop_entry_try_depths;
-        FuncState() : scope_depth(0), break_patches_ptr(nullptr), continue_patches_ptr(nullptr), try_depth(0) {}
+        FuncState() : scope_depth(0), break_patches_ptr(nullptr), continue_patches_ptr(nullptr), try_depth(0), scratch_used(0) {}
     };
 
     std::vector<FuncState> func_stack;
@@ -185,6 +189,15 @@ private:
     // assignments whose value nobody reads.
     bool try_compile_inplace_np(const std::string& name, AstNode* value);
     bool try_compile_inplace_common(const std::string& name, AstNode* value, int line, bool no_push);
+    // ---- register-arithmetic fusion ----
+    // One side of an _R instruction: bit23 global (12-bit name index),
+    // kind bits 13-12 (0 local, 1 inline int, 2 global), payload 11-0.
+    bool encode_r_side(AstNode* node, uint32_t& out);
+    // Emits `slot = a <op> b` for encodable sides; false = not fusable.
+    bool compile_r_bin(uint32_t dst_slot, bool dst_global, TokenType op,
+                       AstNode* a, AstNode* b);
+    int push_scratch();
+    void pop_scratch();
     // Fuses `while lhs <op> rhs` into OP_CMP_JUMP; emits the jump with a
     // placeholder target and returns the patch location, or -1 when the
     // condition does not fit the pattern.

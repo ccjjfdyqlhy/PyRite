@@ -16,7 +16,7 @@
 // story keeps -- so this goes all the way down.  Without that, the
 // inner rows stayed descriptors and the script read a dictionary where
 // it asked for a list.
-static ValuePtr build_table(const CompiledFunctionPtr& fn,
+static ValuePtr build_table(CompiledFunction* fn,
                             const ValuePtr& value) {
     auto descriptor = ptr_cast<DimValue>(value);
     if (!descriptor) return value;
@@ -157,11 +157,13 @@ bool VM::run(BytecodeChunkPtr c) {
     ClosurePtr script_closure = make_value<Closure>(chunk->script);
     frames.push_back(CallFrame{});
     CallFrame& f = frames.back();
-    f.function = chunk->script;
+    f.function = chunk->script.get();
     f.code_start = chunk->script->code.data();
     f.ip = f.code_start;
     f.locals.resize(chunk->script->max_locals > 0 ? chunk->script->max_locals : chunk->script->local_names.size());
     for (auto& l : f.locals) l = NULL_SINGLETON;
+
+    const BigNumber* pb_r = nullptr;   // second operand of the _R ops
 
     // Main dispatch loop.
     // The outer loop allows resuming execution after a caught exception.
@@ -604,6 +606,166 @@ bool VM::run(BytecodeChunkPtr c) {
                     // the unfused epilogue's POP expects it.
                     push(BOOL_FALSE);
                     frame.ip = frame.code_start + target;
+                }
+                break;
+            }
+            case OpCode::OP_ADD_R: case OpCode::OP_SUB_R: case OpCode::OP_MUL_R: {
+                // word1: gbit(23) | dst(22-13) | a_kind(12-11) | a_pay(10-0)
+                // word2: b_kind(23-22) | b_pay(21-11)
+                uint32_t w1 = read_operand24(frame.ip); frame.ip += 3;
+                uint32_t w2 = read_operand24(frame.ip); frame.ip += 3;
+                bool dglobal = w1 & 0x800000;
+                uint32_t dst = (w1 >> 13) & 0x3FF;
+                // aenc/benc are 12-bit words: kind(11-10) + pay(9-0)
+                uint32_t akind = (w1 >> 10) & 0x3;
+                uint32_t apay = w1 & 0x3FF;
+                uint32_t bkind = (w2 >> 10) & 0x3;
+                uint32_t bpay = w2 & 0x3FF;
+                // Resolve both sides.
+                const BigNumber* pa;
+                BigNumber tmp_a, tmp_b;
+                if (akind == 0) {
+                    if (dst >= frame.locals.size() && false) {}
+                    if (apay >= frame.locals.size()) { runtime_error(current_line(), "r-op: bad slot"); return false; }
+                    ValuePtr& r = frame.locals[apay];
+                    if (r->kind() != VTag::Number) goto r_slow;
+                    pa = &static_cast<NumberValue*>(r.get())->value;
+                } else if (akind == 1) { tmp_a = BigNumber((long long)apay); pa = &tmp_a; }
+                else {
+                    const ValuePtr* c = global_read_cell(frame, apay);
+                    ValuePtr v = c ? *c : nullptr;
+                    if (!v || v->kind() != VTag::Number) goto r_slow;
+                    pa = &static_cast<NumberValue*>(v.get())->value;
+                }
+                if (bkind == 0) {
+                    if (bpay >= frame.locals.size()) { runtime_error(current_line(), "r-op: bad slot"); return false; }
+                    ValuePtr& r = frame.locals[bpay];
+                    if (r->kind() != VTag::Number) goto r_slow;
+                    pb_r = &static_cast<NumberValue*>(r.get())->value;
+                } else if (bkind == 1) { tmp_b = BigNumber((long long)bpay); pb_r = &tmp_b; }
+                else {
+                    const ValuePtr* c = global_read_cell(frame, bpay);
+                    ValuePtr v = c ? *c : nullptr;
+                    if (!v || v->kind() != VTag::Number) goto r_slow;
+                    pb_r = &static_cast<NumberValue*>(v.get())->value;
+                }
+                {
+                    // Destination: local slot or cached global cell.
+                    ValuePtr* dslot; ValuePtr* dcell = nullptr;
+                    if (dglobal) dcell = global_write_cell(frame, dst);
+                    else {
+                        if (dst >= frame.locals.size()) { runtime_error(current_line(), "r-op: bad dst"); return false; }
+                        dslot = &frame.locals[dst];
+                    }
+                    ValuePtr old = dglobal ? *dcell : *dslot;
+                    BigNumber result;
+                    if (op == OpCode::OP_ADD_R) result = *pa + *pb_r;
+                    else if (op == OpCode::OP_SUB_R) result = *pa - *pb_r;
+                    else result = *pa * *pb_r;
+                    if (old && old->kind() == VTag::Number) {
+                        // rewrite in place when the slot owns the object
+                        if (dglobal) *dcell = nullptr; else *dslot = nullptr;
+                        if (old.use_count() == 1) {
+                            static_cast<NumberValue*>(old.get())->value = std::move(result);
+                            if (dglobal) *dcell = old; else *dslot = old;
+                            break;
+                        }
+                        if (dglobal) *dcell = old; else *dslot = old;
+                    }
+                    auto fresh = make_value<NumberValue>(std::move(result));
+                    if (dglobal) *dcell = fresh; else *dslot = fresh;
+                    break;
+                }
+                r_slow: ;
+                // Non-number sides: rebuild the plain sequence.
+                {
+                    ValuePtr av, bv;
+                    if (akind == 0) av = frame.locals[apay];
+                    else if (akind == 1) av = make_value<NumberValue>(BigNumber((long long)apay));
+                    else { const ValuePtr* c = global_read_cell(frame, apay); av = c ? *c : nullptr; }
+                    if (bkind == 0) bv = frame.locals[bpay];
+                    else if (bkind == 1) bv = make_value<NumberValue>(BigNumber((long long)bpay));
+                    else { const ValuePtr* c = global_read_cell(frame, bpay); bv = c ? *c : nullptr; }
+                    if (!av || !bv) { runtime_error(current_line(), "undefined variable"); return false; }
+                    OpCode plain = op == OpCode::OP_ADD_R ? OpCode::OP_ADD
+                                 : op == OpCode::OP_SUB_R ? OpCode::OP_SUB : OpCode::OP_MUL;
+                    ValuePtr res = binary_op(plain, av, bv, current_line());
+                    bool dglobal2 = w1 & 0x800000;
+                    uint32_t dst2 = (w1 >> 13) & 0x3FF;
+                    if (dglobal2) *global_write_cell(frame, dst2) = res;
+                    else frame.locals[dst2] = res;
+                    break;
+                }
+            }
+            case OpCode::OP_RETURN_R: {
+                uint32_t enc = read_operand24(frame.ip); frame.ip += 3;
+                // operand: gbit(23) | kind(12-11) | pay(10-0); kind 0 local, 2 global
+                ValuePtr result;
+                if (((enc >> 11) & 0x3) == 2) {
+                    const ValuePtr* c = global_read_cell(frame, enc & 0x7FF);
+                    result = c ? *c : nullptr;
+                } else {
+                    uint32_t slot = enc & 0x7FF;
+                    if (slot >= frame.locals.size()) { runtime_error(current_line(), "return: bad slot"); return false; }
+                    result = frame.locals[slot];
+                }
+                if (!result) { runtime_error(current_line(), "undefined variable"); return false; }
+                close_upvalues(0);
+                while (!try_handlers.empty() && try_handlers.back().frame_depth >= frames.size()) {
+                    try_handlers.pop_back();
+                }
+                bool was_script = (frames.size() == 1);
+                if (!was_script) recycle_locals(frames.back());
+                frames.pop_back();
+                if (was_script) return true;
+                push(std::move(result));
+                break;
+            }
+            case OpCode::OP_CALLR: {
+                // word1: gbit(23) | kind(22-21) | pay(20-9) | nargs(8-0)
+                // words: two arg descriptors each: kind(13-12) + pay(11-0)
+                uint32_t w1 = read_operand24(frame.ip); frame.ip += 3;
+                uint32_t nargs = w1 & 0x1FF;
+                uint32_t ckind = (w1 >> 21) & 0x3;
+                uint32_t cpay = (w1 >> 9) & 0xFFF;
+                ValuePtr callee;
+                if (ckind == 1) {
+                    if (cpay >= frame.locals.size()) { runtime_error(current_line(), "callr: bad slot"); return false; }
+                    callee = frame.locals[cpay];
+                } else {
+                    const ValuePtr* c = global_read_cell(frame, cpay);
+                    callee = c ? *c : nullptr;
+                }
+                if (!callee) { runtime_error(current_line(), "undefined variable"); return false; }
+                uint32_t desc[4] = {0x3000, 0x3000, 0x3000, 0x3000};   // kind 3 = absent
+                for (uint32_t w = 0; w < 4; w += 2) {   // fixed two descriptor words
+                    uint32_t word = read_operand24(frame.ip); frame.ip += 3;
+                    desc[w] = word >> 12;
+                    desc[w + 1] = word & 0xFFF;
+                }
+                // Resolve the arguments (kind 3 = absent filler).
+                ValuePtr argv[4];
+                for (uint32_t i = 0; i < nargs; ++i) {
+                    uint32_t kind = (desc[i] >> 10) & 0x3;
+                    uint32_t pay = desc[i] & 0x3FF;
+                    if (kind == 0) {
+                        if (pay >= frame.locals.size()) { runtime_error(current_line(), "callr: bad arg slot"); return false; }
+                        argv[i] = frame.locals[pay];
+                    } else if (kind == 1) {
+                        argv[i] = make_value<NumberValue>(BigNumber((long long)pay));
+                    } else if (kind == 2) {
+                        const ValuePtr* c = global_read_cell(frame, pay);
+                        argv[i] = c ? *c : nullptr;
+                    } else {
+                        runtime_error(current_line(), "callr: bad arg"); return false;
+                    }
+                    if (!argv[i]) { runtime_error(current_line(), "undefined variable"); return false; }
+                }
+                if (callee->kind() == VTag::Closure) {
+                    push_frame_from_slots(static_cast<Closure*>(callee.get()), argv, nargs, current_line());
+                } else {
+                    std::vector<ValuePtr> native_args(argv, argv + nargs);
+                    if (!call_value(callee, native_args, current_line())) return false;
                 }
                 break;
             }
@@ -1421,7 +1583,7 @@ void VM::push_frame(Closure* closure, const ValuePtr* args, size_t nargs, int li
     }
     frames.push_back(CallFrame{});
     CallFrame& f = frames.back();
-    f.function = fn;
+    f.function = fn.get();
     f.code_start = fn->code.data();
     f.ip = f.code_start;
     f.upvalues = closure->upvalues;
@@ -1452,6 +1614,10 @@ void VM::push_frame(Closure* closure, const ValuePtr* args, size_t nargs, int li
 
 // Same as push_frame, but the arguments are read straight off the value
 // stack (callee at stack[top - nargs - 1]): one copy instead of two.
+void VM::push_frame_from_slots(Closure* closure, const ValuePtr* args, size_t nargs, int line) {
+    push_frame(closure, args, nargs, line);
+}
+
 void VM::push_frame_from_stack(Closure* closure, size_t nargs, int line) {
     if (frames.size() >= static_cast<size_t>(Interpreter::MAX_CALL_DEPTH)) {
         runtime_error(line, "Recursion depth exceeds the limit (" + std::to_string(Interpreter::MAX_CALL_DEPTH) + ").");
@@ -1464,7 +1630,7 @@ void VM::push_frame_from_stack(Closure* closure, size_t nargs, int line) {
     }
     frames.push_back(CallFrame{});
     CallFrame& f = frames.back();
-    f.function = fn;
+    f.function = fn.get();
     f.code_start = fn->code.data();
     f.ip = f.code_start;
     f.upvalues = closure->upvalues;

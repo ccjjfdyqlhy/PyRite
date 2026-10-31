@@ -644,6 +644,86 @@ void Compiler::compile_inp(InpNode* n) {
     emit_op(OpCode::OP_INPUT);
 }
 
+// ---- register-arithmetic fusion ----
+// Scratch slots sit past the declared locals; each push takes the next
+// free index and the high-water mark folds into max_locals at fn end.
+int Compiler::push_scratch() {
+    int slot = static_cast<int>(current->locals.size()) + current->scratch_used;
+    current->scratch_used++;
+    if (current->locals.size() + (size_t)current->scratch_used > (size_t)current->func->max_locals)
+        current->func->max_locals = static_cast<int>(current->locals.size()) + current->scratch_used;
+    return slot;
+}
+
+void Compiler::pop_scratch() {
+    if (current->scratch_used > 0) current->scratch_used--;
+}
+
+// One side of an _R instruction: kind bits 13-12 (0 local slot,
+// 1 inline int, 2 global name), payload bits 11-0.
+bool Compiler::encode_r_side(AstNode* node, uint32_t& out) {
+    if (auto var = dynamic_cast<VariableNode*>(node)) {
+        int slot = resolve_local(var->name);
+        if (slot >= 0 && slot <= 1023) {
+            out = (0u << 10) | static_cast<uint32_t>(slot);
+            return true;
+        }
+        if (slot < 0 && resolve_upvalue(current, var->name) == -1) {
+            uint32_t idx = add_string_constant(var->name);
+            if (idx > 1023) return false;
+            out = (2u << 10) | idx;
+            return true;
+        }
+        return false;
+    }
+    if (auto lit = dynamic_cast<LiteralNode*>(node)) {
+        if (auto num = ptr_cast<NumberValue>(lit->value)) {
+            long long v = 0;
+            if (num->value.is_int_fast(v) && v >= 0 && v <= 1023) {
+                out = (1u << 10) | static_cast<uint32_t>(v);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static OpCode r_op_for(TokenType t, bool ok) {
+    (void)ok;
+    switch (t) {
+        case TokenType::PLUS:  return OpCode::OP_ADD_R;
+        case TokenType::MINUS: return OpCode::OP_SUB_R;
+        case TokenType::STAR:  return OpCode::OP_MUL_R;
+        default: return OpCode::OP_ADD_R; // unreachable; guarded by caller
+    }
+}
+
+// slot = a <op> b, entirely in registers: no stack traffic, and the
+// destination's old value is rewritten in place when nothing else holds it.
+bool Compiler::compile_r_bin(uint32_t dst_slot, bool dst_global, TokenType op,
+                             AstNode* a, AstNode* b) {
+    if (op != TokenType::PLUS && op != TokenType::MINUS && op != TokenType::STAR) return false;
+    uint32_t aenc, benc;
+    if (!encode_r_side(a, aenc)) return false;
+    if (!encode_r_side(b, benc)) return false;
+    OpCode rop = r_op_for(op, true);
+    // word1: gbit(23) | dst(22-13) | aenc(kind 11-10 + pay 9-0)
+    // word2: benc(kind 11-10 + pay 9-0) | unused
+    uint32_t w1 = (dst_slot & 0x3FF) << 13;
+    if (dst_global) w1 |= 1u << 23;
+    w1 |= aenc;
+    uint32_t w2 = benc;
+    emit_op(rop);
+    auto raw24 = [this](uint32_t v) {
+        emit_byte(static_cast<uint8_t>((v >> 16) & 0xFF));
+        emit_byte(static_cast<uint8_t>((v >> 8) & 0xFF));
+        emit_byte(static_cast<uint8_t>(v & 0xFF));
+    };
+    raw24(w1);
+    raw24(w2);
+    return true;
+}
+
 // A struct travels as a descriptor constant: { name, fields: [ { name,
 // type (a stable cast code), default, has_default } ] }.  OP_DEF_STRUCT
 // turns it back into a Class at runtime, so struct declarations are plain
@@ -712,6 +792,19 @@ void Compiler::compile_return(ReturnNode* n) {
     while (current->try_depth > 0) {
         emit_op(OpCode::OP_TRY_END);
         current->try_depth--;
+    }
+    // return a op b: compute into a scratch slot and return from there.
+    if (allow_fusion && n->value) {
+        if (auto bin = dynamic_cast<BinaryOpNode*>(n->value.get())) {
+            int s = push_scratch();
+            if (compile_r_bin(static_cast<uint32_t>(s), false, bin->op.type,
+                              bin->left.get(), bin->right.get())) {
+                emit_op_operand(OpCode::OP_RETURN_R, static_cast<uint32_t>(s));
+                pop_scratch();
+                return;
+            }
+            pop_scratch();
+        }
     }
     if (n->value) {
         // A wholesale-returned literal is display data: the host shows it to
@@ -812,6 +905,28 @@ void Compiler::compile_expression_statement(ExpressionStatementNode* n) {
     if (auto asg = dynamic_cast<AssignmentNode*>(n->expression.get())) {
         if (auto var = dynamic_cast<VariableNode*>(asg->target.get())) {
             if (try_compile_inplace_np(var->name, asg->value.get())) return;
+            // Register arithmetic for a plain `y = a op b;` statement:
+            // computed straight into the destination slot, no stack.
+            int dslot = resolve_local(var->name);
+            bool dglobal = false;
+            if (dslot < 0 && resolve_upvalue(current, var->name) == -1) dglobal = true;
+            if (dglobal || (dslot >= 0 && dslot <= 1023)) {
+                if (auto bin = dynamic_cast<BinaryOpNode*>(asg->value.get())) {
+                    auto lv = dynamic_cast<VariableNode*>(bin->left.get());
+                    bool inplace_case = lv && lv->name == var->name;
+                    if (!inplace_case &&
+                        compile_r_bin(dglobal ? 0 : static_cast<uint32_t>(dslot),
+                                      dglobal, bin->op.type, bin->left.get(), bin->right.get())) {
+                        if (dglobal) {
+                            uint32_t name_idx = add_string_constant(var->name);
+                            emit_op_operand(OpCode::OP_SET_GLOBAL, name_idx);
+                        } else {
+                            emit_op_operand(OpCode::OP_SET_LOCAL, static_cast<uint32_t>(dslot));
+                        }
+                        return;
+                    }
+                }
+            }
         }
     }
     compile_expression(n->expression);
@@ -1359,6 +1474,64 @@ void Compiler::compile_lambda(LambdaNode* n) {
 }
 
 void Compiler::compile_call(CallNode* n) {
+    // f(a, b, ...) with a plain callee variable and encodable arguments
+    // becomes OP_CALLR: the arguments are described as slot/inline/global
+    // descriptors and the VM reads them without any stack traffic. A
+    // compound argument (n - 1) is computed into a scratch slot first.
+    if (allow_fusion) {
+    if (auto callee_var = dynamic_cast<VariableNode*>(n->callee.get())) {
+        const size_t argc = n->arguments.size();
+        if (argc >= 1 && argc <= 4) {
+            // Resolve callee: local slot or global name.
+            int cslot = resolve_local(callee_var->name);
+            uint32_t cenc;
+            // ctrl word: kind(22-21) | pay(20-9) | nargs(8-0)
+            if (cslot >= 0 && cslot <= 4095) cenc = (1u << 21) | (static_cast<uint32_t>(cslot) << 9);
+            else if (cslot < 0 && resolve_upvalue(current, callee_var->name) == -1) {
+                uint32_t idx = add_string_constant(callee_var->name);
+                if (idx > 4095) goto no_callr;
+                cenc = idx << 9;
+            } else goto no_callr;
+
+            uint32_t desc[4];
+            for (size_t i = 0; i < argc; ++i) {
+                AstNode* arg = n->arguments[i].get();
+                uint32_t enc;
+                if (encode_r_side(arg, enc)) {
+                    desc[i] = enc;
+                } else if (auto bin = dynamic_cast<BinaryOpNode*>(arg)) {
+                    if (bin->op.type == TokenType::PLUS || bin->op.type == TokenType::MINUS) {
+                        int s = push_scratch();
+                        if (!compile_r_bin(static_cast<uint32_t>(s), false, bin->op.type,
+                                           bin->left.get(), bin->right.get())) {
+                            pop_scratch();
+                            goto no_callr;
+                        }
+                        desc[i] = (0u << 12) | static_cast<uint32_t>(s);
+                    } else goto no_callr;
+                } else goto no_callr;
+            }
+            emit_op(OpCode::OP_CALLR);
+            auto raw24 = [this](uint32_t v) {
+                emit_byte(static_cast<uint8_t>((v >> 16) & 0xFF));
+                emit_byte(static_cast<uint8_t>((v >> 8) & 0xFF));
+                emit_byte(static_cast<uint8_t>(v & 0xFF));
+            };
+            raw24(cenc | static_cast<uint32_t>(argc));
+            for (size_t w = 0; w < 4; w += 2) {   // fixed two words: the walker needs a constant length
+                uint32_t hi = (w < argc) ? (desc[w] & 0xFFF) : (3u << 10);
+                uint32_t lo = (w + 1 < argc) ? (desc[w + 1] & 0xFFF) : (3u << 10);
+                raw24((hi << 12) | lo);
+            }
+            // scratch arguments stay allocated for this statement; the
+            // high-water mark bounds max_locals, reuse happens naturally
+            // on the next push_scratch at the same depth.
+            for (size_t i = 0; i < argc; ++i) pop_scratch();
+            return;
+        }
+    }
+    no_callr:;
+    }
     // obj.member(args) fuses into one instruction: the VM resolves the
     // member and calls it without materializing the bound function value.
     if (allow_fusion) {

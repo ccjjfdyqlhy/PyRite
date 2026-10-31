@@ -47,7 +47,9 @@ public:
 private:
     // ---- Call frame ----
     struct CallFrame {
-        CompiledFunctionPtr function;
+        // Raw pointer: the chunk's all_functions list owns the function,
+        // so a frame does not need to pay two atomic ops per call.
+        CompiledFunction* function;
         const uint8_t* ip;
         const uint8_t* code_start;
         std::vector<ValuePtr> locals;
@@ -78,7 +80,7 @@ private:
 
     // ---- Frame helpers ----
     CallFrame& frame() { return frames.back(); }
-    CompiledFunctionPtr current_function() { return frames.back().function; }
+    CompiledFunction* current_function() { return frames.back().function; }
 
     // ---- Upvalue management ----
     std::shared_ptr<UpvalueObj> capture_upvalue(int slot);
@@ -96,6 +98,8 @@ private:
     // Set up a new call frame for a VM closure.
     void push_frame(Closure* closure, const ValuePtr* args, size_t nargs, int line);
     void push_frame_from_stack(Closure* closure, size_t nargs, int line);
+    // Same, but the arguments come from an explicit array (register calls).
+    void push_frame_from_slots(Closure* closure, const ValuePtr* args, size_t nargs, int line);
 
     // ---- Error ----
     void runtime_error(int line, const std::string& msg);  // throws RuntimeError
