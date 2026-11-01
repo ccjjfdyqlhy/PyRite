@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -216,9 +217,22 @@ public:
 
 class DimValue : public Value {
 public:
-    std::map<std::string, ValuePtr> dict;
-    DimValue(const std::map<std::string, ValuePtr>& d) : Value(VTag::Dim), dict(d) {}
+    // Hashed storage: dictionary lookup and insert are the hot paths of
+    // loop-shaped scripts. Every operation that exposes an ORDER goes
+    // through sorted_entries(), so observable behavior stays exactly the
+    // sorted order an ordered map produced.
+    std::unordered_map<std::string, ValuePtr> dict;
+    DimValue(const std::unordered_map<std::string, ValuePtr>& d) : Value(VTag::Dim), dict(d) {}
     DimValue() : Value(VTag::Dim) {}
+    std::vector<std::pair<std::string, ValuePtr>> sorted_entries() const {
+        std::vector<std::pair<std::string, ValuePtr>> out;
+        out.reserve(dict.size());
+        for (const auto& kv : dict) out.emplace_back(kv.first, kv.second);
+        std::sort(out.begin(), out.end(),
+                  [](const std::pair<std::string, ValuePtr>& a,
+                     const std::pair<std::string, ValuePtr>& b) { return a.first < b.first; });
+        return out;
+    }
     std::string toString() const override;
     std::string repr() const override { return toString(); }
     bool isTruthy() const override { return !dict.empty(); }

@@ -430,6 +430,21 @@ bool VM::run(BytecodeChunkPtr c) {
                 std::string name = ptr_cast<StringValue>(
                     frame.function->constants[idx])->value;
                 ValuePtr obj = pop();
+                // `.length` is a plain read on a container: no member value
+                // needs to materialize for it.
+                if (name == "length") {
+                    VTag otag = obj->kind();
+                    if (otag == VTag::Ln) {
+                        push(make_value<NumberValue>(BigNumber(
+                            (long long)static_cast<LnValue*>(obj.get())->elements.size())));
+                        break;
+                    }
+                    if (otag == VTag::String) {
+                        push(make_value<NumberValue>(BigNumber(
+                            (long long)static_cast<StringValue*>(obj.get())->value.size())));
+                        break;
+                    }
+                }
                 if (auto inst = dynamic_cast<Instance*>(obj.get())) {
                     ValuePtr val = inst->get(name);
                     push(val);
@@ -806,6 +821,21 @@ bool VM::run(BytecodeChunkPtr c) {
                 ValuePtr sv = src_global ? (scell ? *scell : nullptr) : *sslot;
                 if (a && sv && a->kind() == VTag::Number && sv->kind() == VTag::Number) {
                     NumberValue* an = static_cast<NumberValue*>(a.get());
+                    // Machine-int fast path: dst += src * k in one __int128
+                    // step, one result object (or an intern table hit).
+                    long long ia, isrc;
+                    if (an->value.is_int_fast(ia) &&
+                        static_cast<NumberValue*>(sv.get())->value.is_int_fast(isrc)) {
+                        __int128 r = (__int128)ia + (__int128)isrc * k;
+                        if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+                            long long rv = (long long)r;
+                            ValuePtr fresh = (rv >= -4096 && rv <= 4095)
+                                ? intern_small(rv) : make_value<NumberValue>(BigNumber(rv));
+                            if (dst_global) *dcell = fresh; else *dslot = fresh;
+                            if (!no_push) push(fresh);
+                            break;
+                        }
+                    }
                     BigNumber prod = static_cast<NumberValue*>(sv.get())->value * BigNumber(k);
                     BigNumber result = an->value + prod;
                     if (dst_global) *dcell = nullptr; else *dslot = nullptr;
@@ -878,7 +908,8 @@ bool VM::run(BytecodeChunkPtr c) {
                     OpCode plain = op == OpCode::OP_INPLACE_ADD ? OpCode::OP_ADD
                                  : op == OpCode::OP_INPLACE_SUB ? OpCode::OP_SUB : OpCode::OP_MUL;
                     ValuePtr res = binary_op(plain, ra2, rb2, 0);
-                    if (!np) {  // no-push variant: the value is not wanted
+                    // The slot store always happens; only the leftover
+                    // stack copy is skipped for the no-push variant.
                     if (dst_global) {
                         if (dst >= frame.function->wcache.size()) frame.function->wcache.resize(frame.function->constants.size(), nullptr);
                         ValuePtr* cell = frame.function->wcache[dst];
@@ -893,8 +924,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     } else {
                         frame.locals[dst] = res;
                     }
-                    push(res);
-                    }
+                    if (!np) push(res);
                 }
                 break;
             }
@@ -1015,6 +1045,46 @@ bool VM::run(BytecodeChunkPtr c) {
                 std::string name = ptr_cast<StringValue>(
                     frame.function->constants[name_idx])->value;
                 ValuePtr obj = peek(arg_count);
+                // Hot container members resolve and run inline: the
+                // generic path below materializes a bound native value
+                // (one allocation) per call, which is what loops feel.
+                const size_t call_base = stack.size() - arg_count;
+                VTag otag = obj->kind();
+                if (otag == VTag::Ln) {
+                    auto* lv = static_cast<LnValue*>(obj.get());
+                    if (name == "length" && arg_count == 0) {
+                        stack.resize(call_base - 1);
+                        push(make_value<NumberValue>(BigNumber((long long)lv->elements.size())));
+                        break;
+                    }
+                    if ((name == "push" || name == "append") && arg_count == 1) {
+                        lv->elements.push_back(stack.back());
+                        stack.resize(call_base - 1);
+                        push(make_value<NumberValue>(BigNumber((long long)lv->elements.size())));
+                        break;
+                    }
+                    if (name == "pop" && arg_count == 0) {
+                        ValuePtr out;
+                        if (lv->elements.empty()) out = make_value<NullValue>();
+                        else { out = lv->elements.back(); lv->elements.pop_back(); }
+                        stack.resize(call_base - 1);
+                        push(out);
+                        break;
+                    }
+                } else if (otag == VTag::Dim) {
+                    if (name == "has" && arg_count == 1 && stack.back()->kind() == VTag::String) {
+                        bool hit = static_cast<DimValue*>(obj.get())->dict.count(
+                            static_cast<StringValue*>(stack.back().get())->value) != 0;
+                        stack.resize(call_base - 1);
+                        push(hit ? BOOL_TRUE : BOOL_FALSE);
+                        break;
+                    }
+                } else if (otag == VTag::String && name == "length" && arg_count == 0) {
+                    stack.resize(call_base - 1);
+                    push(make_value<NumberValue>(BigNumber(
+                        (long long)static_cast<StringValue*>(obj.get())->value.size())));
+                    break;
+                }
                 // Same member resolution as OP_GET_PROPERTY: instance
                 // methods and dict keys come first, then value members.
                 ValuePtr member;
@@ -1063,11 +1133,11 @@ bool VM::run(BytecodeChunkPtr c) {
                 }
                 bool was_script = (frame_top == 1);
                 if (!was_script) {
-                    // Roll the arena back and drop the frame's references:
-                    // stale slots would otherwise keep values alive and
-                    // defeat the caller's in-place reuse.
+                    // Roll the arena back. Slots are not re-initialized on
+                    // entry (the compiler emits an assignment before any
+                    // read), so stale references here are never observed -
+                    // they only delay reclamation until the slot is reused.
                     CallFrame& rf = frames[frame_top - 1];
-                    for (uint32_t k = 0; k < rf.nlocals; ++k) rf.locals[k] = nullptr;
                     arena_top = rf.locals_base;
                 }
                 frame_top--;
@@ -1083,7 +1153,6 @@ bool VM::run(BytecodeChunkPtr c) {
                 bool was_script = (frame_top == 1);
                 if (!was_script) {
                     CallFrame& rf = frames[frame_top - 1];
-                    for (uint32_t k = 0; k < rf.nlocals; ++k) rf.locals[k] = nullptr;
                     arena_top = rf.locals_base;
                 }
                 frame_top--;
@@ -1767,6 +1836,23 @@ bool VM::exec_inplace(OpCode op, uint32_t packed, CallFrame& frame, int line) {
     // which is what makes `i = i + 1` allocation-free.
     if (a->kind() == VTag::Number && rb) {
         NumberValue* an = static_cast<NumberValue*>(a.get());
+        // Machine-int fast path: when both sides and the result fit a
+        // long long the limb machinery below is pure overhead. Small
+        // results come straight out of the intern table.
+        long long ia, ib;
+        if (an->value.is_int_fast(ia) && rb->is_int_fast(ib)) {
+            __int128 r = op == OpCode::OP_INPLACE_ADD ? (__int128)ia + ib
+                       : op == OpCode::OP_INPLACE_SUB ? (__int128)ia - ib
+                       : (__int128)ia * ib;
+            if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+                long long rv = (long long)r;
+                ValuePtr fresh = (rv >= -4096 && rv <= 4095)
+                    ? intern_small(rv) : make_value<NumberValue>(BigNumber(rv));
+                if (dst_global) *gcell = fresh; else *slot = fresh;
+                if (!no_push) push(fresh);
+                return true;
+            }
+        }
         BigNumber result;
         switch (op) {
             case OpCode::OP_INPLACE_ADD: result = an->value + *rb; break;
@@ -1780,13 +1866,13 @@ bool VM::exec_inplace(OpCode op, uint32_t packed, CallFrame& frame, int line) {
         if (a.use_count() == 1) {
             an->value = std::move(result);
             if (dst_global) *gcell = a; else *slot = a;
-            push(a);
+            if (!no_push) push(a);
         } else {
             long long iv;
             ValuePtr fresh = (result.is_int_fast(iv) && iv >= -4096 && iv <= 4095)
                 ? intern_small(iv) : make_value<NumberValue>(std::move(result));
             if (dst_global) *gcell = fresh; else *slot = fresh;
-            push(fresh);
+            if (!no_push) push(fresh);
         }
         return true;
     }
@@ -1821,7 +1907,20 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
     auto lb = tb2 == VTag::Ln ? static_cast<LnValue*>(b.get()) : nullptr;
 
     if (op == OpCode::OP_ADD) {
-        if (na && nb) return make_value<NumberValue>(na->value + nb->value);
+        if (na && nb) {
+            // Machine-int fast path with small-result interning: loop
+            // arithmetic never touches the limb machinery here.
+            long long ia, ib;
+            if (na->value.is_int_fast(ia) && nb->value.is_int_fast(ib)) {
+                __int128 r = (__int128)ia + ib;
+                if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+                    long long rv = (long long)r;
+                    if (rv >= -4096 && rv <= 4095) return intern_small(rv);
+                    return make_value<NumberValue>(BigNumber(rv));
+                }
+            }
+            return make_value<NumberValue>(na->value + nb->value);
+        }
         // Binary + Number or Number + Binary → number
         if (ba && nb) return make_value<NumberValue>(ba->toBigNumber() + nb->value);
         if (na && bb) return make_value<NumberValue>(na->value + bb->toBigNumber());
@@ -1837,7 +1936,18 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
         }
     }
     if (op == OpCode::OP_MUL) {
-        if (na && nb) return make_value<NumberValue>(na->value * nb->value);
+        if (na && nb) {
+            long long ia, ib;
+            if (na->value.is_int_fast(ia) && nb->value.is_int_fast(ib)) {
+                __int128 r = (__int128)ia * ib;
+                if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+                    long long rv = (long long)r;
+                    if (rv >= -4096 && rv <= 4095) return intern_small(rv);
+                    return make_value<NumberValue>(BigNumber(rv));
+                }
+            }
+            return make_value<NumberValue>(na->value * nb->value);
+        }
         // List * Number → repetition
         if (la && nb) {
             long long times = nb->value.toLongLong();
@@ -1860,6 +1970,15 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
         }
     }
     if (na && nb) {
+        long long ia, ib;
+        if ((op == OpCode::OP_SUB) && na->value.is_int_fast(ia) && nb->value.is_int_fast(ib)) {
+            __int128 r = (__int128)ia - ib;
+            if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+                long long rv = (long long)r;
+                if (rv >= -4096 && rv <= 4095) return intern_small(rv);
+                return make_value<NumberValue>(BigNumber(rv));
+            }
+        }
         switch (op) {
             case OpCode::OP_SUB: return make_value<NumberValue>(na->value - nb->value);
             case OpCode::OP_DIV:

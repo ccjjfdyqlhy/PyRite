@@ -28,7 +28,7 @@ ValuePtr ListLiteralNode::accept(Interpreter& visitor) {
 }
 
 ValuePtr DimLiteralNode::accept(Interpreter& visitor) {
-    std::map<std::string, ValuePtr> result;
+    std::unordered_map<std::string, ValuePtr> result;
     for (const auto& entry : entries) {
         ValuePtr key_val = visitor.evaluate(entry.first);
         std::string key = key_val->toString();
@@ -746,7 +746,7 @@ ValuePtr Interpreter::load_module(ModuleProxy* proxy) {
     }
     this->environment = previous;
 
-    std::map<std::string, ValuePtr> exports;
+    std::unordered_map<std::string, ValuePtr> exports;
     if (is_dir_module) {
         for (const auto& stmt : statements) {
             if (auto fn_node = std::dynamic_pointer_cast<FnDefNode>(stmt)) {
@@ -1173,7 +1173,7 @@ void Interpreter::define_native_functions() {
             auto dict_val = dynamic_cast<DimValue*>(args[0].get());
             if (!dict_val) throw std::runtime_error("Argument to keys() must be a dictionary.");
             std::vector<ValuePtr> out;
-            for (const auto& entry : dict_val->dict)
+            for (const auto& entry : dict_val->sorted_entries())
                 out.push_back(make_value<StringValue>(entry.first));
             return make_value<LnValue>(out);
         }));
@@ -1182,7 +1182,7 @@ void Interpreter::define_native_functions() {
             auto dict_val = dynamic_cast<DimValue*>(args[0].get());
             if (!dict_val) throw std::runtime_error("Argument to values() must be a dictionary.");
             std::vector<ValuePtr> out;
-            for (const auto& entry : dict_val->dict) out.push_back(entry.second);
+            for (const auto& entry : dict_val->sorted_entries()) out.push_back(entry.second);
             return make_value<LnValue>(out);
         }));
         globals->define("has", make_value<NativeFnValue>("has", [number](const std::vector<ValuePtr>& args){

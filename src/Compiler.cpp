@@ -1148,7 +1148,7 @@ int32_t Compiler::table_constant(ListLiteralNode* n) {
         }
         index_values.push_back(make_value<NumberValue>(BigNumber(slot)));
     }
-    std::map<std::string, ValuePtr> descriptor;
+    std::unordered_map<std::string, ValuePtr> descriptor;
     descriptor[table_key()] = make_value<LnValue>(index_values);
     return static_cast<int32_t>(add_constant(make_value<DimValue>(descriptor)));
 }

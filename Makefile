@@ -28,12 +28,20 @@ release: CXXFLAGS += -O3 -DNDEBUG
 release: $(TARGET)
 
 # Profile-guided build: run the workload once, rebuild with the profile.
+# Training covers both execution modes and the BigNumber core: loops in
+# AST mode, then the VM dispatch loop (calls, dicts) plus the big-number
+# workloads big_fact / big_pow - without them GCC marks the BigNumber
+# paths cold and the optimized build runs them several times slower.
 pgo: CXXFLAGS += -O3 -DNDEBUG
 pgo:
 	$(CXX) $(CXXFLAGS) -fprofile-generate -o $(TARGET) $(SRCS)
 	./$(TARGET) bench/pyrite/int_loop.pr > /dev/null
-	./$(TARGET) bench/pyrite/fib.pr > /dev/null
-	./$(TARGET) bench/pyrite/dict_ops.pr > /dev/null
+	./$(TARGET) --vm bench/pyrite/int_loop.pr > /dev/null
+	./$(TARGET) --vm bench/pyrite/div_loop.pr > /dev/null
+	./$(TARGET) --vm bench/pyrite/fib.pr > /dev/null
+	./$(TARGET) --vm bench/pyrite/dict_ops.pr > /dev/null
+	./$(TARGET) --vm bench/pyrite/big_fact.pr > /dev/null
+	./$(TARGET) --vm bench/pyrite/big_pow.pr > /dev/null
 	$(CXX) $(CXXFLAGS) -fprofile-use -fprofile-correction -o $(TARGET) $(SRCS)
 
 debug: CXXFLAGS += -O0 -g -DDEBUG

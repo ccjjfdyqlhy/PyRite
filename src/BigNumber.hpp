@@ -781,10 +781,41 @@ public:
             int precision = get_default_precision();
             unsigned long long ua = sa < 0 ? 0ULL - (unsigned long long)sa : (unsigned long long)sa;
             unsigned long long ub = sb < 0 ? 0ULL - (unsigned long long)sb : (unsigned long long)sb;
+            // Single-shot path: when ua * 10^precision still fits an
+            // unsigned __int128, the whole expansion is one 128-bit
+            // division and one rounding step - no limb vectors. This is
+            // the shape of everyday small-integer division (i / 7).
+            // The scale and the ua limit depend only on the precision,
+            // which almost never changes, so they are cached.
+            static int fits_p = -1;
+            static unsigned __int128 fits_scale = 0;
+            static unsigned long long fits_limit = 0;
+            if (precision != fits_p) {
+                fits_p = precision;
+                fits_scale = 1;
+                for (int i = 0; i < precision; ++i) {
+                    if (fits_scale > (~(unsigned __int128)0) / 10) { fits_scale = 0; break; }
+                    fits_scale *= 10;
+                }
+                fits_limit = fits_scale
+                    ? (unsigned long long)((~(unsigned __int128)0) / fits_scale) : 0;
+            }
+            if (fits_limit && ua <= fits_limit) {
+                unsigned __int128 n = (unsigned __int128)ua * fits_scale;
+                unsigned __int128 q = n / ub;
+                unsigned __int128 r = n % ub;
+                if (r * 2 >= ub) ++q;          // round half up, on the magnitude
+                if (q > 0) {
+                    BigNumberDetail::SmallVecInt rq;
+                    while (q > 0) { rq.push_back((int)(q % BigNumberDetail::MOD)); q /= BigNumberDetail::MOD; }
+                    return BigNumber(BigNumberDetail::UnsignedDigit(std::move(rq)), (sa < 0) != (sb < 0), precision);
+                }
+                // q == 0 (only reachable at very low precision): fall
+                // through so the zero result keeps the general limb shape.
+            }
             BigNumberDetail::SmallVecInt num;
             while (ua > 0) { num.push_back((int)(ua % BigNumberDetail::MOD)); ua /= BigNumberDetail::MOD; }
-            int shift = precision + 1;
-            int whole = shift / BigNumberDetail::BASE, rem = shift % BigNumberDetail::BASE;
+            int whole = precision / BigNumberDetail::BASE, rem = precision % BigNumberDetail::BASE;
             if (rem) {
                 static const int P10[BigNumberDetail::BASE] = {1, 10, 100, 1000, 10000};
                 long long carry = 0;
@@ -797,29 +828,43 @@ public:
             }
             num.insert_front((size_t)whole, 0);
             if (num.empty()) num.push_back(0);
+            // One long-division pass over the scaled numerator keeps the
+            // final remainder, so rounding needs no second quotient pass:
+            // dropping the (p+1)-th digit rounds up exactly when the
+            // remainder of ua*10^p / ub is at least half the divisor.
             BigNumberDetail::SmallVecInt q; q.assign(num.size(), 0);
-            long long r = 0;
-            for (int i = (int)num.size() - 1; i >= 0; --i) {
-                unsigned __int128 cur = (unsigned __int128)r * BigNumberDetail::MOD + num[i];
-                q[i] = (int)(cur / (unsigned long long)ub);
-                r = (long long)(cur % (unsigned long long)ub);
-            }
-            // divide q by 10, remembering the digit that drops out
-            int digit = q[0] % 10;
-            BigNumberDetail::SmallVecInt rq; rq.assign(q.size(), 0);
-            long long carry2 = 0;
-            for (int i = (int)q.size() - 1; i >= 0; --i) {
-                long long cur = carry2 * BigNumberDetail::MOD + q[i];
-                rq[i] = (int)(cur / 10);
-                carry2 = cur % 10;
-            }
-            if (digit >= 5) {           // round half up, on the magnitude
-                for (size_t i = 0; i < rq.size(); ++i) {
-                    rq[i] += 1;
-                    if (rq[i] >= BigNumberDetail::MOD) { rq[i] -= BigNumberDetail::MOD; } else break;
+            if (ub <= 0xFFFFFFFFULL) {
+                // Divisor fits 32 bits: remainder * 1e9 stays inside a
+                // 64-bit word, so the long division is hardware divides
+                // instead of libgcc's software __int128 division.
+                unsigned long long r64 = 0;
+                for (int i = (int)num.size() - 1; i >= 0; --i) {
+                    unsigned long long cur = r64 * (unsigned long long)BigNumberDetail::MOD
+                                           + (unsigned long long)num[i];
+                    q[i] = (int)(cur / ub);
+                    r64 = cur % ub;
+                }
+                if (r64 * 2 >= ub) {    // round half up, on the magnitude
+                    for (size_t i = 0; i < q.size(); ++i) {
+                        q[i] += 1;
+                        if (q[i] >= BigNumberDetail::MOD) { q[i] -= BigNumberDetail::MOD; } else break;
+                    }
+                }
+            } else {
+                unsigned long long r = 0;
+                for (int i = (int)num.size() - 1; i >= 0; --i) {
+                    unsigned __int128 cur = (unsigned __int128)r * BigNumberDetail::MOD + num[i];
+                    q[i] = (int)(cur / (unsigned long long)ub);
+                    r = (unsigned long long)(cur % (unsigned long long)ub);
+                }
+                if ((unsigned __int128)r * 2 >= ub) {   // round half up, on the magnitude
+                    for (size_t i = 0; i < q.size(); ++i) {
+                        q[i] += 1;
+                        if (q[i] >= BigNumberDetail::MOD) { q[i] -= BigNumberDetail::MOD; } else break;
+                    }
                 }
             }
-            return BigNumber(BigNumberDetail::UnsignedDigit(std::move(rq)), (sa < 0) != (sb < 0), precision);
+            return BigNumber(BigNumberDetail::UnsignedDigit(std::move(q)), (sa < 0) != (sb < 0), precision);
         }
         if (other.magnitude.isZero()) throw std::runtime_error("Division by zero.");
         
@@ -975,6 +1020,12 @@ public:
 
     std::string toString() const {
         if (magnitude.isZero()) return "0";
+        // Machine-int numbers print straight from the integer: string
+        // building in hot loops ("k" + i) skips the limb formatter.
+        if (decimal_pos == 0) {
+            long long v;
+            if (is_int_fast(v)) return std::to_string(v);
+        }
         std::string s = magnitude.toString();
         int pos = decimal_pos;
         // The fraction may end in zeros that say nothing: 12.50 is 12.5,

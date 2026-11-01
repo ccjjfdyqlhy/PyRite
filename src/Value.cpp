@@ -327,7 +327,7 @@ std::string DimValue::toString() const {
     std::stringstream ss;
     ss << "{";
     bool first = true;
-    for (const auto& pair : dict) {
+    for (const auto& pair : sorted_entries()) {
         if (!first) ss << ", ";
         first = false;
         // The browser runtime prints the key of a dictionary in quotes,
@@ -552,13 +552,13 @@ ValuePtr DimValue::getMember(const std::string& name) const {
     if (name == "keys")
         return make_value<NativeFnValue>("keys", [this](const std::vector<ValuePtr>&) {
             std::vector<ValuePtr> out;
-            for (const auto& pair : dict) out.push_back(make_value<StringValue>(pair.first));
+            for (const auto& pair : sorted_entries()) out.push_back(make_value<StringValue>(pair.first));
             return make_value<LnValue>(out);
         });
     if (name == "values")
         return make_value<NativeFnValue>("values", [this](const std::vector<ValuePtr>&) {
             std::vector<ValuePtr> out;
-            for (const auto& pair : dict) out.push_back(pair.second);
+            for (const auto& pair : sorted_entries()) out.push_back(pair.second);
             return make_value<LnValue>(out);
         });
     if (name == "has")
@@ -572,7 +572,8 @@ ValuePtr DimValue::getMember(const std::string& name) const {
 }
 
 ValuePtr DimValue::clone() const {
-    std::map<std::string, ValuePtr> cloned;
+    std::unordered_map<std::string, ValuePtr> cloned;
+    cloned.reserve(dict.size());
     for (const auto& pair : dict) {
         cloned[pair.first] = pair.second->clone();
     }
