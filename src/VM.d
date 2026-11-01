@@ -9,7 +9,7 @@ src/VM.o: src/VM.cpp src/VM.hpp /usr/include/c++/11/vector \
  src/Tokenizer.hpp src/BytecodeChunk.hpp src/Ast.hpp src/OpCode.hpp \
  src/Environment.hpp src/CastTypes.hpp src/OpCodeInfo.hpp \
  src/Interpreter.hpp /usr/include/c++/11/set /usr/include/c++/11/chrono \
- src/Parser.hpp src/msgs.hpp
+ src/Parser.hpp src/msgs.hpp src/msg_cn.hpp
 src/VM.hpp:
 /usr/include/c++/11/vector:
 /usr/include/c++/11/memory:
@@ -39,3 +39,4 @@ src/Interpreter.hpp:
 /usr/include/c++/11/chrono:
 src/Parser.hpp:
 src/msgs.hpp:
+src/msg_cn.hpp:

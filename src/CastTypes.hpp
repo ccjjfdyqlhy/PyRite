@@ -6,7 +6,7 @@
 // PyRite cast type codes -- the operand of the cast instruction.
 // ============================================================================
 // GENERATED FILE -- DO NOT EDIT BY HAND.
-// Source: opcodes.def (sha256 587826d8810eefc3d51531e01acb8d92c13e741f20583d3bad504b7237905633)
+// Source: opcodes.def (sha256 2b2ee9ba6c6170f456c54f9fe55e2abfc50ad44fa4a288ba66b2081700553b83)
 // Regenerate: python3 tools/gen_opcodes.py
 //
 // These codes are STABLE. They are deliberately not TokenType values:

@@ -270,7 +270,11 @@ class BoundMethodValue : public Value {
 public:
     InstancePtr instance;
     std::shared_ptr<Function> method;
+    // Set when the method is a bytecode closure (OP_DEF_CLASS): the
+    // receiver rides in the closure frame's slot 0 at call time.
+    Ptr<struct Closure> bc_method;
     BoundMethodValue(InstancePtr inst, std::shared_ptr<Function> m);
+    BoundMethodValue(InstancePtr inst, Ptr<struct Closure> m);
     // Out of line: Instance is only forward-declared here, and the
     // pointer's destructor must see the complete type to drop the count.
     ~BoundMethodValue() override;

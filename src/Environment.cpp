@@ -111,18 +111,28 @@ ValuePtr Instance::clone() const {
 
 ValuePtr Instance::get(const std::string& name) {
     if (DEBUG) std::cout << "DEBUG: Getting property '" << name << "' from " << klass->name << "'." << std::endl;
-    try {
-        return instance_env->get(name);
-    } catch (const RuntimeError&) {
-        auto it = klass->methods.find(name);
-        if (it != klass->methods.end()) {
-            if (DEBUG) std::cout << "DEBUG: Found method '" << name << "', creating bound method." << std::endl;
-            return make_value<BoundMethodValue>(
-                ptr_static_cast<Instance>(self()),
-                it->second);
-        }
+    // The instance's own scope first, without the exception round-trip:
+    // field reads inside methods run once per loop iteration, and the
+    // throwing path costs a C++ exception per miss.
+    {
+        const auto& own = instance_env->get_values();
+        auto own_it = own.find(name);
+        if (own_it != own.end()) return own_it->second;
     }
-    throw std::runtime_error(fmt(Msg::UNDEF_PROP, name));
+    // Bytecode methods (OP_DEF_CLASS) resolve to their closure; the VM's
+    // call paths bind the receiver into the frame's slot 0.
+    for (const auto& pm : klass->bc_methods)
+        if (pm.first == name) return pm.second;
+    auto it = klass->methods.find(name);
+    if (it != klass->methods.end()) {
+        if (DEBUG) std::cout << "DEBUG: Found method '" << name << "', creating bound method." << std::endl;
+        return make_value<BoundMethodValue>(
+            ptr_static_cast<Instance>(self()),
+            it->second);
+    }
+    // Fall back to the full scope walk (globals stay visible through the
+    // instance environment); it throws when the name truly does not exist.
+    return instance_env->get(name);
 }
 
 void Instance::set(const std::string& name, ValuePtr value) {

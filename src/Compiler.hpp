@@ -167,6 +167,7 @@ private:
     void compile_inp(InpNode* n);
     void compile_fn_def(FnDefNode* n);
     void compile_struct_def(const AstNodePtr& node, StructDefNode* n);
+    void compile_class_def(const AstNodePtr& node, ClassDefNode* n);
     void compile_return(ReturnNode* n);
     void compile_raise(RaiseNode* n);
     void compile_try_catch(TryCatchNode* n);
@@ -216,7 +217,8 @@ private:
     void compile_function_body(const std::string& name,
                                const std::vector<ParameterDefinition>& params,
                                const std::vector<AstNodePtr>& body,
-                               bool is_lambda);
+                               bool is_lambda,
+                               bool is_method = false);
 
     // ---- Error ----
     void error(const std::string& msg);

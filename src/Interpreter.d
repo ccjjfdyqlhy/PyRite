@@ -8,9 +8,9 @@ src/Interpreter.o: src/Interpreter.cpp src/Interpreter.hpp \
  /usr/include/c++/11/iostream /usr/include/c++/11/cmath \
  /usr/include/c++/11/iomanip /usr/include/c++/11/cstring \
  /usr/include/c++/11/climits /usr/include/c++/11/complex \
- src/Tokenizer.hpp src/Ast.hpp src/Parser.hpp src/ModulePath.hpp \
- src/msg_cn.hpp src/msgs.hpp /usr/include/c++/11/thread \
- /usr/include/c++/11/fstream
+ src/Tokenizer.hpp src/Ast.hpp src/BytecodeChunk.hpp src/OpCode.hpp \
+ src/Parser.hpp src/ModulePath.hpp src/msg_cn.hpp src/msgs.hpp \
+ /usr/include/c++/11/thread /usr/include/c++/11/fstream
 src/Interpreter.hpp:
 /usr/include/c++/11/string:
 /usr/include/c++/11/vector:
@@ -34,6 +34,8 @@ src/BigNumber.hpp:
 /usr/include/c++/11/complex:
 src/Tokenizer.hpp:
 src/Ast.hpp:
+src/BytecodeChunk.hpp:
+src/OpCode.hpp:
 src/Parser.hpp:
 src/ModulePath.hpp:
 src/msg_cn.hpp:

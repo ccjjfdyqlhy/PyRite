@@ -6,7 +6,7 @@
 // PyRite Bytecode Instruction Set
 // ============================================================================
 // GENERATED FILE -- DO NOT EDIT BY HAND.
-// Source: opcodes.def (sha256 587826d8810eefc3d51531e01acb8d92c13e741f20583d3bad504b7237905633)
+// Source: opcodes.def (sha256 2b2ee9ba6c6170f456c54f9fe55e2abfc50ad44fa4a288ba66b2081700553b83)
 // Regenerate: python3 tools/gen_opcodes.py
 //
 // Stack-based VM. Operands are big-endian 24-bit unsigned integers (0..2^24-1)
@@ -123,8 +123,8 @@ enum class OpCode : uint8_t {
     OP_MUL_R,              // slot[dst] = a * b
     OP_CALLR,              // call via descriptors: ctrl word + 2 arg words (max 4 args)
     OP_RETURN_R,           // push slot value and return
-    OP_RESERVED_3,         // reserved
-    OP_RESERVED_4,         // reserved
+    OP_DEF_CLASS,          // [ctor][methods...] build Class, push; operand = descriptor constant
+    OP_CALL_CTOR,          // [class][args...] construct instance, run ctor closure; operand = argc
     OP_RESERVED_5,         // reserved
     OP_RESERVED_6,         // reserved
     OP_RESERVED_7,         // reserved
@@ -207,8 +207,8 @@ inline const char* op_name(OpCode op) {
         case OpCode::OP_MUL_R:       return "MUL_R";
         case OpCode::OP_CALLR:       return "CALLR";
         case OpCode::OP_RETURN_R:    return "RETURN_R";
-        case OpCode::OP_RESERVED_3:  return "RESERVED_3";
-        case OpCode::OP_RESERVED_4:  return "RESERVED_4";
+        case OpCode::OP_DEF_CLASS:   return "DEF_CLASS";
+        case OpCode::OP_CALL_CTOR:   return "CALL_CTOR";
         case OpCode::OP_RESERVED_5:  return "RESERVED_5";
         case OpCode::OP_RESERVED_6:  return "RESERVED_6";
         case OpCode::OP_RESERVED_7:  return "RESERVED_7";

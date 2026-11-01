@@ -486,8 +486,13 @@ ValuePtr StringValue::getMember(const std::string& name) const {
 
 BoundMethodValue::BoundMethodValue(InstancePtr inst, std::shared_ptr<Function> m)
     : Value(VTag::BoundMethod), instance(inst), method(m) {}
+BoundMethodValue::BoundMethodValue(InstancePtr inst, Ptr<struct Closure> m)
+    : Value(VTag::BoundMethod), instance(inst), bc_method(std::move(m)) {}
 BoundMethodValue::~BoundMethodValue() = default;
-ValuePtr BoundMethodValue::clone() const { return make_value<BoundMethodValue>(instance, method); }
+ValuePtr BoundMethodValue::clone() const {
+    if (bc_method) return make_value<BoundMethodValue>(instance, bc_method);
+    return make_value<BoundMethodValue>(instance, method);
+}
 
 // ---- A list ----
 ValuePtr LnValue::getMember(const std::string& name) const {

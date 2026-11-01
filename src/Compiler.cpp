@@ -276,6 +276,7 @@ void Compiler::compile_statement(const AstNodePtr& node) {
     if (auto n = dynamic_cast<ExpressionStatementNode*>(node.get())) { compile_expression_statement(n); return; }
     if (auto n = dynamic_cast<RequireNode*>(node.get())) { compile_require(n); return; }
     if (auto n = dynamic_cast<StructDefNode*>(node.get())) { compile_struct_def(node, n); return; }
+    if (auto n = dynamic_cast<ClassDefNode*>(node.get())) { compile_class_def(node, n); return; }
     // Complex statements -> OP_EVAL_AST
     emit_op_operand(OpCode::OP_EVAL_AST, add_ast_node(node));
     emit_op(OpCode::OP_POP);
@@ -758,6 +759,89 @@ void Compiler::compile_struct_def(const AstNodePtr& node, StructDefNode* n) {
     desc->dict["fields"] = fields;
     uint32_t desc_idx = add_constant(desc);
     emit_op_operand(OpCode::OP_DEF_STRUCT, desc_idx);
+    // The Class lands on the stack; bind the name like a fn definition.
+    if (func_stack.size() == 1) {
+        uint32_t name_idx = add_string_constant(n->name);
+        emit_op_operand(OpCode::OP_DEFINE_GLOBAL, name_idx);
+    } else {
+        declare_local(n->name);
+        int slot = resolve_local(n->name);
+        emit_op_operand(OpCode::OP_SET_LOCAL, static_cast<uint32_t>(slot));
+    }
+}
+
+// An ins class compiles to: CLOSURE(ctor), CLOSURE(m1)..CLOSURE(mN),
+// OP_DEF_CLASS(descriptor). The methods become bytecode closures with the
+// receiver in slot 0, so calls execute on the VM instead of falling back
+// to the AST interpreter. The descriptor shape mirrors OP_DEF_STRUCT's
+// fields entry. Classes with expression-default fields keep the AST path:
+// their defaults must evaluate per instantiation (B8).
+void Compiler::compile_class_def(const AstNodePtr& node, ClassDefNode* n) {
+    for (const auto& f : n->fields) {
+        if (f.default_expr) {
+            emit_op_operand(OpCode::OP_EVAL_AST, add_ast_node(node));
+            emit_op(OpCode::OP_POP);
+            return;
+        }
+    }
+    if (!allow_fusion) {
+        // The JavaScript VM cannot execute these opcodes yet; the JSON
+        // export recompiles with fusion off and keeps classes on EVAL_AST.
+        emit_op_operand(OpCode::OP_EVAL_AST, add_ast_node(node));
+        emit_op(OpCode::OP_POP);
+        return;
+    }
+
+    // The constructor: class parameters become its parameters, the body
+    // binds each field (SET_PROPERTY type-checks against the declared
+    // field type, matching the native `new`), runs the init code, and
+    // hands the instance back.
+    std::vector<AstNodePtr> ctor_body;
+    for (const auto& f : n->fields) {
+        auto this_node = std::make_shared<VariableNode>(n->line, "this");
+        auto field_ref = std::make_shared<GetNode>(n->line, this_node, f.name);
+        auto param_ref = std::make_shared<VariableNode>(n->line, f.name);
+        // Wrapped as an expression statement so the binding compiles to
+        // native SET_PROPERTY instead of the AST bridge.
+        ctor_body.push_back(std::make_shared<ExpressionStatementNode>(
+            n->line, std::make_shared<AssignmentNode>(n->line, field_ref, param_ref)));
+    }
+    for (const auto& stmt : n->initializer_body) ctor_body.push_back(stmt);
+    ctor_body.push_back(std::make_shared<ReturnNode>(
+        n->line, std::make_shared<VariableNode>(n->line, "this")));
+
+    compile_function_body(n->name + ".__init__", n->fields, ctor_body,
+                          /*is_lambda*/ false, /*is_method*/ true);
+    // The CLOSURE instruction pushed the constructor onto the stack.
+
+    std::vector<std::string> method_names;
+    for (const auto& m : n->methods) {
+        if (auto fn = dynamic_cast<FnDefNode*>(m.get())) {
+            compile_function_body(fn->name, fn->params, fn->body,
+                                  /*is_lambda*/ false, /*is_method*/ true);
+            method_names.push_back(fn->name);
+        }
+    }
+
+    auto desc = make_value<DimValue>();
+    desc->dict["name"] = make_value<StringValue>(n->name);
+    auto fields = make_value<LnValue>(std::vector<ValuePtr>{});
+    for (const auto& f : n->fields) {
+        auto fd = make_value<DimValue>();
+        fd->dict["name"] = make_value<StringValue>(f.name);
+        uint32_t code = static_cast<uint32_t>(CastType::CAST_ANY);
+        cast_code_for(f.type_keyword, code);
+        fd->dict["type"] = make_value<NumberValue>(BigNumber((long long)code));
+        fd->dict["default"] = f.default_value ? f.default_value : make_value<NullValue>();
+        fd->dict["has_default"] = make_value<NumberValue>(f.default_value ? 1 : 0);
+        fields->elements.push_back(fd);
+    }
+    desc->dict["fields"] = fields;
+    auto mnames = make_value<LnValue>(std::vector<ValuePtr>{});
+    for (const auto& mn : method_names) mnames->elements.push_back(make_value<StringValue>(mn));
+    desc->dict["methods"] = mnames;
+    uint32_t desc_idx = add_constant(desc);
+    emit_op_operand(OpCode::OP_DEF_CLASS, desc_idx);
     // The Class lands on the stack; bind the name like a fn definition.
     if (func_stack.size() == 1) {
         uint32_t name_idx = add_string_constant(n->name);
@@ -1474,6 +1558,23 @@ void Compiler::compile_lambda(LambdaNode* n) {
 }
 
 void Compiler::compile_call(CallNode* n) {
+    // new(Class, args...) compiles to OP_CALL_CTOR: the constructor runs
+    // as bytecode with the receiver in slot 0. AST-defined classes (and
+    // the JS export, which compiles with fusion off) reach the native
+    // `new` through the runtime fallback.
+    if (allow_fusion) {
+        if (auto new_var = dynamic_cast<VariableNode*>(n->callee.get())) {
+            if (new_var->name == "new" && !n->arguments.empty()) {
+                compile_expression(n->arguments[0]);
+                for (size_t i = 1; i < n->arguments.size(); ++i) {
+                    compile_expression(n->arguments[i]);
+                }
+                emit_op_operand(OpCode::OP_CALL_CTOR,
+                                static_cast<uint32_t>(n->arguments.size() - 1));
+                return;
+            }
+        }
+    }
     // f(a, b, ...) with a plain callee variable and encodable arguments
     // becomes OP_CALLR: the arguments are described as slot/inline/global
     // descriptors and the VM reads them without any stack traffic. A
@@ -1584,15 +1685,25 @@ void Compiler::compile_get(GetNode* n) {
 void Compiler::compile_function_body(const std::string& name,
                                      const std::vector<ParameterDefinition>& params,
                                      const std::vector<AstNodePtr>& body,
-                                     bool is_lambda) {
+                                     bool is_lambda,
+                                     bool is_method) {
     size_t saved_index = func_stack.size() - 1;
     func_stack.emplace_back();
     current = &func_stack.back();
     current->func = std::make_shared<CompiledFunction>();
     current->func->name = name;
     current->func->is_lambda = is_lambda;
+    current->func->is_method = is_method;
     current->scope_depth = 0;
     current->locals.push_back({"", 0, false});  // slot 0 reserved
+    if (is_method) {
+        // The receiver lives in slot 0: the VM's call paths put the
+        // instance there when the callee is an is_method closure. Naming
+        // the slot makes `this` resolve as an ordinary local.
+        current->locals[0].name = "this";
+        current->func->local_names.resize(1, "");
+        current->func->local_names[0] = "this";
+    }
 
     int required = 0;
     for (const auto& p : params) {

@@ -239,7 +239,7 @@ Source (.pr)
 ### Execution Modes
 
 1. **AST Interpreter** (`--ast`, default): Parse → walk AST directly. Full language support, simpler debugging.
-2. **Bytecode VM** (`--vm`): Parse → compile to bytecode → execute on VM. Faster for hot paths (arithmetic, loops, calls). Falls back to AST interpreter via `OP_EVAL_AST` for complex features (classes, try-catch, modules).
+2. **Bytecode VM** (`--vm`): Parse → compile to bytecode → execute on VM. Faster for hot paths (arithmetic, loops, calls). Falls back to AST interpreter via `OP_EVAL_AST` for the few remaining complex features (classes with expression-default fields, await). Classes with literal fields, try-catch, structs and modules run as native bytecode.
 3. **Pre-compiled bytecode** (`.prc`): Load serialized `BytecodeChunk` → VM. No parsing needed.
 4. **Pre-compiled AST** (`.prt`): Load serialized AST → Interpreter. No parsing needed.
 

@@ -6,6 +6,7 @@
 #include <sstream>
 #include "Value.hpp"
 #include "Ast.hpp"
+#include "BytecodeChunk.hpp"
 
 class Environment : public std::enable_shared_from_this<Environment> {
 public:
@@ -42,6 +43,11 @@ struct Class : public Value {
     std::vector<AstNodePtr> initializer_body;
     std::map<std::string, std::shared_ptr<Function>> methods;
     std::shared_ptr<Environment> closure;
+    // Bytecode-backed interface (OP_DEF_CLASS): the constructor and the
+    // methods are closures whose receiver rides in slot 0. Empty for
+    // AST-defined classes, which run on the interpreter.
+    ClosurePtr bc_ctor;
+    std::vector<std::pair<std::string, ClosurePtr>> bc_methods;
     Class(const std::string& n, const std::vector<ParameterDefinition>& f, const std::vector<AstNodePtr>& ib,
           const std::map<std::string, std::shared_ptr<Function>>& m, const std::shared_ptr<Environment>& c);
     std::string toString() const override { return "<class " + name + ">"; }

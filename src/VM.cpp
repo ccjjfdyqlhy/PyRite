@@ -3,6 +3,7 @@
 #include "OpCodeInfo.hpp"
 #include "Interpreter.hpp"
 #include "msgs.hpp"
+#include "msg_cn.hpp"
 #include <sstream>
 #include <cmath>
 #include <chrono>
@@ -99,6 +100,10 @@ bool VM::handle_exception(ValuePtr exc_value) {
 
     // Jump to the catch handler.
     frames[frame_top - 1].ip = handler.catch_ip;
+    // The exception is now handled: drop the error flag raised when it
+    // was thrown, or the next OP_EVAL_AST would abort with the stale
+    // error message even though execution is resuming.
+    had_error = false;
     return true;
 }
 
@@ -447,6 +452,14 @@ bool VM::run(BytecodeChunkPtr c) {
                 }
                 if (auto inst = dynamic_cast<Instance*>(obj.get())) {
                     ValuePtr val = inst->get(name);
+                    // A method reference must carry its receiver, so a
+                    // later call through it still binds `this`.
+                    if (val->kind() == VTag::Closure) {
+                        auto* clo = static_cast<Closure*>(val.get());
+                        if (clo->function->is_method)
+                            val = make_value<BoundMethodValue>(ptr_static_cast<Instance>(obj),
+                                                               ptr_static_cast<Closure>(val));
+                    }
                     push(val);
                 } else if (auto dm = dynamic_cast<DimValue*>(obj.get())) {
                     // A key of the dictionary comes first: a dictionary
@@ -791,6 +804,17 @@ bool VM::run(BytecodeChunkPtr c) {
                     }
                     if (!argv[i]) { runtime_error(current_line(), "undefined variable"); return false; }
                 }
+                if (callee->kind() == VTag::BoundMethod) {
+                    auto* bm = static_cast<BoundMethodValue*>(callee.get());
+                    if (bm->bc_method) {
+                        // Bytecode method reference: the receiver rides in
+                        // the frame's slot 0.
+                        push_frame_from_slots(static_cast<Closure*>(bm->bc_method.get()), argv, nargs, current_line());
+                        frames[frame_top - 1].locals[0] = bm->instance;
+                        break;
+                    }
+                    // AST bound method: fall through to call_value.
+                }
                 if (callee->kind() == VTag::Closure) {
                     push_frame_from_slots(static_cast<Closure*>(callee.get()), argv, nargs, current_line());
                 } else {
@@ -1023,6 +1047,19 @@ bool VM::run(BytecodeChunkPtr c) {
                 // Args are on the stack: [callee, arg1, ..., argN]
                 ValuePtr callee = peek(arg_count);
                 (void)0;
+                if (callee->kind() == VTag::BoundMethod) {
+                    auto* bm = static_cast<BoundMethodValue*>(callee.get());
+                    if (bm->bc_method) {
+                        // Bytecode method reference (`dec m = obj.method`):
+                        // run the closure with the captured receiver in
+                        // slot 0.
+                        push_frame_from_stack(static_cast<Closure*>(bm->bc_method.get()), arg_count, 0);
+                        frames[frame_top - 1].locals[0] = bm->instance;
+                        for (uint32_t i = 0; i <= arg_count; ++i) pop();
+                        break;
+                    }
+                    // AST bound method: fall through to call_value.
+                }
                 if (callee->kind() == VTag::Closure) {
                     // The callee stays on the stack (keeping the closure
                     // alive) while the frame copies what it needs; only
@@ -1114,6 +1151,9 @@ bool VM::run(BytecodeChunkPtr c) {
                     push(static_cast<NativeFnValue*>(member.get())->fn(native_args));
                 } else if (member->kind() == VTag::Closure) {
                     push_frame_from_stack(static_cast<Closure*>(member.get()), arg_count, current_line());
+                    // A method closure receives its receiver in slot 0.
+                    if (static_cast<Closure*>(member.get())->function->is_method)
+                        frames[frame_top - 1].locals[0] = obj;
                     for (uint32_t i = 0; i <= arg_count; ++i) pop();  // arg slots (moved out) + obj
                 } else {
                     std::vector<ValuePtr> native_args(
@@ -1374,6 +1414,127 @@ bool VM::run(BytecodeChunkPtr c) {
                 break;
             }
 
+            case OpCode::OP_DEF_CLASS: {
+                // Stack on entry: [ctor closure, m1, ..., mN] (ctor pushed
+                // first). The descriptor carries the class name, the field
+                // definitions (same shape as OP_DEF_STRUCT) and the method
+                // names in stack order.
+                uint32_t idx = read_operand24(frame.ip);
+                frame.ip += 3;
+                ValuePtr desc = frame.function->constants[idx];
+                auto d = ptr_cast<DimValue>(desc);
+                if (!d) { runtime_error(current_line(), "bad class descriptor"); return false; }
+                std::string name = ptr_cast<StringValue>(d->dict["name"])->value;
+                auto fields_ln = ptr_cast<LnValue>(d->dict["fields"]);
+                std::vector<ParameterDefinition> fields;
+                if (fields_ln) {
+                    for (auto& fv : fields_ln->elements) {
+                        auto fd = ptr_cast<DimValue>(fv);
+                        if (!fd) continue;
+                        std::string fname = ptr_cast<StringValue>(fd->dict["name"])->value;
+                        long long code = ptr_cast<NumberValue>(fd->dict["type"])->value.toLongLong();
+                        long long has_def = ptr_cast<NumberValue>(fd->dict["has_default"])->value.toLongLong();
+                        TokenType tk = TokenType::ANY;
+                        switch (static_cast<CastType>(code)) {
+                            case CastType::CAST_DEC: tk = TokenType::DEC; break;
+                            case CastType::CAST_STR: tk = TokenType::STR; break;
+                            case CastType::CAST_BIN: tk = TokenType::BIN; break;
+                            case CastType::CAST_LN: tk = TokenType::LN; break;
+                            case CastType::CAST_DIM: tk = TokenType::DIM; break;
+                            default: tk = TokenType::ANY; break;
+                        }
+                        ValuePtr defv = fd->dict.count("default") ? fd->dict["default"] : nullptr;
+                        if (has_def && defv && !dynamic_cast<NullValue*>(defv.get()))
+                            fields.push_back(ParameterDefinition(tk, fname, defv));
+                        else
+                            fields.push_back(ParameterDefinition(tk, fname));
+                    }
+                }
+                auto methods_ln = ptr_cast<LnValue>(d->dict["methods"]);
+                size_t nmethods = methods_ln ? methods_ln->elements.size() : 0;
+                if (stack.size() < nmethods + 1) {
+                    runtime_error(current_line(), "corrupt class definition: missing method closures");
+                    return false;
+                }
+                // Pop from the top: [mN, ..., m1, ctor].
+                std::vector<ClosurePtr> popped;
+                for (size_t i = 0; i < nmethods + 1; ++i) {
+                    ClosurePtr clo = ptr_static_cast<Closure>(pop());
+                    if (!clo) { runtime_error(current_line(), "corrupt class definition: method is not a closure"); return false; }
+                    popped.push_back(std::move(clo));
+                }
+                auto klass = make_value<Class>(name, fields,
+                    std::vector<AstNodePtr>{},
+                    std::map<std::string, std::shared_ptr<Function>>{},
+                    globals);
+                klass->bc_ctor = popped[nmethods];
+                for (size_t i = 0; i < nmethods; ++i) {
+                    std::string mname = ptr_cast<StringValue>(methods_ln->elements[i])->value;
+                    // A later method with the same name replaces the
+                    // earlier one, matching the AST map's overwrite.
+                    bool replaced = false;
+                    for (auto& pm : klass->bc_methods) {
+                        if (pm.first == mname) { pm.second = popped[nmethods - 1 - i]; replaced = true; break; }
+                    }
+                    if (!replaced) klass->bc_methods.push_back({mname, popped[nmethods - 1 - i]});
+                }
+                push(klass);
+                break;
+            }
+
+            case OpCode::OP_CALL_CTOR: {
+                // Stack: [class, arg1..argN]. Builds the instance, then
+                // runs the bytecode constructor with `this` in slot 0; the
+                // constructor returns the instance. AST-defined classes
+                // fall back to the native `new`.
+                uint32_t arg_count = read_operand24(frame.ip);
+                frame.ip += 3;
+                ValuePtr cls_val = peek(arg_count);
+                auto cls = ptr_static_cast<Class>(cls_val);
+                if (!cls) { runtime_error(current_line(), msg(Msg::NEW_CLASS)); return false; }
+                if (!cls->bc_ctor) {
+                    // Native `new` receives the class value as args[0].
+                    const size_t base = stack.size() - arg_count - 1;
+                    std::vector<ValuePtr> native_args(stack.begin() + base, stack.end());
+                    for (uint32_t i = 0; i <= arg_count; ++i) pop();
+                    ValuePtr native_new = globals->get("new");
+                    if (!native_new) { runtime_error(current_line(), "no native `new` for AST classes"); return false; }
+                    if (!call_value(native_new, native_args, current_line())) return false;
+                    break;
+                }
+                if (arg_count > cls->fields.size()) {
+                    // 与原生 `new` 同一句话：点名构造器，列出全部形参。
+                    std::vector<std::string> names;
+                    for (const auto& f : cls->fields) names.push_back(f.name);
+                    runtime_error(current_line(), args_too_many_text(
+                        kind_name_text(Msg::KIND_CTOR, cls->name), names,
+                        cls->fields.size(), arg_count));
+                    return false;
+                }
+                // 缺少必选字段在构造时报错（原生 `new` 同样），逐个点名。
+                {
+                    size_t required = 0;
+                    std::vector<std::string> missing;
+                    for (size_t i = 0; i < cls->fields.size(); ++i) {
+                        if (!cls->fields[i].has_default) required++;
+                        if (i >= arg_count && !cls->fields[i].has_default)
+                            missing.push_back(cls->fields[i].name);
+                    }
+                    if (!missing.empty()) {
+                        runtime_error(current_line(), args_missing_text(
+                            kind_name_text(Msg::KIND_CTOR, cls->name), missing,
+                            required, arg_count));
+                        return false;
+                    }
+                }
+                auto inst = make_value<Instance>(cls);
+                inst->instance_env->define("this", inst);
+                push_frame_from_stack(static_cast<Closure*>(cls->bc_ctor.get()), arg_count, current_line());
+                frames[frame_top - 1].locals[0] = inst;
+                for (uint32_t i = 0; i <= arg_count; ++i) pop();   // arg slots + class value
+                break;
+            }
+
             case OpCode::OP_HALT:
                 return true;
 
@@ -1615,6 +1776,13 @@ bool VM::call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line
         return true;
     }
     if (auto bound = dynamic_cast<BoundMethodValue*>(callee.get())) {
+        if (bound->bc_method) {
+            // A bytecode method reference can only be called from the VM's
+            // own call paths (OP_CALL / OP_CALL_MEMBER), which run its
+            // frame; a native caller cannot re-enter the dispatch loop.
+            runtime_error(line, "a bytecode method can only be called directly on its instance");
+            return false;
+        }
         if (!interpreter) {
             runtime_error(line, "No interpreter for bound method call");
             return false;
@@ -1674,8 +1842,20 @@ void VM::push_frame(Closure* closure, const ValuePtr* args, size_t nargs, int li
         return;
     }
     CompiledFunction* fn = closure->function.get();
-    if (nargs < static_cast<size_t>(fn->arity)) {
-        runtime_error(line, "Too few arguments to " + fn->name);
+    if (nargs < static_cast<size_t>(fn->arity) || nargs > static_cast<size_t>(fn->num_params)) {
+        // Java/C# 风格：点名函数或方法，列出缺失（或全部）的参数名，
+        // 给出预期与实际数量。原生解释器报同样的文案。
+        std::string kn = kind_name_text(fn->is_method ? Msg::KIND_METHOD : Msg::KIND_FN, fn->name);
+        if (nargs < static_cast<size_t>(fn->arity)) {
+            std::vector<std::string> missing;
+            for (size_t i = nargs; i < fn->params.size(); ++i)
+                if (!fn->params[i].has_default) missing.push_back(fn->params[i].name);
+            runtime_error(line, args_missing_text(kn, missing, fn->arity, nargs));
+        } else {
+            std::vector<std::string> names;
+            for (const auto& p : fn->params) names.push_back(p.name);
+            runtime_error(line, args_too_many_text(kn, names, fn->num_params, nargs));
+        }
         return;
     }
     size_t nlocals = fn->max_locals > 0 ? (size_t)fn->max_locals : fn->local_names.size();
