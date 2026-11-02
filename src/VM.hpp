@@ -129,6 +129,9 @@ private:
     // OP_INPLACE_* fast path; false means "not applicable, run the plain
     // [load rhs operand] sequence instead".
     bool exec_inplace(OpCode op, uint32_t packed, struct CallFrame& frame, int line);
+    // Cold opcode handlers, kept out of the dispatch loop (see VM.cpp).
+    bool exec_def_class();
+    bool exec_call_ctor();
     void resolve_side(struct CallFrame& frame, uint32_t enc, ValuePtr& out);
     // Cached global-cell access for fused instructions (idx = name
     // constant index). The cell pointer is remembered per call site.

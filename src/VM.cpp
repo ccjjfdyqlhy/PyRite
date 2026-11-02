@@ -1415,126 +1415,13 @@ bool VM::run(BytecodeChunkPtr c) {
             }
 
             case OpCode::OP_DEF_CLASS: {
-                // Stack on entry: [ctor closure, m1, ..., mN] (ctor pushed
-                // first). The descriptor carries the class name, the field
-                // definitions (same shape as OP_DEF_STRUCT) and the method
-                // names in stack order.
-                uint32_t idx = read_operand24(frame.ip);
-                frame.ip += 3;
-                ValuePtr desc = frame.function->constants[idx];
-                auto d = ptr_cast<DimValue>(desc);
-                if (!d) { runtime_error(current_line(), "bad class descriptor"); return false; }
-                std::string name = ptr_cast<StringValue>(d->dict["name"])->value;
-                auto fields_ln = ptr_cast<LnValue>(d->dict["fields"]);
-                std::vector<ParameterDefinition> fields;
-                if (fields_ln) {
-                    for (auto& fv : fields_ln->elements) {
-                        auto fd = ptr_cast<DimValue>(fv);
-                        if (!fd) continue;
-                        std::string fname = ptr_cast<StringValue>(fd->dict["name"])->value;
-                        long long code = ptr_cast<NumberValue>(fd->dict["type"])->value.toLongLong();
-                        long long has_def = ptr_cast<NumberValue>(fd->dict["has_default"])->value.toLongLong();
-                        TokenType tk = TokenType::ANY;
-                        switch (static_cast<CastType>(code)) {
-                            case CastType::CAST_DEC: tk = TokenType::DEC; break;
-                            case CastType::CAST_STR: tk = TokenType::STR; break;
-                            case CastType::CAST_BIN: tk = TokenType::BIN; break;
-                            case CastType::CAST_LN: tk = TokenType::LN; break;
-                            case CastType::CAST_DIM: tk = TokenType::DIM; break;
-                            default: tk = TokenType::ANY; break;
-                        }
-                        ValuePtr defv = fd->dict.count("default") ? fd->dict["default"] : nullptr;
-                        if (has_def && defv && !dynamic_cast<NullValue*>(defv.get()))
-                            fields.push_back(ParameterDefinition(tk, fname, defv));
-                        else
-                            fields.push_back(ParameterDefinition(tk, fname));
-                    }
-                }
-                auto methods_ln = ptr_cast<LnValue>(d->dict["methods"]);
-                size_t nmethods = methods_ln ? methods_ln->elements.size() : 0;
-                if (stack.size() < nmethods + 1) {
-                    runtime_error(current_line(), "corrupt class definition: missing method closures");
-                    return false;
-                }
-                // Pop from the top: [mN, ..., m1, ctor].
-                std::vector<ClosurePtr> popped;
-                for (size_t i = 0; i < nmethods + 1; ++i) {
-                    ClosurePtr clo = ptr_static_cast<Closure>(pop());
-                    if (!clo) { runtime_error(current_line(), "corrupt class definition: method is not a closure"); return false; }
-                    popped.push_back(std::move(clo));
-                }
-                auto klass = make_value<Class>(name, fields,
-                    std::vector<AstNodePtr>{},
-                    std::map<std::string, std::shared_ptr<Function>>{},
-                    globals);
-                klass->bc_ctor = popped[nmethods];
-                for (size_t i = 0; i < nmethods; ++i) {
-                    std::string mname = ptr_cast<StringValue>(methods_ln->elements[i])->value;
-                    // A later method with the same name replaces the
-                    // earlier one, matching the AST map's overwrite.
-                    bool replaced = false;
-                    for (auto& pm : klass->bc_methods) {
-                        if (pm.first == mname) { pm.second = popped[nmethods - 1 - i]; replaced = true; break; }
-                    }
-                    if (!replaced) klass->bc_methods.push_back({mname, popped[nmethods - 1 - i]});
-                }
-                push(klass);
+                if (!exec_def_class()) return false;
                 break;
             }
-
             case OpCode::OP_CALL_CTOR: {
-                // Stack: [class, arg1..argN]. Builds the instance, then
-                // runs the bytecode constructor with `this` in slot 0; the
-                // constructor returns the instance. AST-defined classes
-                // fall back to the native `new`.
-                uint32_t arg_count = read_operand24(frame.ip);
-                frame.ip += 3;
-                ValuePtr cls_val = peek(arg_count);
-                auto cls = ptr_static_cast<Class>(cls_val);
-                if (!cls) { runtime_error(current_line(), msg(Msg::NEW_CLASS)); return false; }
-                if (!cls->bc_ctor) {
-                    // Native `new` receives the class value as args[0].
-                    const size_t base = stack.size() - arg_count - 1;
-                    std::vector<ValuePtr> native_args(stack.begin() + base, stack.end());
-                    for (uint32_t i = 0; i <= arg_count; ++i) pop();
-                    ValuePtr native_new = globals->get("new");
-                    if (!native_new) { runtime_error(current_line(), "no native `new` for AST classes"); return false; }
-                    if (!call_value(native_new, native_args, current_line())) return false;
-                    break;
-                }
-                if (arg_count > cls->fields.size()) {
-                    // 与原生 `new` 同一句话：点名构造器，列出全部形参。
-                    std::vector<std::string> names;
-                    for (const auto& f : cls->fields) names.push_back(f.name);
-                    runtime_error(current_line(), args_too_many_text(
-                        kind_name_text(Msg::KIND_CTOR, cls->name), names,
-                        cls->fields.size(), arg_count));
-                    return false;
-                }
-                // 缺少必选字段在构造时报错（原生 `new` 同样），逐个点名。
-                {
-                    size_t required = 0;
-                    std::vector<std::string> missing;
-                    for (size_t i = 0; i < cls->fields.size(); ++i) {
-                        if (!cls->fields[i].has_default) required++;
-                        if (i >= arg_count && !cls->fields[i].has_default)
-                            missing.push_back(cls->fields[i].name);
-                    }
-                    if (!missing.empty()) {
-                        runtime_error(current_line(), args_missing_text(
-                            kind_name_text(Msg::KIND_CTOR, cls->name), missing,
-                            required, arg_count));
-                        return false;
-                    }
-                }
-                auto inst = make_value<Instance>(cls);
-                inst->instance_env->define("this", inst);
-                push_frame_from_stack(static_cast<Closure*>(cls->bc_ctor.get()), arg_count, current_line());
-                frames[frame_top - 1].locals[0] = inst;
-                for (uint32_t i = 0; i <= arg_count; ++i) pop();   // arg slots + class value
+                if (!exec_call_ctor()) return false;
                 break;
             }
-
             case OpCode::OP_HALT:
                 return true;
 
@@ -1951,6 +1838,140 @@ const ValuePtr* VM::global_read_cell(CallFrame& frame, uint32_t idx) {
         frame.function->gcache[idx] = cell;
     }
     return cell;
+}
+
+
+// ============================================================================
+// Cold opcode handlers, kept OUT of the dispatch loop on purpose.
+//
+// The dispatch loop is one giant switch, and the compiler's inlining
+// budget for it is finite: a few large handlers inlined into the loop
+// body pushed the hot arithmetic helpers (binary_op / exec_inplace) over
+// the inline threshold, and a tight arithmetic loop slowed down about
+// fourfold.  Keeping these out of line leaves the loop small and the hot
+// path inlined.
+// ============================================================================
+__attribute__((noinline)) bool VM::exec_def_class() {
+
+                // Stack on entry: [ctor closure, m1, ..., mN] (ctor pushed
+                // first). The descriptor carries the class name, the field
+                // definitions (same shape as OP_DEF_STRUCT) and the method
+                // names in stack order.
+                uint32_t idx = read_operand24(frames[frame_top - 1].ip);
+                frames[frame_top - 1].ip += 3;
+                ValuePtr desc = frames[frame_top - 1].function->constants[idx];
+                auto d = ptr_cast<DimValue>(desc);
+                if (!d) { runtime_error(current_line(), "bad class descriptor"); return false; }
+                std::string name = ptr_cast<StringValue>(d->dict["name"])->value;
+                auto fields_ln = ptr_cast<LnValue>(d->dict["fields"]);
+                std::vector<ParameterDefinition> fields;
+                if (fields_ln) {
+                    for (auto& fv : fields_ln->elements) {
+                        auto fd = ptr_cast<DimValue>(fv);
+                        if (!fd) continue;
+                        std::string fname = ptr_cast<StringValue>(fd->dict["name"])->value;
+                        long long code = ptr_cast<NumberValue>(fd->dict["type"])->value.toLongLong();
+                        long long has_def = ptr_cast<NumberValue>(fd->dict["has_default"])->value.toLongLong();
+                        TokenType tk = TokenType::ANY;
+                        switch (static_cast<CastType>(code)) {
+                            case CastType::CAST_DEC: tk = TokenType::DEC; break;
+                            case CastType::CAST_STR: tk = TokenType::STR; break;
+                            case CastType::CAST_BIN: tk = TokenType::BIN; break;
+                            case CastType::CAST_LN: tk = TokenType::LN; break;
+                            case CastType::CAST_DIM: tk = TokenType::DIM; break;
+                            default: tk = TokenType::ANY; break;
+                        }
+                        ValuePtr defv = fd->dict.count("default") ? fd->dict["default"] : nullptr;
+                        if (has_def && defv && !dynamic_cast<NullValue*>(defv.get()))
+                            fields.push_back(ParameterDefinition(tk, fname, defv));
+                        else
+                            fields.push_back(ParameterDefinition(tk, fname));
+                    }
+                }
+                auto methods_ln = ptr_cast<LnValue>(d->dict["methods"]);
+                size_t nmethods = methods_ln ? methods_ln->elements.size() : 0;
+                if (stack.size() < nmethods + 1) {
+                    runtime_error(current_line(), "corrupt class definition: missing method closures");
+                    return false;
+                }
+                // Pop from the top: [mN, ..., m1, ctor].
+                std::vector<ClosurePtr> popped;
+                for (size_t i = 0; i < nmethods + 1; ++i) {
+                    ClosurePtr clo = ptr_static_cast<Closure>(pop());
+                    if (!clo) { runtime_error(current_line(), "corrupt class definition: method is not a closure"); return false; }
+                    popped.push_back(std::move(clo));
+                }
+                auto klass = make_value<Class>(name, fields,
+                    std::vector<AstNodePtr>{},
+                    std::map<std::string, std::shared_ptr<Function>>{},
+                    globals);
+                klass->bc_ctor = popped[nmethods];
+                for (size_t i = 0; i < nmethods; ++i) {
+                    std::string mname = ptr_cast<StringValue>(methods_ln->elements[i])->value;
+                    // A later method with the same name replaces the
+                    // earlier one, matching the AST map's overwrite.
+                    bool replaced = false;
+                    for (auto& pm : klass->bc_methods) {
+                        if (pm.first == mname) { pm.second = popped[nmethods - 1 - i]; replaced = true; break; }
+                    }
+                    if (!replaced) klass->bc_methods.push_back({mname, popped[nmethods - 1 - i]});
+                }
+                push(klass);
+    return true;
+}
+
+__attribute__((noinline)) bool VM::exec_call_ctor() {
+
+                // Stack: [class, arg1..argN]. Builds the instance, then
+                // runs the bytecode constructor with `this` in slot 0; the
+                // constructor returns the instance. AST-defined classes
+                // fall back to the native `new`.
+                uint32_t arg_count = read_operand24(frames[frame_top - 1].ip);
+                frames[frame_top - 1].ip += 3;
+                ValuePtr cls_val = peek(arg_count);
+                auto cls = ptr_static_cast<Class>(cls_val);
+                if (!cls) { runtime_error(current_line(), msg(Msg::NEW_CLASS)); return false; }
+                if (!cls->bc_ctor) {
+                    // Native `new` receives the class value as args[0].
+                    const size_t base = stack.size() - arg_count - 1;
+                    std::vector<ValuePtr> native_args(stack.begin() + base, stack.end());
+                    for (uint32_t i = 0; i <= arg_count; ++i) pop();
+                    ValuePtr native_new = globals->get("new");
+                    if (!native_new) { runtime_error(current_line(), "no native `new` for AST classes"); return false; }
+                    if (!call_value(native_new, native_args, current_line())) return false;
+                    return true;
+                }
+                if (arg_count > cls->fields.size()) {
+                    // 与原生 `new` 同一句话：点名构造器，列出全部形参。
+                    std::vector<std::string> names;
+                    for (const auto& f : cls->fields) names.push_back(f.name);
+                    runtime_error(current_line(), args_too_many_text(
+                        kind_name_text(Msg::KIND_CTOR, cls->name), names,
+                        cls->fields.size(), arg_count));
+                    return false;
+                }
+                // 缺少必选字段在构造时报错（原生 `new` 同样），逐个点名。
+                {
+                    size_t required = 0;
+                    std::vector<std::string> missing;
+                    for (size_t i = 0; i < cls->fields.size(); ++i) {
+                        if (!cls->fields[i].has_default) required++;
+                        if (i >= arg_count && !cls->fields[i].has_default)
+                            missing.push_back(cls->fields[i].name);
+                    }
+                    if (!missing.empty()) {
+                        runtime_error(current_line(), args_missing_text(
+                            kind_name_text(Msg::KIND_CTOR, cls->name), missing,
+                            required, arg_count));
+                        return false;
+                    }
+                }
+                auto inst = make_value<Instance>(cls);
+                inst->instance_env->define("this", inst);
+                push_frame_from_stack(static_cast<Closure*>(cls->bc_ctor.get()), arg_count, current_line());
+                frames[frame_top - 1].locals[0] = inst;
+                for (uint32_t i = 0; i <= arg_count; ++i) pop();   // arg slots + class value
+    return true;
 }
 
 // ============================================================================
