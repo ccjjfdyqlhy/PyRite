@@ -78,6 +78,15 @@ private:
     // here instead of a fresh allocation. Numbers are immutable, so the
     // cached objects can never go stale.
     static ValuePtr intern_small(long long v);
+    static Value* intern_small_raw(long long v);   // borrow, no refcount
+    // Range-checked front end: [-4096, 4095] plus a wider positive band
+    // (list lengths and similar monotone results live here); anything
+    // else allocates.
+    static ValuePtr intern_num(long long v);
+
+    // binary op on two stack values, reusing a uniquely-owned left side
+    // instead of allocating a fresh result object.
+    ValuePtr binary_op_ip(OpCode op, ValuePtr&& a, ValuePtr&& b, int line);
 
     // ---- Stack helpers ----
     void push(ValuePtr v) { stack.push_back(v); }
@@ -133,6 +142,8 @@ private:
     bool exec_def_class();
     bool exec_call_ctor();
     void resolve_side(struct CallFrame& frame, uint32_t enc, ValuePtr& out);
+    // Borrow-only read (no refcount traffic) for read-only instructions.
+    void resolve_side_raw(struct CallFrame& frame, uint32_t enc, Value*& out);
     // Cached global-cell access for fused instructions (idx = name
     // constant index). The cell pointer is remembered per call site.
     ValuePtr* global_write_cell(struct CallFrame& frame, uint32_t idx);

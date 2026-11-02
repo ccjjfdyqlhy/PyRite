@@ -37,11 +37,15 @@ namespace BigNumberDetail {
     // interpreter's small-object pool serves the overflow case.
     class SmallVecInt {
     public:
-        SmallVecInt() : size_(0), data_(inline_), cap_(4) {}
+        // Fourteen inline limbs cover every decimal the interpreter churns
+        // through in loops (default precision 50 needs eleven), so the hot
+        // arithmetic paths never touch the heap at all.
+        static const size_t INLINE_CAP = 14;
+        SmallVecInt() : size_(0), data_(inline_), cap_(INLINE_CAP) {}
         SmallVecInt(const SmallVecInt& o) : SmallVecInt() { assign_from(o.data_, o.size_); }
         SmallVecInt(SmallVecInt&& o) noexcept : SmallVecInt() {
             if (o.data_ == o.inline_) { assign_from(o.data_, o.size_); }
-            else { data_ = o.data_; size_ = o.size_; cap_ = o.cap_; o.data_ = o.inline_; o.size_ = 0; o.cap_ = 4; }
+            else { data_ = o.data_; size_ = o.size_; cap_ = o.cap_; o.data_ = o.inline_; o.size_ = 0; o.cap_ = INLINE_CAP; }
         }
         SmallVecInt& operator=(const SmallVecInt& o) {
             if (this != &o) assign_from(o.data_, o.size_);
@@ -50,8 +54,8 @@ namespace BigNumberDetail {
         SmallVecInt& operator=(SmallVecInt&& o) noexcept {
             if (this != &o) {
                 if (data_ != inline_) std::free(data_);
-                if (o.data_ == o.inline_) { data_ = inline_; cap_ = 4; assign_from(o.data_, o.size_); }
-                else { data_ = o.data_; size_ = o.size_; cap_ = o.cap_; o.data_ = o.inline_; o.size_ = 0; o.cap_ = 4; }
+                if (o.data_ == o.inline_) { data_ = inline_; cap_ = INLINE_CAP; assign_from(o.data_, o.size_); }
+                else { data_ = o.data_; size_ = o.size_; cap_ = o.cap_; o.data_ = o.inline_; o.size_ = 0; o.cap_ = INLINE_CAP; }
             }
             return *this;
         }
@@ -101,6 +105,18 @@ namespace BigNumberDetail {
             std::memcpy(data_, src, n * sizeof(int));
             size_ = n;
         }
+        // Drop one trailing zero limb (the top of a little-endian limb
+        // vector); addition can produce one, and the digit vectors must
+        // stay trimmed for the size-based comparisons.
+        void trim_top() {
+            while (size_ > 1 && data_[size_ - 1] == 0) size_--;
+        }
+        // Shrink to exactly n limbs (n <= size_): the preallocated fill of
+        // the single-limb multiply runs past the true length.
+        void trim_to(size_t n) {
+            if (n <= size_) size_ = n;
+            trim_top();
+        }
         bool operator==(const SmallVecInt& o) const {
             if (size_ != o.size_) return false;
             return std::memcmp(data_, o.data_, size_ * sizeof(int)) == 0;
@@ -123,7 +139,7 @@ namespace BigNumberDetail {
             if (data_ != inline_) std::free(data_);
             data_ = nd; cap_ = ncap;
         }
-        int inline_[4];
+        int inline_[INLINE_CAP];
         size_t size_;
         int* data_;
         size_t cap_;
@@ -237,6 +253,145 @@ namespace BigNumberDetail {
             return (uint64_t)M;
         }
 
+        // sqrt(-1) in the Goldilocks field: the radix-4 butterfly needs
+        // the 90-degree rotation, which is an element with i^2 = p - 1.
+        static const uint64_t NT_I = []() {
+            uint64_t i = 1;
+            // nt_pow is declared below; compute lazily on first use.
+            (void)i;
+            return (uint64_t)0;
+        }();
+
+        // Radix-4 transform pair. Forward = decimation in frequency
+        // (natural order in, bit-reversed spectrum out); inverse =
+        // decimation in time (bit-reversed spectrum in, natural order
+        // out, scaled by 1/n). The two conventions compose without any
+        // bit-reversal pass, and radix-4 spends three multiplies per
+        // four elements where radix-2 spends four: about a quarter
+        // fewer multiplications and half the memory passes over a
+        // multi-million-limb convolution.
+        // Transform pair for exact convolution. Both directions are
+        // radix-2 throughout - the forward is Gentleman-Sande (natural
+        // order in, bit-reversed spectrum out), the inverse Cooley-Tukey
+        // (bit-reversed in, natural out, scaled by 1/n) - but each TWO
+        // consecutive stages are fused into one pass over the data: four
+        // elements are loaded once, carried through both butterflies in
+        // registers, and stored once. That halves the memory traffic,
+        // which is what a multi-million-limb transform is bound by. The
+        // odd-position differences carry twiddle factors with a 90-degree
+        // rotation folded in at table-fill time, so the hot loop is pure
+        // multiply-add against sequential table streams.
+        __attribute__((noinline, optimize("O3")))
+        inline void ntt_dif4(uint64_t* a, int lgn, int d) {
+            int n = 1 << lgn;
+            if (lgn == 0) return;
+            static std::vector<uint64_t> tw;   // per-stage twiddle scratch
+            if (lgn == 1) {                    // plain radix-2 butterfly
+                uint64_t x = a[0], y = a[1];
+                if (d == 1) { a[0] = nt_add(x, y); a[1] = nt_sub(x, y); }
+                else {
+                    uint64_t ninv = nt_pow(2, NT_P - 2);
+                    a[0] = nt_mul(nt_add(x, y), ninv);
+                    a[1] = nt_mul(nt_sub(x, y), ninv);
+                }
+                return;
+            }
+            if (d == 1) {
+                // ---- forward: fused stage pairs, L from n down to 4 ----
+                const uint64_t I = nt_pow(NT_ROOT, (NT_P - 1) / 4);   // i
+                for (int L = n; L >= 4; L >>= 2) {
+                    int q = L >> 2;
+                    uint64_t wl = nt_pow(NT_ROOT, (NT_P - 1) / L);
+                    uint64_t w2l = nt_mul(wl, wl);     // w_(L/2)
+                    tw.resize(3 * q);
+                    uint64_t* wa = tw.data();
+                    uint64_t* wb = wa + q;
+                    uint64_t* wc = wb + q;
+                    wa[0] = 1; wb[0] = I; wc[0] = 1;   // wb[j] = w_L^(j+q), w_L^q = i
+                    for (int j = 1; j < q; ++j) {
+                        wa[j] = nt_mul(wa[j - 1], wl);
+                        wb[j] = nt_mul(wb[j - 1], wl);
+                        wc[j] = nt_mul(wc[j - 1], w2l);
+                    }
+                    for (int i = 0; i < n; i += L) {
+                        uint64_t* g = a + i;
+                        for (int j = 0; j < q; ++j) {
+                            uint64_t a0 = g[j];
+                            uint64_t a1 = g[j + q];
+                            uint64_t a2 = g[j + 2 * q];
+                            uint64_t a3 = g[j + 3 * q];
+                            uint64_t p = nt_mul(nt_sub(a0, a2), wa[j]);
+                            uint64_t s = nt_add(a0, a2);
+                            uint64_t r = nt_mul(nt_sub(a1, a3), wb[j]);
+                            uint64_t t = nt_add(a1, a3);
+                            g[j] = nt_add(s, t);
+                            g[j + q] = nt_mul(nt_sub(s, t), wc[j]);
+                            g[j + 2 * q] = nt_add(p, r);
+                            g[j + 3 * q] = nt_mul(nt_sub(p, r), wc[j]);
+                        }
+                    }
+                }
+                if (lgn & 1) {                 // one twiddle-free split left
+                    for (int i = 0; i < n; i += 2) {
+                        uint64_t x = a[i], y = a[i + 1];
+                        a[i] = nt_add(x, y);
+                        a[i + 1] = nt_sub(x, y);
+                    }
+                }
+            } else {
+                // ---- inverse: transposed pairs, L ascending, then 1/n ----
+                const uint64_t I = nt_pow(NT_ROOT, (NT_P - 1) / 4);   // i
+                if (lgn & 1) {   // undo the forward's final twiddle-free split first
+                    for (int i = 0; i < n; i += 2) {
+                        uint64_t x = a[i], y = a[i + 1];
+                        a[i] = nt_add(x, y);
+                        a[i + 1] = nt_sub(x, y);
+                    }
+                }
+                for (int L = (lgn & 1) ? 8 : 4; L <= n; L <<= 2) {
+                    int q = L >> 2;
+                    uint64_t wl = nt_pow(NT_ROOT, NT_P - 1 - (NT_P - 1) / L);
+                    uint64_t w2l = nt_mul(wl, wl);
+                    tw.resize(3 * q);
+                    uint64_t* wa = tw.data();
+                    uint64_t* wb = wa + q;
+                    uint64_t* wc = wb + q;
+                    wa[0] = 1; wb[0] = nt_sub(0, I); wc[0] = 1;   // conjugate
+                    for (int j = 1; j < q; ++j) {
+                        wa[j] = nt_mul(wa[j - 1], wl);
+                        wb[j] = nt_mul(wb[j - 1], wl);
+                        wc[j] = nt_mul(wc[j - 1], w2l);
+                    }
+
+                    for (int i = 0; i < n; i += L) {
+                        uint64_t* g = a + i;
+                        for (int j = 0; j < q; ++j) {
+                            // Transpose of the fused forward pair: the
+                            // neighbour pairs mix through wc, the outer
+                            // differences carry wa / wb, then the sums
+                            // and differences recombine.
+                            uint64_t o0 = g[j];
+                            uint64_t o1 = g[j + q];
+                            uint64_t o2 = g[j + 2 * q];
+                            uint64_t o3 = g[j + 3 * q];
+                            uint64_t v0 = nt_add(o0, nt_mul(o1, wc[j]));
+                            uint64_t v1 = nt_sub(o0, nt_mul(o1, wc[j]));
+                            uint64_t v2 = nt_add(o2, nt_mul(o3, wc[j]));
+                            uint64_t v3 = nt_sub(o2, nt_mul(o3, wc[j]));
+                            uint64_t w2 = nt_mul(v2, wa[j]);
+                            uint64_t w3 = nt_mul(v3, wb[j]);
+                            g[j] = nt_add(v0, w2);
+                            g[j + 2 * q] = nt_sub(v0, w2);
+                            g[j + q] = nt_add(v1, w3);
+                            g[j + 3 * q] = nt_sub(v1, w3);
+                        }
+                    }
+                }
+                uint64_t ninv = nt_pow(n, NT_P - 2);
+                for (int j = 0; j < n; ++j) a[j] = nt_mul(a[j], ninv);
+            }
+        }
+
         inline void ntt(uint64_t* a, int lgn, int d) {
             int n = 1 << lgn;
             static std::vector<int> brev;
@@ -277,6 +432,7 @@ namespace BigNumberDetail {
 
         // coefficients of a*b (or a*a when square is set - one forward
         // transform fewer, which is the dominant cost of exponentiation)
+        __attribute__((noinline, optimize("O3")))
         inline std::vector<ll> conv(const SmallVecInt& a, const SmallVecInt& b, bool square = false) {
             int n = a.size() - 1, m = b.size() - 1;
             if (n < 1000 / (m + 1) || n < 10 || m < 10) {
@@ -301,16 +457,16 @@ namespace BigNumberDetail {
             static std::vector<uint64_t> ta, tb;   // reused across calls; single-threaded runtime
             ta.assign(len, 0);
             for (int i = 0; i <= n; ++i) ta[i] = (uint64_t)a[i];
-            ntt(ta.data(), lgn, 1);
+            ntt_dif4(ta.data(), lgn, 1);
             if (square) {
                 for (size_t i = 0; i < len; ++i) ta[i] = nt_mul(ta[i], ta[i]);
             } else {
                 tb.assign(len, 0);
                 for (int i = 0; i <= m; ++i) tb[i] = (uint64_t)b[i];
-                ntt(tb.data(), lgn, 1);
+                ntt_dif4(tb.data(), lgn, 1);
                 for (size_t i = 0; i < len; ++i) ta[i] = nt_mul(ta[i], tb[i]);
             }
-            ntt(ta.data(), lgn, -1);
+            ntt_dif4(ta.data(), lgn, -1);
             // True coefficients are < n * (1e5)^2 < 2^63, so the narrowing
             // to ll loses nothing.
             std::vector<ll> ret(n + m + 1);
@@ -404,7 +560,8 @@ namespace BigNumberDetail {
 
     inline UnsignedDigit UnsignedDigit::operator+(const UnsignedDigit& rhs) const {
         int n = digits.size(), m = rhs.digits.size();
-        std::vector<int> tmp(std::max(n, m) + 1, 0);
+        SmallVecInt tmp;
+        tmp.resize((size_t)(n > m ? n : m) + 1, 0);
         const SmallVecInt& a = (n > m) ? digits : rhs.digits;
         const SmallVecInt& b = (n > m) ? rhs.digits : digits;
         int max_len = a.size(), min_len = b.size();
@@ -423,7 +580,8 @@ namespace BigNumberDetail {
                 tmp[i + 1]++;
             }
         }
-        return tmp;
+        tmp.trim_top();
+        return UnsignedDigit(std::move(tmp));
     }
 
     inline UnsignedDigit UnsignedDigit::operator-(const UnsignedDigit& rhs) const {
@@ -446,18 +604,23 @@ namespace BigNumberDetail {
 
     inline UnsignedDigit UnsignedDigit::operator*(const UnsignedDigit& rhs) const {
         // Single-limb multiplier (loop counters, small constants): one
-        // carry pass straight into the result, no convolution scratch.
+        // carry pass straight into a preallocated result, no convolution
+        // scratch and no reallocation chain.
         if (rhs.digits.size() == 1) {
             ll m = rhs.digits[0];
             if (m == 0) return UnsignedDigit();
+            size_t n = digits.size();
             SmallVecInt r;
+            r.resize(n + 2, 0);
             ll carry = 0;
-            for (size_t i = 0; i < digits.size(); ++i) {
+            for (size_t i = 0; i < n; ++i) {
                 ll cur = (ll)digits[i] * m + carry;
-                r.push_back((int)(cur % MOD));
+                r[i] = (int)(cur % MOD);
                 carry = cur / MOD;
             }
-            while (carry) { r.push_back((int)(carry % MOD)); carry /= MOD; }
+            size_t sz = n;
+            while (carry) { r[sz++] = (int)(carry % MOD); carry /= MOD; }
+            r.trim_to(sz);
             return UnsignedDigit(std::move(r));
         }
         std::vector<ll> tmp = ConvHelper::conv(digits, rhs.digits, this == &rhs);
@@ -581,9 +744,33 @@ namespace BigNumberDetail {
 
 class BigNumber {
 private:
-    BigNumberDetail::UnsignedDigit magnitude;
+    // mutable: the decimal and binary limb views are interchangeable
+    // caches of one another; either may be rebuilt inside const readers.
+    mutable BigNumberDetail::UnsignedDigit magnitude;
     bool is_negative;
     int decimal_pos; // Number of digits after the decimal point
+    // Memoized machine-int form, written by is_int_fast and read on every
+    // later visit of the same object. 0 = unknown, 1 = is an int64 (value
+    // in icv_), 2 = is not. Copies inherit the cache; a value can only
+    // change its limbs through assignment, which brings a fresh cache.
+    mutable long long icv_;
+    mutable signed char icv_state_;
+    // Binary shadow: a base-2^32 view of the magnitude. Multiplying a
+    // huge value by small integers over and over (factorial-shaped
+    // loops) pays a divide chain per limb in the decimal view; in the
+    // binary view the carry is a shift, which runs ~4x faster. The
+    // shadow is created lazily (only while the value is small, so a
+    // one-off multiply never pays a conversion) and the decimal limbs
+    // are rebuilt by repeated division whenever some other operation
+    // needs them - both conversions are cheap linear-ish passes.
+    mutable std::vector<uint32_t> bin_;
+    mutable bool dec_valid_ = true;
+    mutable bool bin_valid_ = false;
+    // Deferred small multiplier: consecutive multiplications by machine
+    // ints fold into this product and hit the binary limbs in one pass
+    // once it would overflow. The value's true magnitude is bin_ times
+    // pending_mul_; every reader flushes first.
+    mutable unsigned long long pending_mul_ = 1;
 
     // Helper to get a reference to the static default precision value
     static int& get_default_precision_ref() {
@@ -602,6 +789,8 @@ private:
 
     // Compares absolute values: 1 (this > other), -1 (this < other), 0 (this == other)
     int compare_abs(const BigNumber& other) const {
+        if (!dec_valid_) ensure_dec();
+        if (!other.dec_valid_) other.ensure_dec();
         int this_int_len = magnitude.decimalDigitCount() - decimal_pos;
         int other_int_len = other.magnitude.decimalDigitCount() - other.decimal_pos;
 
@@ -627,9 +816,9 @@ private:
 public:
     // 1. Construction & Assignment
 
-    BigNumber() : is_negative(false), decimal_pos(0), magnitude(0LL) {}
-    BigNumber(long long n) : is_negative(n < 0), decimal_pos(0), magnitude(n < 0 ? -n : n) {}
-    BigNumber(std::string s) {
+    BigNumber() : is_negative(false), decimal_pos(0), magnitude(0LL), icv_(0), icv_state_(1) {}
+    BigNumber(long long n) : is_negative(n < 0), decimal_pos(0), magnitude(n < 0 ? -n : n), icv_(n), icv_state_(1) {}
+    BigNumber(std::string s) : icv_(0), icv_state_(0) {
         if (s.empty()) { *this = BigNumber(); return; }
         if (s[0] == '-') { is_negative = true; s.erase(0, 1); } else { is_negative = false; }
         
@@ -653,37 +842,210 @@ public:
         normalize();
     }
     // Internal constructor for performance
-    BigNumber(BigNumberDetail::UnsignedDigit mag, bool neg, int dec_pos) : magnitude(mag), is_negative(neg), decimal_pos(dec_pos) { normalize(); }
+    BigNumber(BigNumberDetail::UnsignedDigit mag, bool neg, int dec_pos) : magnitude(mag), is_negative(neg), decimal_pos(dec_pos), icv_(0), icv_state_(0) { normalize(); }
+    // Copies carry the cache over: the limbs do not change, so the memo
+    // stays valid for the copy as well.
+    BigNumber(const BigNumber& o) = default;
+    BigNumber& operator=(const BigNumber& o) = default;
 
     // Extracts the value when it is a plain integer under ~1e15 (three
     // limbs). Most arithmetic in interpreted loops runs on such values,
     // where the digit-vector machinery is pure overhead.
     static bool small_int(const BigNumber& x, long long& out) { return x.is_int_fast(out); }
+    // Rebuild the decimal limbs from the binary shadow: divide the
+    // binary value by 10^5 repeatedly; the remainders are the base-10^5
+    // limbs, least significant first. The running remainder stays below
+    // 2^32, so every step is one 128-bit shift-or plus one small divide.
+    void ensure_dec() const {
+        if (dec_valid_) return;
+        flush_pending();
+        std::vector<uint32_t> cur = bin_;
+        std::vector<uint32_t> chunks;               // little-endian, 9 digits each
+        while (!(cur.size() == 1 && cur[0] == 0)) {
+            uint64_t rem = 0;
+            for (size_t k = cur.size(); k-- > 0; ) {
+                uint64_t curv = (rem << 32) | cur[k];   // rem < 1e9 < 2^30
+                cur[k] = (uint32_t)(curv / 1000000000u);
+                rem = curv % 1000000000u;
+            }
+            while (cur.size() > 1 && cur.back() == 0) cur.pop_back();
+            chunks.push_back((uint32_t)rem);
+        }
+        // Re-assemble chunks into base-10^5 limbs through a decimal
+        // digit window: 9-digit chunks and 5-digit limbs misalign, so a
+        // running accumulator carries the residual digits between them
+        // (45 digits = 9 chunks = 9 limbs brings both back in step).
+        static const uint64_t P10[5] = {1, 10, 100, 1000, 10000};
+        BigNumberDetail::SmallVecInt mag;
+        mag.resize(chunks.size() * 2 + 2, 0);
+        size_t mag_n = 0;
+        uint64_t acc = 0;
+        int shift = 0;                      // decimal digits currently in acc
+        for (size_t k = 0; k < chunks.size(); ++k) {
+            acc += (uint64_t)chunks[k] * P10[shift];
+            shift += 9;
+            while (shift >= 5) {
+                mag[mag_n++] = (int)(acc % 100000);
+                acc /= 100000;
+                shift -= 5;
+            }
+        }
+        if (acc) mag[mag_n++] = (int)acc;
+        if (mag_n == 0) mag[mag_n++] = 0;
+        mag.trim_to(mag_n);
+        magnitude = BigNumberDetail::UnsignedDigit(std::move(mag));
+        icv_state_ = 0;
+        dec_valid_ = true;
+    }
+    // Build the binary shadow from the decimal limbs: divide the value
+    // by 2^32 repeatedly; the remainders are the binary limbs, least
+    // significant first. The quotient limb stays under 10^5 because the
+    // dividend limb is.
+    void ensure_bin() const {
+        if (bin_valid_) return;
+        std::vector<uint32_t> b;
+        BigNumberDetail::SmallVecInt cur = magnitude.digits;
+        while (!(cur.size() == 1 && cur[0] == 0)) {
+            unsigned __int128 rem = 0;
+            for (size_t k = cur.size(); k-- > 0; ) {
+                unsigned __int128 curv = rem * BigNumberDetail::MOD + (unsigned long long)cur[k];
+                unsigned long long q = (uint64_t)(curv >> 32);
+                cur[k] = (int)q;
+                rem = curv - ((unsigned __int128)q << 32);
+            }
+            while (cur.size() > 1 && cur.back() == 0) cur.pop_back();
+            b.push_back((uint32_t)(uint64_t)rem);
+        }
+        if (b.empty()) b.push_back(0);
+        bin_ = std::move(b);
+        bin_valid_ = true;
+    }
+    // Fold the deferred multiplier into the binary limbs.
+    void flush_pending() const {
+        if (pending_mul_ == 1) return;
+        unsigned long long pm = pending_mul_;
+        pending_mul_ = 1;
+        const_cast<BigNumber*>(this)->mul_bin_inplace(pm);
+    }
+    // Multiply the binary shadow by a single-limb integer, in place. The
+    // carry is a shift - no divide anywhere in the chain.
+    void mul_bin_inplace(unsigned long long um) {
+        uint64_t carry = 0;
+        for (size_t i = 0; i < bin_.size(); ++i) {
+            uint64_t cur = (uint64_t)bin_[i] * um + carry;
+            bin_[i] = (uint32_t)cur;
+            carry = cur >> 32;
+        }
+        while (carry) { bin_.push_back((uint32_t)carry); carry >>= 32; }
+    }
+
+    // True when the value is an integer inside the native long long
     // True when the value is an integer inside the native long long
     // range. Everything in [-9223372036854775808, 9223372036854775807]
     // routes through plain C++ arithmetic; only wider values (or real
-    // decimals) use the limb machinery.
+    // decimals) use the limb machinery. The answer is memoized on the
+    // object: a loop counter is tested by several opcodes per iteration
+    // and none of them should re-walk the limbs.
     bool is_int_fast(long long& out) const {
-        if (decimal_pos != 0) return false;
+        if (icv_state_ == 1) { out = icv_; return true; }
+        if (icv_state_ == 2) return false;
+        if (decimal_pos != 0) { icv_state_ = 2; return false; }
+        if (!dec_valid_) ensure_dec();
         const BigNumberDetail::SmallVecInt& d = magnitude.digits;
         size_t n = d.size();
-        if (n > 4) return false;
+        if (n > 4) { icv_state_ = 2; return false; }
         if (n <= 3) {
             long long v = 0;
             for (size_t i = n; i-- > 0; ) v = v * BigNumberDetail::MOD + d[i];
             out = is_negative ? -v : v;
+            icv_ = out; icv_state_ = 1;
             return true;
         }
         // Four limbs: up to 1e20, which may or may not fit.
         unsigned __int128 w = 0;
         for (size_t i = n; i-- > 0; ) w = w * BigNumberDetail::MOD + (unsigned long long)d[i];
         __int128 sgn = is_negative ? -(__int128)w : (__int128)w;
-        if (sgn > (__int128)LLONG_MAX || sgn < (__int128)LLONG_MIN) return false;
+        if (sgn > (__int128)LLONG_MAX || sgn < (__int128)LLONG_MIN) { icv_state_ = 2; return false; }
         out = (long long)sgn;
+        icv_ = out; icv_state_ = 1;
         return true;
     }
     // Builds from a value that is already known to fit in a long long.
     static BigNumber from_ll(long long v) { return BigNumber(v); }
+    // Rewrites the value in place from a machine int. The int cache stays
+    // warm, and small values never leave the inline limbs.
+    void set_ll(long long v) {
+        is_negative = v < 0;
+        decimal_pos = 0;
+        unsigned long long m = v < 0 ? 0ULL - (unsigned long long)v : (unsigned long long)v;
+        BigNumberDetail::SmallVecInt& d = magnitude.digits;
+        size_t k = 0;
+        for (unsigned long long t = m; t > 0; t /= BigNumberDetail::MOD) k++;
+        if (k == 0) k = 1;
+        if (d.size() < k) d.resize(k, 0);
+        size_t i = 0;
+        while (m > 0) { d[i++] = (int)(m % BigNumberDetail::MOD); m /= BigNumberDetail::MOD; }
+        if (i == 0) d[0] = 0;
+        d.trim_to(k);
+        bin_valid_ = false;
+        icv_ = v; icv_state_ = 1;
+    }
+    // In-place multiply by a single-limb integer (|m| < 10^5). The limbs
+    // are rewritten from the bottom up, which cannot overlap the reads.
+    // Used by fused `big = big * small` sites; returns false when the
+    // caller should fall back to the general path.
+    bool mul_small_inplace(long long m) {
+        if (m == 0) { *this = BigNumber(); return true; }
+        unsigned long long um = m < 0 ? 0ULL - (unsigned long long)m : (unsigned long long)m;
+        if (um >= (unsigned long long)BigNumberDetail::MOD) return false;
+        // Binary-shadow path: repeated small multiplies (factorial-shaped
+        // loops) run their carry chain as shifts instead of divides. The
+        // shadow is only created while the value is small, so a one-off
+        // multiply on a huge decimal never pays a conversion.
+        if (bin_valid_ || magnitude.digits.size() <= 64) {
+            ensure_bin();
+            if (pending_mul_ <= 0xFFFFFFFFULL / (unsigned long long)um) {
+                pending_mul_ *= um;            // deferred: one pass later
+            } else {
+                mul_bin_inplace(pending_mul_);
+                pending_mul_ = um;
+            }
+            dec_valid_ = false;
+            if (icv_state_ == 1) {
+                __int128 r = (__int128)icv_ * m;
+                if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) icv_ = (long long)r;
+                else icv_state_ = 2;
+            }
+            return true;
+        }
+        BigNumberDetail::SmallVecInt& d = magnitude.digits;
+        size_t n = d.size();
+        // reserve one extra limb for the final carry
+        if (d.size() < n + 1) d.resize(n + 1, 0);
+        // multiply from the top down is WRONG for in-place (carry flows up);
+        // bottom-up reads digit i before writing it - safe.
+        unsigned long long carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            unsigned long long cur = (unsigned long long)(unsigned int)d[i] * um + carry;
+            d[i] = (int)(cur % BigNumberDetail::MOD);
+            carry = cur / BigNumberDetail::MOD;
+        }
+        size_t sz = n;
+        while (carry) {
+            if (sz >= d.size()) d.resize(sz + 1, 0);
+            d[sz++] = (int)(carry % BigNumberDetail::MOD);
+            carry /= BigNumberDetail::MOD;
+        }
+        d.trim_to(sz);
+        if (m < 0 && !magnitude.isZero()) is_negative = !is_negative;
+        // refresh the int cache when both factors were cached ints
+        if (icv_state_ == 1) {
+            __int128 r = (__int128)icv_ * m;
+            if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) { icv_ = (long long)r; }
+            else icv_state_ = 2;
+        }
+        return true;
+    }
 
     BigNumber& operator+=(const BigNumber& other) { *this = *this + other; return *this; }
     BigNumber& operator-=(const BigNumber& other) { *this = *this - other; return *this; }
@@ -693,6 +1055,8 @@ public:
     // 2. Basic Arithmetic Operations
 
     BigNumber operator+(const BigNumber& other) const {
+        if (!dec_valid_) ensure_dec();
+        if (!other.dec_valid_) other.ensure_dec();
         long long sa, sb;
         if (small_int(*this, sa) && small_int(other, sb)) {
             __int128 r = (__int128)sa + sb;
@@ -740,6 +1104,8 @@ public:
         return other + *this;
     }
     BigNumber operator-(const BigNumber& other) const {
+        if (!dec_valid_) ensure_dec();
+        if (!other.dec_valid_) other.ensure_dec();
         long long sa, sb;
         if (small_int(*this, sa) && small_int(other, sb)) {
             __int128 r = (__int128)sa - sb;
@@ -753,10 +1119,13 @@ public:
         }
         BigNumber inverted_other = other;
         inverted_other.is_negative = !inverted_other.is_negative;
+        inverted_other.icv_ = -inverted_other.icv_;   // sign flip: keep the memo true
         if(inverted_other.magnitude.isZero()) inverted_other.is_negative = false;
         return *this + inverted_other;
     }
     BigNumber operator*(const BigNumber& other) const {
+        if (!dec_valid_) ensure_dec();
+        if (!other.dec_valid_) other.ensure_dec();
         long long sa, sb;
         if (small_int(*this, sa) && small_int(other, sb)) {
             unsigned long long ua = sa < 0 ? 0ULL - (unsigned long long)sa : (unsigned long long)sa;
@@ -777,6 +1146,8 @@ public:
         // long division. Reproduces the general path exactly: the general
         // path computes floor(a*10^(p+5)/b) and rounds at five digits,
         // which equals floor(a*10^(p+1)/b) rounded at one digit.
+        if (!dec_valid_) ensure_dec();
+        if (!other.dec_valid_) other.ensure_dec();
         if (small_int(*this, sa) && small_int(other, sb) && sb != 0) {
             int precision = get_default_precision();
             unsigned long long ua = sa < 0 ? 0ULL - (unsigned long long)sa : (unsigned long long)sa;
@@ -813,36 +1184,90 @@ public:
                 // q == 0 (only reachable at very low precision): fall
                 // through so the zero result keeps the general limb shape.
             }
+            // numerator limbs, then the whole 10^k scaling applied by
+            // placing the limbs at the top of a zero-padded buffer
             BigNumberDetail::SmallVecInt num;
-            while (ua > 0) { num.push_back((int)(ua % BigNumberDetail::MOD)); ua /= BigNumberDetail::MOD; }
+            size_t nlimbs = 0;
+            unsigned long long uat = ua;
+            while (uat > 0) { nlimbs++; uat /= BigNumberDetail::MOD; }
             int whole = precision / BigNumberDetail::BASE, rem = precision % BigNumberDetail::BASE;
+            num.resize(whole + nlimbs + 1, 0);
+            for (size_t k = 0; k < nlimbs; ++k) { num[whole + k] = (int)(ua % BigNumberDetail::MOD); ua /= BigNumberDetail::MOD; }
             if (rem) {
                 static const int P10[BigNumberDetail::BASE] = {1, 10, 100, 1000, 10000};
                 long long carry = 0;
-                for (size_t i = 0; i < num.size(); ++i) {
-                    long long v = (long long)num[i] * P10[rem] + carry;
-                    num[i] = (int)(v % BigNumberDetail::MOD);
+                for (size_t k = 0; k < whole + nlimbs; ++k) {
+                    long long v = (long long)num[k] * P10[rem] + carry;
+                    num[k] = (int)(v % BigNumberDetail::MOD);
                     carry = v / BigNumberDetail::MOD;
                 }
-                while (carry) { num.push_back((int)(carry % BigNumberDetail::MOD)); carry /= BigNumberDetail::MOD; }
+                size_t k = whole + nlimbs;
+                while (carry) { if (k >= num.size()) num.resize(k + 1, 0); num[k] = (int)(carry % BigNumberDetail::MOD); carry /= BigNumberDetail::MOD; k++; }
             }
-            num.insert_front((size_t)whole, 0);
-            if (num.empty()) num.push_back(0);
             // One long-division pass over the scaled numerator keeps the
             // final remainder, so rounding needs no second quotient pass:
             // dropping the (p+1)-th digit rounds up exactly when the
             // remainder of ua*10^p / ub is at least half the divisor.
             BigNumberDetail::SmallVecInt q; q.assign(num.size(), 0);
             if (ub <= 0xFFFFFFFFULL) {
-                // Divisor fits 32 bits: remainder * 1e9 stays inside a
-                // 64-bit word, so the long division is hardware divides
-                // instead of libgcc's software __int128 division.
+                // Divisor fits 32 bits. A hardware `div` sits on the
+                // carry chain of the long division (20+ cycles each);
+                // a precomputed round-up reciprocal turns the step into
+                // one multiply-shift-subtract chain (~8 cycles). The
+                // magic is cached per divisor, which is the shape of a
+                // loop dividing by a constant.
+                static unsigned long long rc_d = 0;
+                static unsigned long long rc_M = 0;   // ceil(2^64 / ub)
+                static unsigned __int128 rc_M128 = 0; // wide fallback
+                static int rc_k = 0;
+                if (rc_d != ub) {
+                    rc_d = ub;
+                    // Round-up reciprocal over 2^64: exact whenever
+                    // ub^2 * 1e5 fits the word (ub <= 1.36e7), which is
+                    // every divide-by-small-limb the loops ever issue.
+                    // The quotient is then the HIGH word of one mulq -
+                    // no shift, no 128-bit multiply.
+                    if (ub <= 13590000ULL) {
+                        rc_M = (unsigned long long)(((unsigned __int128)1 << 64) / ub)
+                             + ( (((unsigned __int128)1 << 64) % ub) ? 1 : 0);
+                        rc_M128 = 0;
+                    } else {
+                        rc_M = 0;
+                        int bits = 0;
+                        for (unsigned long long t = ub; t > 0; t >>= 1) bits++;
+                        rc_k = 2 * bits + 18;          // exact: ub^2 * 1e5 <= 2^k
+                        unsigned __int128 m = (((unsigned __int128)1 << rc_k) + ub - 1) / ub;
+                        rc_M128 = (unsigned long long)m;   // < 2^(k-bits) <= 2^50
+                    }
+                }
+                // Zero limbs above the top of the numerator contribute
+                // nothing: start the chain at the highest real limb and
+                // build only that many quotient limbs.
+                int hi = (int)num.size() - 1;
+                while (hi > 0 && num[hi] == 0) hi--;
+                BigNumberDetail::SmallVecInt q2;
+                q2.resize(hi + 1, 0);
+                q.swap(q2);
                 unsigned long long r64 = 0;
-                for (int i = (int)num.size() - 1; i >= 0; --i) {
-                    unsigned long long cur = r64 * (unsigned long long)BigNumberDetail::MOD
-                                           + (unsigned long long)num[i];
-                    q[i] = (int)(cur / ub);
-                    r64 = cur % ub;
+                if (rc_M) {
+                    for (int i = hi; i >= 0; --i) {
+                        unsigned long long cur = r64 * (unsigned long long)BigNumberDetail::MOD
+                                               + (unsigned long long)num[i];
+                        // quotient = high word of cur * rc_M
+                        unsigned __int128 pr = (unsigned __int128)cur * rc_M;
+                        unsigned long long qt = (unsigned long long)(pr >> 64);
+                        r64 = cur - qt * ub;
+                        q[i] = (int)qt;
+                    }
+                } else {
+                    for (int i = hi; i >= 0; --i) {
+                        unsigned long long cur = r64 * (unsigned long long)BigNumberDetail::MOD
+                                               + (unsigned long long)num[i];
+                        unsigned long long qt = (unsigned long long)
+                            (((unsigned __int128)cur * rc_M128) >> rc_k);
+                        r64 = cur - qt * ub;
+                        q[i] = (int)qt;
+                    }
                 }
                 if (r64 * 2 >= ub) {    // round half up, on the magnitude
                     for (size_t i = 0; i < q.size(); ++i) {
@@ -890,6 +1315,8 @@ public:
         return result.approx(precision);
     }
     BigNumber operator%(const BigNumber& other) const {
+        if (!dec_valid_) ensure_dec();
+        if (!other.dec_valid_) other.ensure_dec();
         long long sa, sb;
         if (small_int(*this, sa) && small_int(other, sb)) {
             if (sb == 0) throw std::runtime_error("Modulo by zero.");
@@ -929,6 +1356,8 @@ public:
     // 4. Mathematical Functions
 
     BigNumber operator^(const BigNumber& exp) const {
+        if (!dec_valid_) ensure_dec();
+        if (!exp.dec_valid_) exp.ensure_dec();
         if (!exp.isInteger()) {
             throw std::runtime_error("Exponent must be an integer for ^ operator.");
         }
@@ -948,9 +1377,9 @@ public:
         return result;
     }
 	 
-    BigNumber abs() const { BigNumber res = *this; res.is_negative = false; return res; }
-    bool isZero() const { return magnitude.isZero(); }
-    BigNumber operator-() const { BigNumber res = *this; if (!res.magnitude.isZero()) res.is_negative = !res.is_negative; return res; }
+    BigNumber abs() const { BigNumber res = *this; res.is_negative = false; res.icv_ = res.icv_ < 0 ? -res.icv_ : res.icv_; return res; }
+    bool isZero() const { if (!dec_valid_) ensure_dec(); return magnitude.isZero(); }
+    BigNumber operator-() const { BigNumber res = *this; if (!res.magnitude.isZero()) { res.is_negative = !res.is_negative; res.icv_ = -res.icv_; } return res; }
     
     // N-th root using Newton's method. A negative precision value uses the default.
     static BigNumber root(const BigNumber& num, const BigNumber& n_big, int precision = -1) {
@@ -1001,6 +1430,7 @@ public:
     BigNumber approx(int precision) const {
         if (precision < 0) throw std::invalid_argument("Precision cannot be negative.");
         if (decimal_pos <= precision) return *this;
+        if (!dec_valid_) ensure_dec();
 
         std::string s = magnitude.toString();
         int digits_to_cut = decimal_pos - precision;
@@ -1019,6 +1449,7 @@ public:
     }
 
     std::string toString() const {
+        if (!dec_valid_) ensure_dec();
         if (magnitude.isZero()) return "0";
         // Machine-int numbers print straight from the integer: string
         // building in hot loops ("k" + i) skips the limb formatter.
@@ -1050,6 +1481,10 @@ public:
     }
     
     long long toLongLong() const {
+        // Machine ints answer from the memo: list indexing in a loop hits
+        // this for every element.
+        long long fast;
+        if (is_int_fast(fast)) return fast;
         const BigNumberDetail::SmallVecInt& d = magnitude.digits;
         if (d.size() <= 3) {
             long long v = 0;
@@ -1086,7 +1521,8 @@ public:
     // 6. State Checks
     bool isNegative() const { return is_negative; }
     bool isInteger() const {
-        if (decimal_pos == 0) return true;
+        if (decimal_pos == 0) return !dec_valid_ ? (ensure_dec(), true) : true;
+        if (!dec_valid_) ensure_dec();
         const BigNumberDetail::SmallVecInt& d = magnitude.digits;
         if (magnitude.isZero()) return true;
         int whole = decimal_pos / BigNumberDetail::BASE, rem = decimal_pos % BigNumberDetail::BASE;
@@ -1100,6 +1536,8 @@ public:
 };
 
 inline BigNumber BigNumber::exact_division(const BigNumber& other) const {
+    if (!dec_valid_) ensure_dec();
+    if (!other.dec_valid_) other.ensure_dec();
     if (other.magnitude.isZero()) {
         throw std::runtime_error("Division by zero.");
     }

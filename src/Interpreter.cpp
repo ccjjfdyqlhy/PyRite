@@ -28,14 +28,14 @@ ValuePtr ListLiteralNode::accept(Interpreter& visitor) {
 }
 
 ValuePtr DimLiteralNode::accept(Interpreter& visitor) {
-    std::unordered_map<std::string, ValuePtr> result;
+    FlatDict result;
     for (const auto& entry : entries) {
         ValuePtr key_val = visitor.evaluate(entry.first);
         std::string key = key_val->toString();
         ValuePtr val = visitor.evaluate(entry.second);
         result[key] = val;
     }
-    return make_value<DimValue>(result);
+    return make_value<DimValue>(std::move(result));
 }
 
 ValuePtr VariableNode::accept(Interpreter& visitor) {
@@ -762,7 +762,7 @@ ValuePtr Interpreter::load_module(ModuleProxy* proxy) {
     }
     this->environment = previous;
 
-    std::unordered_map<std::string, ValuePtr> exports;
+    FlatDict exports;
     if (is_dir_module) {
         for (const auto& stmt : statements) {
             if (auto fn_node = std::dynamic_pointer_cast<FnDefNode>(stmt)) {
@@ -782,7 +782,7 @@ ValuePtr Interpreter::load_module(ModuleProxy* proxy) {
         }
     }
 
-    auto module_dict = make_value<DimValue>(exports);
+    auto module_dict = make_value<DimValue>(std::move(exports));
 
     try {
         ValuePtr on_req = module_env->get("_on_load");

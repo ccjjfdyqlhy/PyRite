@@ -69,6 +69,8 @@ static inline Ptr<T> make_value(A&&... a) {
     return Ptr<T>(new T(std::forward<A>(a)...));
 }
 
+
+
 // Pointer casts between value types, mirroring the shared_ptr helpers.
 template <typename T, typename U>
 static inline Ptr<T> ptr_cast(const Ptr<U>& v) {
@@ -215,14 +217,130 @@ public:
     ValuePtr shift_unshift(const Value* arg = nullptr) const;
 };
 
+// Open-addressing hash map for dictionary values. One flat slot array
+// (power-of-two capacity, linear probing, 0.75 load) instead of a
+// node-per-entry unordered_map: a lookup is a hash plus one or two loads
+// with no pointer chase and no per-entry allocation. Slots expose
+// first/second so every map-shaped call site keeps its form. h == 0
+// marks an empty slot; iteration order is unspecified (all order-bound
+// reads go through sorted_entries()).
+class FlatDict {
+public:
+    struct Slot {
+        std::string first;
+        ValuePtr second;
+        uint64_t h = 0;
+    };
+    struct iterator {
+        Slot* p; Slot* e;
+        void skip() { while (p < e && p->h == 0) ++p; }
+        iterator& operator++() { ++p; skip(); return *this; }
+        bool operator!=(const iterator& o) const { return p != o.p; }
+        bool operator==(const iterator& o) const { return p == o.p; }
+        Slot& operator*() const { return *p; }
+        Slot* operator->() const { return p; }
+    };
+    struct const_iterator {
+        const Slot* p; const Slot* e;
+        void skip() { while (p < e && p->h == 0) ++p; }
+        const_iterator& operator++() { ++p; skip(); return *this; }
+        bool operator!=(const const_iterator& o) const { return p != o.p; }
+        bool operator==(const const_iterator& o) const { return p == o.p; }
+        const Slot& operator*() const { return *p; }
+        const Slot* operator->() const { return p; }
+    };
+
+    FlatDict() { slots_.resize(8); }
+    size_t size() const { return used_; }
+    bool empty() const { return used_ == 0; }
+    iterator begin() { iterator it{slots_.data(), slots_.data() + slots_.size()}; it.skip(); return it; }
+    iterator end() { return iterator{slots_.data() + slots_.size(), slots_.data() + slots_.size()}; }
+    const_iterator begin() const { const_iterator it{slots_.data(), slots_.data() + slots_.size()}; it.skip(); return it; }
+    const_iterator end() const { return const_iterator{slots_.data() + slots_.size(), slots_.data() + slots_.size()}; }
+
+    iterator find(const std::string& key) {
+        if (used_ == 0) return end();
+        uint64_t h = hash_str(key);
+        size_t mask = slots_.size() - 1;
+        size_t i = (size_t)h & mask;
+        while (slots_[i].h != 0) {
+            if (slots_[i].h == h && slots_[i].first == key) return iterator{&slots_[i], slots_.data() + slots_.size()};
+            i = (i + 1) & mask;
+        }
+        return end();
+    }
+    const_iterator find(const std::string& key) const {
+        if (used_ == 0) return end();
+        uint64_t h = hash_str(key);
+        size_t mask = slots_.size() - 1;
+        size_t i = (size_t)h & mask;
+        while (slots_[i].h != 0) {
+            if (slots_[i].h == h && slots_[i].first == key) return const_iterator{&slots_[i], slots_.data() + slots_.size()};
+            i = (i + 1) & mask;
+        }
+        return end();
+    }
+    size_t count(const std::string& key) const {
+        if (used_ == 0) return 0;
+        uint64_t h = hash_str(key);
+        size_t mask = slots_.size() - 1;
+        size_t i = (size_t)h & mask;
+        while (slots_[i].h != 0) {
+            if (slots_[i].h == h && slots_[i].first == key) return 1;
+            i = (i + 1) & mask;
+        }
+        return 0;
+    }
+    ValuePtr& operator[](const std::string& key) {
+        if ((used_ + 1) * 4 > slots_.size() * 3) rehash(slots_.size() * 2);
+        uint64_t h = hash_str(key);
+        size_t mask = slots_.size() - 1;
+        size_t i = (size_t)h & mask;
+        while (slots_[i].h != 0) {
+            if (slots_[i].h == h && slots_[i].first == key) return slots_[i].second;
+            i = (i + 1) & mask;
+        }
+        slots_[i].h = h;
+        slots_[i].first = key;
+        used_++;
+        return slots_[i].second;
+    }
+
+private:
+    static uint64_t hash_str(const std::string& s) {
+        uint64_t h = 1469598103934665603ULL;
+        for (size_t i = 0; i < s.size(); ++i) { h ^= (unsigned char)s[i]; h *= 1099511628211ULL; }
+        h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 33;
+        return h | 1ULL;                     // 0 is the empty marker
+    }
+    void rehash(size_t ncap) {
+        std::vector<Slot> old;
+        old.swap(slots_);
+        slots_.resize(ncap);
+        used_ = 0;
+        size_t mask = ncap - 1;
+        for (const Slot& s : old) {
+            if (s.h == 0) continue;
+            size_t i = (size_t)s.h & mask;
+            while (slots_[i].h != 0) i = (i + 1) & mask;
+            slots_[i].h = s.h;
+            slots_[i].first = std::move(const_cast<std::string&>(s.first));
+            slots_[i].second = std::move(const_cast<ValuePtr&>(s.second));
+            used_++;
+        }
+    }
+    std::vector<Slot> slots_;
+    size_t used_ = 0;
+};
+
 class DimValue : public Value {
 public:
     // Hashed storage: dictionary lookup and insert are the hot paths of
     // loop-shaped scripts. Every operation that exposes an ORDER goes
     // through sorted_entries(), so observable behavior stays exactly the
     // sorted order an ordered map produced.
-    std::unordered_map<std::string, ValuePtr> dict;
-    DimValue(const std::unordered_map<std::string, ValuePtr>& d) : Value(VTag::Dim), dict(d) {}
+    FlatDict dict;
+    DimValue(const FlatDict& d) : Value(VTag::Dim), dict(d) {}
     DimValue() : Value(VTag::Dim) {}
     std::vector<std::pair<std::string, ValuePtr>> sorted_entries() const {
         std::vector<std::pair<std::string, ValuePtr>> out;
@@ -305,6 +423,28 @@ public:
     bool isTruthy() const override { return true; }
     ValuePtr clone() const override { return make_value<ModuleProxy>(file_path); }
 };
+
+// The last reference to a Value drops through here. Numbers and strings
+// are the overwhelming majority of every workload's garbage, so their
+// destruction is devirtualized: a direct destructor call plus the pooled
+// delete instead of a vtable dispatch per object.
+void value_destroy(Value* p);
+template <>
+inline void Ptr<Value>::dec_ref(Value* p) {
+    if (--p->refcount_ != 0) return;
+    VTag t = p->tag;
+    if (t == VTag::Number) {
+        NumberValue* n = static_cast<NumberValue*>(p);
+        n->~NumberValue();
+        ::operator delete((void*)n);
+    } else if (t == VTag::String) {
+        StringValue* s = static_cast<StringValue*>(p);
+        s->~StringValue();
+        ::operator delete((void*)s);
+    } else {
+        value_destroy(p);
+    }
+}
 
 // Type checking helpers
 bool is_type_compatible(TokenType expected_type, const ValuePtr& value);

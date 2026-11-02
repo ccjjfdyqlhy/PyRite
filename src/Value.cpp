@@ -577,12 +577,11 @@ ValuePtr DimValue::getMember(const std::string& name) const {
 }
 
 ValuePtr DimValue::clone() const {
-    std::unordered_map<std::string, ValuePtr> cloned;
-    cloned.reserve(dict.size());
+    FlatDict cloned;
     for (const auto& pair : dict) {
         cloned[pair.first] = pair.second->clone();
     }
-    return make_value<DimValue>(cloned);
+    return make_value<DimValue>(std::move(cloned));
 }
 ValuePtr DimValue::getSubscript(const Value& index) const {
     if (const StringValue* s = dynamic_cast<const StringValue*>(&index)) {
@@ -608,4 +607,11 @@ bool DimValue::isEqualTo(const Value& other) const {
         if (!pair.second->isEqualTo(*it->second)) return false;
     }
     return true;
+}
+
+// Cold destruction path for the rare tags: a virtual delete dispatches
+// through the vtable and lands in the derived destructor exactly as the
+// generic Ptr machinery would.
+void value_destroy(Value* p) {
+    delete p;
 }

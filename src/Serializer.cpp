@@ -215,12 +215,12 @@ ValuePtr read_value(BinReader& r) {
         }
         case ValueTag::DIM: {
             uint32_t n = r.u32();
-            std::unordered_map<std::string, ValuePtr> dict;
+            FlatDict dict;
             for (uint32_t i = 0; i < n; ++i) {
                 std::string key = r.string();
                 dict[key] = read_value(r);
             }
-            return make_value<DimValue>(dict);
+            return make_value<DimValue>(std::move(dict));
         }
     }
     return nullptr;

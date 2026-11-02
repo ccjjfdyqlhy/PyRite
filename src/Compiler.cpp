@@ -1014,6 +1014,17 @@ void Compiler::compile_expression_statement(ExpressionStatementNode* n) {
         }
     }
     compile_expression(n->expression);
+    // A statement-position member call discards its result: the last
+    // emitted instruction is the OP_CALL_MEMBER root of the expression,
+    // so mark it result-unused and drop the POP that followed. Only a
+    // member-call root ends an expression with OP_CALL_MEMBER, so this
+    // cannot hit a call whose value feeds further ops.
+    std::vector<uint8_t>& stmt_code = current->func->code;
+    if (allow_fusion && stmt_code.size() >= 7
+        && stmt_code[stmt_code.size() - 7] == static_cast<uint8_t>(OpCode::OP_CALL_MEMBER)) {
+        stmt_code[stmt_code.size() - 3] |= 0x80;   // high bit of the arg-count operand
+        return;                                    // the POP is gone too
+    }
     emit_op(OpCode::OP_POP);
 }
 
@@ -1232,9 +1243,9 @@ int32_t Compiler::table_constant(ListLiteralNode* n) {
         }
         index_values.push_back(make_value<NumberValue>(BigNumber(slot)));
     }
-    std::unordered_map<std::string, ValuePtr> descriptor;
+    FlatDict descriptor;
     descriptor[table_key()] = make_value<LnValue>(index_values);
-    return static_cast<int32_t>(add_constant(make_value<DimValue>(descriptor)));
+    return static_cast<int32_t>(add_constant(make_value<DimValue>(std::move(descriptor))));
 }
 
 void Compiler::compile_list_literal(ListLiteralNode* n) {
@@ -1339,6 +1350,7 @@ static constexpr uint32_t INPLACE_KIND_CONST  = 0;
 static constexpr uint32_t INPLACE_KIND_LOCAL  = 1;
 static constexpr uint32_t INPLACE_KIND_STACK  = 2;
 static constexpr uint32_t INPLACE_KIND_INLINE = 3;
+static constexpr uint32_t INPLACE_KIND_GLOBAL = 4;   // rhs pay = globals name index
 
 // Encodes one side of a fused arithmetic/compare instruction.
 // bit23: global (bits 22-12 = name constant index) else local slot;
@@ -1421,9 +1433,11 @@ bool Compiler::try_compile_inplace_common(const std::string& name, AstNode* valu
     (void)line;
     if (!allow_fusion) return false;
     uint32_t dst;
+    uint32_t dst_global_raw = 0;   // destination slot / name index without flag bits
     int slot = resolve_local(name);
     if (slot >= 0 && slot <= 1023) {
         dst = INPLACE_DST_SHIFT <= 22 ? (static_cast<uint32_t>(slot) << INPLACE_DST_SHIFT) : 0;
+        dst_global_raw = static_cast<uint32_t>(slot);
     } else if (slot < 0) {
         if (resolve_upvalue(current, name) != -1) return false;   // closure variable: plain path
         // Globals take the fused path too - that is what script-scope
@@ -1431,10 +1445,12 @@ bool Compiler::try_compile_inplace_common(const std::string& name, AstNode* valu
         uint32_t idx = add_string_constant(name);
         if (idx > 1023) return false;
         dst = INPLACE_GLOBAL_MASK | (idx << INPLACE_DST_SHIFT);
+        dst_global_raw = idx;
     } else {
         return false;
     }
     if (no_push) dst |= 1u << 22;   // no-push variant marker (bit 22; dst is bits 21-12)
+    uint32_t dst_raw = dst_global_raw;              // slot / name index, no flag bits
     auto bin = dynamic_cast<BinaryOpNode*>(value);
     if (!bin) return false;
     OpCode op;
@@ -1449,9 +1465,18 @@ bool Compiler::try_compile_inplace_common(const std::string& name, AstNode* valu
 
     uint32_t kind, pay;
     if (auto rvar = dynamic_cast<VariableNode*>(bin->right.get())) {
+        // Locals AND globals encode as the right-hand side; a global
+        // source is what script-scope accumulators (`f = f * i`) read.
         int rslot = resolve_local(rvar->name);
-        if (rslot < 0 || rslot > INPLACE_PAY_MASK) return false;   // global/upvalue rhs: plain path
-        kind = INPLACE_KIND_LOCAL; pay = static_cast<uint32_t>(rslot);
+        if (rslot >= 0 && rslot <= (int)INPLACE_PAY_MASK) {
+            kind = INPLACE_KIND_LOCAL; pay = static_cast<uint32_t>(rslot);
+        } else if (rslot < 0 && resolve_upvalue(current, rvar->name) == -1) {
+            uint32_t gidx = add_string_constant(rvar->name);
+            if (gidx > INPLACE_PAY_MASK) return false;
+            kind = INPLACE_KIND_GLOBAL; pay = gidx;
+        } else {
+            return false;   // upvalue rhs: plain path
+        }
     } else if (auto lit = dynamic_cast<LiteralNode*>(bin->right.get())) {
         if (auto num = ptr_cast<NumberValue>(lit->value)) {
             long long v = 0;
@@ -1471,6 +1496,27 @@ bool Compiler::try_compile_inplace_common(const std::string& name, AstNode* valu
             return false;
         }
     } else if (auto rbin = dynamic_cast<BinaryOpNode*>(bin->right.get())) {
+        // Quotient accumulation: s = s + i / k in one register
+        // instruction. The divide keeps the exact decimal semantics of
+        // `/`; nothing but the operand plumbing is fused away.
+        if (rbin->op.type == TokenType::SLASH && op == OpCode::OP_INPLACE_ADD) {
+            uint32_t aenc, benc;
+            if (encode_r_side(rbin->left.get(), aenc) && encode_r_side(rbin->right.get(), benc)) {
+                uint32_t w1 = ((dst_raw & 0x3FF) << 13) | aenc;
+                if (dst & INPLACE_GLOBAL_MASK) w1 |= 1u << 23;
+                uint32_t w2 = benc;
+                if (no_push) w2 |= 1u << 12;   // no-push marker rides in w2's free bit
+                emit_op(OpCode::OP_RESERVED_5);   // OP_DIVADD_R
+                auto raw24 = [this](uint32_t v) {
+                    emit_byte(static_cast<uint8_t>((v >> 16) & 0xFF));
+                    emit_byte(static_cast<uint8_t>((v >> 8) & 0xFF));
+                    emit_byte(static_cast<uint8_t>(v & 0xFF));
+                };
+                raw24(w1);
+                raw24(w2);
+                return true;
+            }
+        }
         // Accumulator idiom: s = s + i * 3 (and s * i).
         if (rbin->op.type != TokenType::STAR) return false;
         VariableNode* rv = nullptr;

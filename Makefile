@@ -32,9 +32,9 @@ release: $(TARGET)
 # AST mode, then the VM dispatch loop (calls, dicts) plus the big-number
 # workloads big_fact / big_pow - without them GCC marks the BigNumber
 # paths cold and the optimized build runs them several times slower.
-pgo: CXXFLAGS += -O3 -DNDEBUG
+pgo: CXXFLAGS += -O3 -DNDEBUG -flto
 pgo:
-	$(CXX) $(CXXFLAGS) -fprofile-generate -o $(TARGET) $(SRCS)
+	$(CXX) $(CXXFLAGS) -fprofile-generate -flto -o $(TARGET) $(SRCS)
 	./$(TARGET) bench/pyrite/int_loop.pr > /dev/null
 	./$(TARGET) --vm bench/pyrite/int_loop.pr > /dev/null
 	./$(TARGET) --vm bench/pyrite/div_loop.pr > /dev/null
