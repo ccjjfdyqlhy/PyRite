@@ -2,6 +2,11 @@
 *.o
 PyRite
 
+# PGO profile data and generated dependency files
+*.gcda
+*.gcno
+/*.d
+
 # Editor
 *.swp
 *.swo
