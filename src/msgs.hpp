@@ -15,6 +15,10 @@ enum class Msg {
 
     // --- args ---
     ARGS_AT_LEAST, ARGS_EXACT, ARGS_AT_MOST, ARGS_GOT,
+    // Java/C# 风格的参数数量错误：点名调用对象、列出缺失/可用的参数名、
+    // 给出预期与实际数量。两种执行模式共用同一条文案。
+    ARGS_MISSING_NAMED, ARGS_AT_MOST_NAMED,
+    KIND_FN, KIND_METHOD, KIND_CTOR,
     ARG_TYPE, SWAP_TWO_VARS, SWAP_VARS, NEW_CLASS,
 
     // --- native fns ---
@@ -80,4 +84,5 @@ const char* msg(Msg id);
 std::string fmt(Msg id, const std::string& arg);
 std::string fmt2(Msg id, const std::string& a1, const std::string& a2);
 std::string fmt3(Msg id, const std::string& a1, const std::string& a2, const std::string& a3);
+std::string fmt4(Msg id, const std::string& a1, const std::string& a2, const std::string& a3, const std::string& a4);
 std::string fmt_int(Msg id, long long n);

@@ -1,5 +1,6 @@
 #pragma once
 #include "msgs.hpp"
+#include <vector>
 
 inline const char* msg(Msg id) {
     switch (id) {
@@ -42,6 +43,12 @@ inline const char* msg(Msg id) {
         case Msg::ARGS_EXACT: return "Expected ";
         case Msg::ARGS_AT_MOST: return "Expected at most ";
         case Msg::ARGS_GOT: return " arguments but got ";
+        // Java/C#-style: slots are "kind 'name'", parameter list, expected count, received count.
+        case Msg::ARGS_MISSING_NAMED: return "{} is missing required argument(s) {}: expected at least {}, received {}.";
+        case Msg::ARGS_AT_MOST_NAMED: return "{} accepts at most {} argument(s) ({}), received {}.";
+        case Msg::KIND_FN: return "function ";
+        case Msg::KIND_METHOD: return "method ";
+        case Msg::KIND_CTOR: return "constructor ";
         case Msg::ARG_TYPE: return "Arg {} type mismatch (function '{}', param '{}', expected '{}', got '{}').";
         case Msg::SWAP_TWO_VARS: return "swap() requires 2 arguments.";
         case Msg::SWAP_VARS: return "swap() arguments must be variables or ln elements.";
@@ -213,4 +220,41 @@ inline std::string fmt3(Msg id, const std::string& a1, const std::string& a2, co
         return std::string("Arg ") + a1 + " type mismatch (in function '" + a2 + "', param '" + a3 + "').";
     }
     return a1 + a2 + a3;
+}
+
+inline std::string fmt4(Msg id, const std::string& a1, const std::string& a2,
+                        const std::string& a3, const std::string& a4) {
+    if (id == Msg::ARGS_MISSING_NAMED) {
+        return a1 + " is missing required argument(s) " + a2 + ": expected at least " + a3 + ", received " + a4 + ".";
+    }
+    if (id == Msg::ARGS_AT_MOST_NAMED) {
+        return a1 + " accepts at most " + a2 + " argument(s) (" + a3 + "), received " + a4 + ".";
+    }
+    return a1 + a2 + a3 + a4;
+}
+
+// ---- Java/C#-style argument errors, shared verbatim by the native
+// interpreter and the bytecode VM so both modes report identically. ----
+inline std::string kind_name_text(Msg kind, const std::string& name) {
+    return std::string(msg(kind)) + "'" + name + "'";
+}
+inline std::string quote_list(const std::vector<std::string>& names) {
+    std::string out;
+    for (size_t i = 0; i < names.size(); ++i) {
+        if (i) out += ", ";
+        out += "'" + names[i] + "'";
+    }
+    return out;
+}
+inline std::string args_missing_text(const std::string& kind_and_name,
+                                     const std::vector<std::string>& missing,
+                                     size_t expected_min, size_t received) {
+    return fmt4(Msg::ARGS_MISSING_NAMED, kind_and_name, quote_list(missing),
+                std::to_string(expected_min), std::to_string(received));
+}
+inline std::string args_too_many_text(const std::string& kind_and_name,
+                                      const std::vector<std::string>& param_names,
+                                      size_t max_params, size_t received) {
+    return fmt4(Msg::ARGS_AT_MOST_NAMED, kind_and_name, std::to_string(max_params),
+                quote_list(param_names), std::to_string(received));
 }

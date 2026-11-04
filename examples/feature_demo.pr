@@ -1,0 +1,480 @@
+// ============================================================================
+// feature_demo.pr -- PyRite 语言功能巡览
+// ============================================================================
+//
+// 运行：
+//     ./PyRite examples/feature_demo.pr
+//     ./PyRite --vm examples/feature_demo.pr
+//
+// 这个脚本从标准库取几个模块，然后按"先值、后写法、最后库"的顺序
+// 把语言的主要能力走一遍。
+//
+// 两点约定：
+//   * `say` 是关键字，只能当语句用，不能出现在表达式里。
+//     要打印的函数请写成 `do ... end` 的形式，不要用 `->` 箭头。
+//   * 保留字（类型词、块关键字、say/ask/raise/using/require/expose/
+//     contains）不能当变量名。`times` 也是保留字，所以计数器叫 count。
+// ============================================================================
+
+require "list" as list
+require "text" as text
+require "dict" as dict
+require "num" as num
+require "flow" as flow
+
+
+// ---------------------------------------------------------------------------
+// 1. 值和声明
+// ---------------------------------------------------------------------------
+// 声明时写类型，赋值时自动转换。
+
+dec  number   = 42              // 任意精度数
+dec  pi       = 3.14159
+str  word     = "hello"
+str  from_num = 456             // 数 → 字符串
+dec  from_str = "123"           // 字符串 → 数
+ln   items    = [10, 20, 30]    // 列表
+ln   mixed    = [1, "two", 3]   // 列表可以混装
+dim  conf     = {"lang": "PyRite", "year": 2025}   // 字典
+bin  bytes    = 0xFF0A          // 十六进制
+any  nothing  = nul             // nul 是值，不是类型
+any  count    = items.length    // any 装什么都行
+
+say(number)
+say(word)
+say(from_num)
+say(from_str)
+say(items)
+say(mixed)
+say(conf)
+say(bytes)
+say(nothing)
+say(count)
+
+say("--- 1. 值和声明 ---")
+
+
+// ---------------------------------------------------------------------------
+// 2. 赋值
+// ---------------------------------------------------------------------------
+
+dec score = 0
+score = 1
+score += 4                     // += -= *= /= ^= %=
+score -= 1
+score *= 3
+score /= 2
+score ^= 3
+score %= 5
+
+ln   marks = [1, 2, 3]
+marks[0] = 99                  // 列表按下标写
+dim  ages  = {"ann": 30}
+ages["ann"] = 31               // 字典按键写
+
+say(score)
+say(marks)
+say(ages)
+
+say("--- 2. 赋值 ---")
+
+
+// ---------------------------------------------------------------------------
+// 3. 运算符
+// ---------------------------------------------------------------------------
+
+say(7 + 3)
+say(7 - 3)
+say(7 * 3)
+say(7 / 2)
+say(2 ^ 10)
+say(7 % 3)
+
+say(7 == 7)
+say(7 != 7)
+say(7 < 9)
+say(7 > 9)
+say(7 <= 7)
+say(7 >= 9)
+
+say(not 0)                     // 只有 0 和 nul 是假
+say(not 5)
+say(1 and 2)
+say(0 or 7)
+say(1 == 1 and 2 == 2)
+say(1 == 2 or 2 == 2)
+
+say("--- 3. 运算符 ---")
+
+
+// ---------------------------------------------------------------------------
+// 4. 类型转换
+// ---------------------------------------------------------------------------
+
+say("123" as dec)
+say(456 as str)
+say("0xFF" as bin)
+say([1, 2, 3] as str)
+say(nul as ln)
+say(nul as dim)
+
+say("--- 4. 类型转换 ---")
+
+
+// ---------------------------------------------------------------------------
+// 5. 文本里放一个值
+// ---------------------------------------------------------------------------
+// {名字} 在运行时填进去；{{ 和 }} 是花括号本身。
+
+str name = "world"
+dec keys = 3
+say("hello, {name}!")
+say("you have {keys} keys.")
+say("{{name}} is the braces themselves.")
+say("{name} is {keys}.")
+
+say("--- 5. 文本里放一个值 ---")
+
+
+// ---------------------------------------------------------------------------
+// 6. 成员
+// ---------------------------------------------------------------------------
+// 列表、字符串、字典都带自己的方法。
+
+ln   xs = [10, 20, 30]
+say(xs.length)
+xs.push(40)                    // push 返回新的长度
+say(xs)
+say(xs.pop())                  // pop 弹最后一个
+say(xs)
+say(xs.join("-"))
+say(xs.slice(1))
+say(xs.indexOf(20))
+
+str  greeting = "  Hello  "
+say(greeting.length)
+say(greeting.trim())
+say(greeting.upper())
+say(greeting.lower())
+say("a,b,c".split(","))
+say("a-b-c".replace("-", "+"))
+say("hello".startsWith("he"))
+say("hello".endsWith("lo"))
+say("hello".indexOf("ll"))
+
+dim  d = {"b": 2, "a": 1}
+say(d.keys())
+say(d.values())
+say(d.has("a"))
+
+say("--- 6. 成员 ---")
+
+
+// ---------------------------------------------------------------------------
+// 7. 控制流
+// ---------------------------------------------------------------------------
+
+dec grade = 85
+if grade >= 90 then
+  say("excellent")
+elif grade >= 60 then
+  say("passed")
+else
+  say("failed")
+endif
+
+dec i = 0
+while i < 3 do
+  say("while {i}")
+  i += 1
+end
+
+// fin 是循环结束后跑一次的那块
+dec rounds = 0
+while rounds < 2 do
+  rounds += 1
+fin
+  say("the loop ran {rounds} times")
+endwhile
+
+loop say("a line") for 3 times
+
+loop(k)                         // 自带计数器
+  say("k is {k}")
+for 2 times
+
+dec down = 3
+loop
+  down -= 1
+until down <= 0
+say("counted down to {down}")
+
+for item in ["A", "B", "C"] do
+  say("for-in saw {item}")
+end
+
+for ch in "abc" do
+  say("for-in over a string saw {ch}")
+end
+
+dec skip = 0
+while skip < 10 do
+  skip += 1
+  if skip == 3 then continue endif   // 跳过这个
+  if skip > 5 then break endif       // 到这就停
+  say("kept {skip}")
+end
+
+say("--- 7. 控制流 ---")
+
+
+// ---------------------------------------------------------------------------
+// 8. 函数
+// ---------------------------------------------------------------------------
+
+fn add(dec a, dec b) do
+  return a + b
+endfn
+
+fn double(dec x) -> x * 2          // 箭头写法自动 return
+
+fn greet(str who = "world") do     // 默认值
+  say("hello, {who}")
+endfn
+
+dec square = fn(dec n) -> n * n    // 匿名函数
+
+fn apply(dec x, any f) -> f(x)     // 函数可以拿函数当参数
+
+fn make_adder(dec n) do            // 闭包记住了它拿到的 n
+  return fn(dec x) -> x + n
+end
+
+fn fact(dec n) do                  // 递归
+  if n == 0 then return 1 else return n * fact(n - 1) endif
+end
+
+say(add(2, 3))
+say(double(5))
+greet()
+greet("PyRite")
+say(square(7))
+say(apply(5, fn(dec n) -> n * 3))
+say((fn(dec a, dec b) -> a * b)(6, 7))    // 立刻调用
+say(fact(20))
+
+say("--- 8. 函数 ---")
+
+
+// ---------------------------------------------------------------------------
+// 9. 数据和类
+// ---------------------------------------------------------------------------
+
+struct Point(dec x, dec y)
+struct Config(str name = "default", dec version = 1)
+
+ins Counter(dec val = 0)
+  // 这里放的代码在 new 的时候跑
+contains
+  fn inc() do this.val = this.val + 1 end
+  fn get() -> this.val
+endins
+
+dec p = new(Point)
+p.x = 10
+p.y = 20
+say(p.x)
+say(p.y)
+
+dec c = new(Config)
+say(c.name)
+say(c.version)
+
+dec counter = new(Counter)
+counter.inc()
+counter.inc()
+say(counter.get())
+
+say("--- 9. 数据和类 ---")
+
+
+// ---------------------------------------------------------------------------
+// 10. 错误处理
+// ---------------------------------------------------------------------------
+
+fn may_fail(dec should_fail) do
+  if should_fail then raise("something went wrong") endif
+  return "all is well"
+end
+
+try
+  say(may_fail(0))
+catch err
+  say("caught: " + (err as str))
+end
+
+try
+  say(may_fail(1))
+catch err
+  say("caught: " + (err as str))
+fin
+  say("the cleanup still ran")
+end
+
+try
+  raise(Exception("a custom error"))
+catch err
+  say("caught: " + (err as str))
+end
+
+say("--- 10. 错误处理 ---")
+
+
+// ---------------------------------------------------------------------------
+// 11. swap 和 using-as
+// ---------------------------------------------------------------------------
+
+dec a = 10
+dec b = 20
+swap(a, b)
+say("after swap a={a} b={b}")
+
+ln pair = [1, 2]
+swap(pair[0], pair[1])
+say(pair)
+
+dec a_long_name = 42
+using a_long_name as short
+say(short)
+
+say("--- 11. swap 和 using-as ---")
+
+
+// ---------------------------------------------------------------------------
+// 12. 等待
+// ---------------------------------------------------------------------------
+// await 一直看条件，条件成真了就跑那块。
+// countdown 造一个会走的计时器。
+
+dec timer = countdown(1)
+say("waiting a second...")
+await timer() then
+  say("the time is up")
+end
+
+say("--- 12. 等待 ---")
+
+
+// ---------------------------------------------------------------------------
+// 13. 内置函数
+// ---------------------------------------------------------------------------
+
+say(abs(-7))
+say(len("abc"))
+say(len([1, 2, 3]))
+say(rt(27, 3))
+say(sort([3, 1, 2]))
+say(setify([1, 1, 2, 2, 3]))
+say(max(4, 9, 2))
+say(min(4, 9, 2))
+say(hash("abc", 7))
+say(approx(3.14159, 2))
+say(is_int(5))
+say(is_neg(-5))
+say(char(65))
+say(ord("A"))
+say(substring("hello", 1, 3))
+say(range(0, 6, 2))
+say(reverse([1, 2, 3]))
+say(type(1))
+say(type("a"))
+say(type([1]))
+say(type({"a": 1}))
+say(type(nul))
+say(is_null(nul))
+say(is_number(1))
+say(is_string("a"))
+say(is_list([1]))
+say(is_dict({}))
+say(is_function(fn(dec x) -> x))
+
+say("--- 13. 内置函数 ---")
+
+
+// ---------------------------------------------------------------------------
+// 14. 任意精度
+// ---------------------------------------------------------------------------
+
+say(fact(100))                  // 一百的阶乘，一个字都不差
+
+say(1 / 3)                      // 默认五十位
+set_precision(10)
+say(1 / 3)                      // 说多少就多少
+say(get_precision())
+set_precision(50)
+
+say("--- 14. 任意精度 ---")
+
+
+// ---------------------------------------------------------------------------
+// 15. 标准库
+// ---------------------------------------------------------------------------
+
+say("--- 15. 标准库 ---")
+
+// list
+say(list.has([1, 2, 3], 2))
+say(list.index_of([1, 2, 3], 2))
+say(list.count([1, 1, 2], 1))
+say(list.sum([1, 2, 3]))
+say(list.first([9, 8]))
+say(list.last([9, 8]))
+say(list.take([1, 2, 3, 4], 2))
+say(list.skip([1, 2, 3, 4], 2))
+say(list.reverse([1, 2, 3]))
+say(list.range(4))
+say(list.concat([1], [2]))
+say(list.join(["a", "b"], "-"))
+say(list.map([1, 2, 3], fn(dec n) -> n * 10))
+say(list.filter([1, 2, 3, 4], fn(dec n) -> n % 2 == 0))
+say(list.fold([1, 2, 3], fn(dec acc, dec n) -> acc + n, 0))
+
+// text
+say(text.starts_with("hello", "he"))
+say(text.ends_with("hello", "lo"))
+say(text.pad("ab", 5, "-"))
+say(text.repeat("ab", 3))
+say(text.lines("one\ntwo"))
+say(text.words("one two"))
+say(text.capitalize("hello world"))
+
+// dict
+say(dict.get({"a": 1}, "b", 0))
+say(dict.merge({"a": 1}, {"b": 2}))
+say(dict.sorted_keys({"b": 2, "a": 1}))
+say(dict.remove({"a": 1, "b": 2}, "a"))
+
+// num
+say(num.clamp(15, 0, 10))
+say(num.sign(-3))
+say(num.is_even(4))
+say(num.is_odd(4))
+say(num.gcd(48, 18))
+say(num.lcm(4, 6))
+say(num.pick([1, 2, 3, 4, 5], 42))
+say(num.shuffle([1, 2, 3, 4, 5], 42))   // 同一个种子，永远同一个顺序
+
+// flow
+ln rows = [10, 20, 30]
+any cursor = flow.cursor()
+say(flow.next(cursor, rows))
+say(flow.next(cursor, rows))
+say(flow.next(cursor, rows))
+say(flow.next(cursor, rows))             // 流完了
+say(flow.has_row(rows, 2))
+say(flow.row_at(rows, 1))
+say(flow.first_where(rows, fn(dec n) -> n > 15))
+say(flow.some(rows, fn(dec n) -> n > 25))
+say(flow.every(rows, fn(dec n) -> n > 5))
+
+say("--- 走完了 ---")

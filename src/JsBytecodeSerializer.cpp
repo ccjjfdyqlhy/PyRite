@@ -77,11 +77,10 @@ std::string serializeValue(const ValuePtr& v) {
         DimValue* d = static_cast<DimValue*>(v.get());
         std::string out = "{\"t\":5,\"v\":{";
         bool first = true;
-        for (std::map<std::string, ValuePtr>::const_iterator it = d->dict.begin();
-             it != d->dict.end(); ++it) {
-            if (!first) out += ",";
+        for (const auto& kv : d->sorted_entries()) {
+            out += first ? "" : ",";
             first = false;
-            out += "\"" + escapeJsonString(it->first) + "\":" + serializeValue(it->second);
+            out += "\"" + escapeJsonString(kv.first) + "\":" + serializeValue(kv.second);
         }
         out += "}}";
         return out;

@@ -5,7 +5,7 @@
 // PyRite opcode metadata.
 // ============================================================================
 // GENERATED FILE -- DO NOT EDIT BY HAND.
-// Source: opcodes.def (sha256 12d591f75dd71877da0de718394052c1c571503ac24aef0d152b794e1f497dfc)
+// Source: opcodes.def (sha256 2b2ee9ba6c6170f456c54f9fe55e2abfc50ad44fa4a288ba66b2081700553b83)
 // Regenerate: python3 tools/gen_opcodes.py
 //
 // Two tables live here:
@@ -85,13 +85,17 @@ constexpr bool OPCODE_HAS_OPERAND[OPCODE_COUNT] = {
     /* 62 */ true ,  // OP_INPLACE_AM
     /* 63 */ true ,  // OP_DEF_STRUCT
     /* 64 */ true ,  // OP_CALL_MEMBER
-    /* 65 */ false,  // OP_RESERVED_2
-    /* 66 */ false,  // OP_RESERVED_3
-    /* 67 */ false,  // OP_RESERVED_4
-    /* 68 */ false,  // OP_RESERVED_5
-    /* 69 */ false,  // OP_RESERVED_6
-    /* 70 */ false,  // OP_RESERVED_7
-    /* 71 */ false,  // OP_RESERVED_8
+    /* 65 */ true ,  // OP_ADD_R
+    /* 66 */ true ,  // OP_SUB_R
+    /* 67 */ true ,  // OP_MUL_R
+    /* 68 */ true ,  // OP_CALLR
+    /* 69 */ true ,  // OP_RETURN_R
+    /* 70 */ true ,  // OP_DEF_CLASS
+    /* 71 */ true ,  // OP_CALL_CTOR
+    /* 72 */ false,  // OP_RESERVED_5
+    /* 73 */ false,  // OP_RESERVED_6
+    /* 74 */ false,  // OP_RESERVED_7
+    /* 75 */ false,  // OP_RESERVED_8
 };
 
 // How many 3-byte big-endian operands the instruction carries (0, 1, or
@@ -162,13 +166,17 @@ constexpr int OPCODE_OPERAND_COUNT[OPCODE_COUNT] = {
     /* 62 */ 2,     // OP_INPLACE_AM
     /* 63 */ 1,     // OP_DEF_STRUCT
     /* 64 */ 2,     // OP_CALL_MEMBER
-    /* 65 */ 0,     // OP_RESERVED_2
-    /* 66 */ 0,     // OP_RESERVED_3
-    /* 67 */ 0,     // OP_RESERVED_4
-    /* 68 */ 0,     // OP_RESERVED_5
-    /* 69 */ 0,     // OP_RESERVED_6
-    /* 70 */ 0,     // OP_RESERVED_7
-    /* 71 */ 0,     // OP_RESERVED_8
+    /* 65 */ 2,     // OP_ADD_R
+    /* 66 */ 2,     // OP_SUB_R
+    /* 67 */ 2,     // OP_MUL_R
+    /* 68 */ 3,     // OP_CALLR
+    /* 69 */ 1,     // OP_RETURN_R
+    /* 70 */ 1,     // OP_DEF_CLASS
+    /* 71 */ 1,     // OP_CALL_CTOR
+    /* 72 */ 0,     // OP_RESERVED_5
+    /* 73 */ 0,     // OP_RESERVED_6
+    /* 74 */ 0,     // OP_RESERVED_7
+    /* 75 */ 0,     // OP_RESERVED_8
 };
 
 // Whether the JavaScript VM can execute the instruction. The JS VM has no AST
@@ -240,13 +248,17 @@ constexpr bool OPCODE_JS_UNSUPPORTED[OPCODE_COUNT] = {
     /* 62 */ true ,  // OP_INPLACE_AM
     /* 63 */ false,  // OP_DEF_STRUCT
     /* 64 */ true ,  // OP_CALL_MEMBER
-    /* 65 */ true ,  // OP_RESERVED_2
-    /* 66 */ true ,  // OP_RESERVED_3
-    /* 67 */ true ,  // OP_RESERVED_4
-    /* 68 */ true ,  // OP_RESERVED_5
-    /* 69 */ true ,  // OP_RESERVED_6
-    /* 70 */ true ,  // OP_RESERVED_7
-    /* 71 */ true ,  // OP_RESERVED_8
+    /* 65 */ true ,  // OP_ADD_R
+    /* 66 */ true ,  // OP_SUB_R
+    /* 67 */ true ,  // OP_MUL_R
+    /* 68 */ true ,  // OP_CALLR
+    /* 69 */ true ,  // OP_RETURN_R
+    /* 70 */ true ,  // OP_DEF_CLASS
+    /* 71 */ true ,  // OP_CALL_CTOR
+    /* 72 */ true ,  // OP_RESERVED_5
+    /* 73 */ true ,  // OP_RESERVED_6
+    /* 74 */ true ,  // OP_RESERVED_7
+    /* 75 */ true ,  // OP_RESERVED_8
 };
 
 // Human-readable reason an opcode is unsupported, shown to the author when
@@ -263,13 +275,17 @@ inline const char* opcode_js_unsupported_reason(OpCode op) {
         case OpCode::OP_CMP_JUMP: return "fused compare-and-jump";
         case OpCode::OP_INPLACE_AM: return "fused accumulate-multiply";
         case OpCode::OP_CALL_MEMBER: return "fused member call";
-        case OpCode::OP_RESERVED_2: return "reserved opcode";
-        case OpCode::OP_RESERVED_3: return "reserved opcode";
-        case OpCode::OP_RESERVED_4: return "reserved opcode";
+        case OpCode::OP_ADD_R: return "register arithmetic";
+        case OpCode::OP_SUB_R: return "register arithmetic";
+        case OpCode::OP_MUL_R: return "register arithmetic";
+        case OpCode::OP_CALLR: return "register call";
+        case OpCode::OP_RETURN_R: return "register return";
         case OpCode::OP_RESERVED_5: return "reserved opcode";
         case OpCode::OP_RESERVED_6: return "reserved opcode";
         case OpCode::OP_RESERVED_7: return "reserved opcode";
         case OpCode::OP_RESERVED_8: return "reserved opcode";
+        case OpCode::OP_DEF_CLASS: return "class definitions compile to EVAL_AST for JS export";
+        case OpCode::OP_CALL_CTOR: return "constructor calls compile to EVAL_AST for JS export";
     }
     return "";
 }

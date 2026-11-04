@@ -28,14 +28,14 @@ ValuePtr ListLiteralNode::accept(Interpreter& visitor) {
 }
 
 ValuePtr DimLiteralNode::accept(Interpreter& visitor) {
-    std::map<std::string, ValuePtr> result;
+    FlatDict result;
     for (const auto& entry : entries) {
         ValuePtr key_val = visitor.evaluate(entry.first);
         std::string key = key_val->toString();
         ValuePtr val = visitor.evaluate(entry.second);
         result[key] = val;
     }
-    return make_value<DimValue>(result);
+    return make_value<DimValue>(std::move(result));
 }
 
 ValuePtr VariableNode::accept(Interpreter& visitor) {
@@ -429,6 +429,12 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
         } catch (const RuntimeError& re) {
             visitor.call_stack.pop_back();
             throw;
+        } catch (PyRiteRaiseException& pe) {
+            // A raise inside a native call (a class initializer, a host
+            // hook) carries its payload in .value, not in what(): rethrow
+            // intact so the surrounding catch sees the raised value.
+            visitor.call_stack.pop_back();
+            throw;
         } catch (const std::exception& e) {
             visitor.call_stack.pop_back();
             throw RuntimeError(line, e.what());
@@ -447,14 +453,19 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
         for (const auto& p : param_defs) { if (!p.has_default) num_required_params++; }
 
         if (num_provided_args < num_required_params) {
-            std::stringstream ss;
-            ss << "Method '" << function->name << fmt_int(Msg::ARGS_AT_LEAST, num_required_params) << num_provided_args << ".";
-            throw RuntimeError(line, ss.str());
+            std::vector<std::string> missing;
+            for (size_t i = num_provided_args; i < param_defs.size(); ++i)
+                if (!param_defs[i].has_default) missing.push_back(param_defs[i].name);
+            throw RuntimeError(line, args_missing_text(
+                kind_name_text(Msg::KIND_METHOD, function->name), missing,
+                num_required_params, num_provided_args));
         }
         if (num_provided_args > param_defs.size()) {
-            std::stringstream ss;
-            ss << "Method '" << function->name << fmt_int(Msg::ARGS_AT_MOST, param_defs.size()) << num_provided_args << ".";
-            throw RuntimeError(line, ss.str());
+            std::vector<std::string> names;
+            for (const auto& p : param_defs) names.push_back(p.name);
+            throw RuntimeError(line, args_too_many_text(
+                kind_name_text(Msg::KIND_METHOD, function->name), names,
+                param_defs.size(), num_provided_args));
         }
 
         for (size_t i = 0; i < function->params.size(); ++i) {
@@ -503,14 +514,19 @@ ValuePtr CallNode::accept(Interpreter& visitor) {
         for (const auto& p : param_defs) { if (!p.has_default) num_required_params++; }
 
         if (num_provided_args < num_required_params) {
-            std::stringstream ss;
-            ss << "Function '" << function->name << fmt_int(Msg::ARGS_AT_LEAST, num_required_params) << num_provided_args << ".";
-            throw RuntimeError(line, ss.str());
+            std::vector<std::string> missing;
+            for (size_t i = num_provided_args; i < param_defs.size(); ++i)
+                if (!param_defs[i].has_default) missing.push_back(param_defs[i].name);
+            throw RuntimeError(line, args_missing_text(
+                kind_name_text(Msg::KIND_FN, function->name), missing,
+                num_required_params, num_provided_args));
         }
         if (num_provided_args > param_defs.size()) {
-            std::stringstream ss;
-            ss << "Function '" << function->name << fmt_int(Msg::ARGS_AT_MOST, param_defs.size()) << num_provided_args << ".";
-            throw RuntimeError(line, ss.str());
+            std::vector<std::string> names;
+            for (const auto& p : param_defs) names.push_back(p.name);
+            throw RuntimeError(line, args_too_many_text(
+                kind_name_text(Msg::KIND_FN, function->name), names,
+                param_defs.size(), num_provided_args));
         }
 
         for (size_t i = 0; i < function->params.size(); ++i) {
@@ -746,7 +762,7 @@ ValuePtr Interpreter::load_module(ModuleProxy* proxy) {
     }
     this->environment = previous;
 
-    std::map<std::string, ValuePtr> exports;
+    FlatDict exports;
     if (is_dir_module) {
         for (const auto& stmt : statements) {
             if (auto fn_node = std::dynamic_pointer_cast<FnDefNode>(stmt)) {
@@ -766,7 +782,7 @@ ValuePtr Interpreter::load_module(ModuleProxy* proxy) {
         }
     }
 
-    auto module_dict = make_value<DimValue>(exports);
+    auto module_dict = make_value<DimValue>(std::move(exports));
 
     try {
         ValuePtr on_req = module_env->get("_on_load");
@@ -899,9 +915,31 @@ void Interpreter::define_native_functions() {
         REQUIRE_MIN_ARGS("new", 1);
         auto class_val = ptr_cast<Class>(args[0]);
         if (!class_val) throw std::runtime_error(msg(Msg::NEW_CLASS));
-        if (args.size() - 1 > class_val->fields.size())
-            throw std::runtime_error(class_val->name + "() takes at most " +
-                                     std::to_string(class_val->fields.size()) + " arguments.");
+        if (args.size() - 1 > class_val->fields.size()) {
+            std::vector<std::string> names;
+            for (const auto& f : class_val->fields) names.push_back(f.name);
+            throw std::runtime_error(args_too_many_text(
+                kind_name_text(Msg::KIND_CTOR, class_val->name), names,
+                class_val->fields.size(), args.size() - 1));
+        }
+        // ins 类（有方法或初始化代码）的必选字段缺参在构造时报错，与
+        // 字节码 VM 的 OP_CALL_CTOR 同一句话；纯数据 struct 保留"先 new
+        // 后赋值"的工作流（教程 struct 一节），字段以 null 起步。
+        size_t provided = args.size() - 1;
+        bool class_like = !class_val->methods.empty() || !class_val->initializer_body.empty();
+        if (class_like) {
+            size_t required = 0;
+            std::vector<std::string> missing;
+            for (size_t i = 0; i < class_val->fields.size(); ++i) {
+                if (!class_val->fields[i].has_default) required++;
+                if (i >= provided && !class_val->fields[i].has_default)
+                    missing.push_back(class_val->fields[i].name);
+            }
+            if (!missing.empty())
+                throw std::runtime_error(args_missing_text(
+                    kind_name_text(Msg::KIND_CTOR, class_val->name), missing,
+                    required, provided));
+        }
         auto instance = make_value<Instance>(class_val);
         instance->instance_env->define("this", instance);
         // Constructor arguments fill the declared fields in order, with
@@ -1173,7 +1211,7 @@ void Interpreter::define_native_functions() {
             auto dict_val = dynamic_cast<DimValue*>(args[0].get());
             if (!dict_val) throw std::runtime_error("Argument to keys() must be a dictionary.");
             std::vector<ValuePtr> out;
-            for (const auto& entry : dict_val->dict)
+            for (const auto& entry : dict_val->sorted_entries())
                 out.push_back(make_value<StringValue>(entry.first));
             return make_value<LnValue>(out);
         }));
@@ -1182,7 +1220,7 @@ void Interpreter::define_native_functions() {
             auto dict_val = dynamic_cast<DimValue*>(args[0].get());
             if (!dict_val) throw std::runtime_error("Argument to values() must be a dictionary.");
             std::vector<ValuePtr> out;
-            for (const auto& entry : dict_val->dict) out.push_back(entry.second);
+            for (const auto& entry : dict_val->sorted_entries()) out.push_back(entry.second);
             return make_value<LnValue>(out);
         }));
         globals->define("has", make_value<NativeFnValue>("has", [number](const std::vector<ValuePtr>& args){

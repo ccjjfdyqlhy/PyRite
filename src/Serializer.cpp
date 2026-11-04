@@ -180,7 +180,9 @@ void write_value(BinWriter& w, ValuePtr v) {
     } else if (auto dv = dynamic_cast<DimValue*>(v.get())) {
         w.u8(static_cast<uint8_t>(ValueTag::DIM));
         w.u32(static_cast<uint32_t>(dv->dict.size()));
-        for (const auto& kv : dv->dict) {
+        // Sorted order: the storage is hashed, and a deterministic byte
+        // stream keeps .prc output comparable between runs.
+        for (const auto& kv : dv->sorted_entries()) {
             w.string(kv.first);
             write_value(w, kv.second);
         }
@@ -213,12 +215,12 @@ ValuePtr read_value(BinReader& r) {
         }
         case ValueTag::DIM: {
             uint32_t n = r.u32();
-            std::map<std::string, ValuePtr> dict;
+            FlatDict dict;
             for (uint32_t i = 0; i < n; ++i) {
                 std::string key = r.string();
                 dict[key] = read_value(r);
             }
-            return make_value<DimValue>(dict);
+            return make_value<DimValue>(std::move(dict));
         }
     }
     return nullptr;

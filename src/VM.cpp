@@ -3,6 +3,7 @@
 #include "OpCodeInfo.hpp"
 #include "Interpreter.hpp"
 #include "msgs.hpp"
+#include "msg_cn.hpp"
 #include <sstream>
 #include <cmath>
 #include <chrono>
@@ -16,7 +17,7 @@
 // story keeps -- so this goes all the way down.  Without that, the
 // inner rows stayed descriptors and the script read a dictionary where
 // it asked for a list.
-static ValuePtr build_table(const CompiledFunctionPtr& fn,
+static ValuePtr build_table(CompiledFunction* fn,
                             const ValuePtr& value) {
     auto descriptor = ptr_cast<DimValue>(value);
     if (!descriptor) return value;
@@ -41,7 +42,6 @@ static ValuePtr build_table(const CompiledFunctionPtr& fn,
 // ============================================================================
 VM::VM() : had_error(false), interpreter(nullptr) {
     stack.reserve(256);
-    frames.reserve(64);
 }
 
 // ============================================================================
@@ -62,9 +62,9 @@ void VM::set_error(int line, const std::string& msg) {
     error_message = oss.str();
 }
 
-int VM::current_line() {
-    if (frames.empty()) return 0;
-    CallFrame& f = frames.back();
+__attribute__((always_inline)) inline int VM::current_line() {
+    if (frame_top == 0) return 0;
+    CallFrame& f = frames[frame_top - 1];
     if (!f.function || f.function->code.empty()) return 0;
     size_t offset = static_cast<size_t>(f.ip - f.code_start);
     if (offset == 0) return 0;
@@ -77,7 +77,7 @@ int VM::current_line() {
 bool VM::handle_exception(ValuePtr exc_value) {
     // Discard handlers registered by frames that have already returned:
     // they would otherwise catch exceptions from unrelated code.
-    while (!try_handlers.empty() && try_handlers.back().frame_depth > frames.size()) {
+    while (!try_handlers.empty() && try_handlers.back().frame_depth > (size_t)frame_top) {
         try_handlers.pop_back();
     }
     if (try_handlers.empty()) return false;
@@ -85,10 +85,11 @@ bool VM::handle_exception(ValuePtr exc_value) {
     try_handlers.pop_back();
 
     // Unwind frames to the handler's frame depth.
-    while (frames.size() > handler.frame_depth) {
-        frames.pop_back();
+    while (frame_top > handler.frame_depth) {
+        frame_top--;
+        arena_top = frames[frame_top].locals_base;
     }
-    if (frames.empty()) return false;
+    if (frame_top == 0) return false;
 
     // Restore the stack to the depth it had when the try was entered,
     // then push the exception value.
@@ -98,7 +99,11 @@ bool VM::handle_exception(ValuePtr exc_value) {
     push(exc_value);
 
     // Jump to the catch handler.
-    frames.back().ip = handler.catch_ip;
+    frames[frame_top - 1].ip = handler.catch_ip;
+    // The exception is now handled: drop the error flag raised when it
+    // was thrown, or the next OP_EVAL_AST would abort with the stale
+    // error message even though execution is resuming.
+    had_error = false;
     return true;
 }
 
@@ -136,9 +141,44 @@ void VM::resolve_side(CallFrame& frame, uint32_t enc, ValuePtr& out) {
     }
     uint32_t kind = (enc >> 9) & 0x7;
     uint32_t pay = enc & 0x1FF;
-    if (kind == 1) { out = frame.locals[pay]; return; }
-    if (kind == 3) { out = make_value<NumberValue>(BigNumber((long long)pay)); return; }
+    if (kind == 1) { out = frame.locals[pay].to_value(); return; }
+    if (kind == 3) { out = intern_small((long long)pay); return; }
     out = frame.function->constants[pay];
+}
+
+// Borrowing variant of resolve_side for instructions that only read the
+// value: no reference counting at all. A side is a local slot, a global
+// cell, an interned number or a constants-pool entry - each outlives the
+// instruction that borrows it.
+inline __attribute__((always_inline)) VM::Side VM::resolve_side_raw(CallFrame& frame, uint32_t enc) {
+    Side out;
+    out.val = nullptr;
+    out.num = 0;
+    out.is_int = false;
+    if (enc & 0x800000) {                     // global
+        uint32_t idx = (enc >> 12) & 0x7FF;
+        if (idx >= frame.function->gcache.size()) frame.function->gcache.resize(frame.function->constants.size(), nullptr);
+        const ValuePtr* cell = frame.function->gcache[idx];
+        if (!cell) {
+            std::string name = ptr_cast<StringValue>(
+                frame.function->constants[idx])->value;
+            cell = globals->cell(name);
+            frame.function->gcache[idx] = cell;
+        }
+        out.val = (cell && *cell) ? cell->get() : nullptr;
+        return out;
+    }
+    uint32_t kind = (enc >> 9) & 0x7;
+    uint32_t pay = enc & 0x1FF;
+    if (kind == 1) {                          // local slot
+        const Slot& sl = frame.locals[pay];
+        if (sl.is_int()) { out.is_int = true; out.num = sl.int_value(); return out; }
+        out.val = sl.ref ? sl.ref.get() : nullptr;
+        return out;
+    }
+    if (kind == 3) { out.is_int = true; out.num = (long long)pay; return out; }
+    out.val = frame.function->constants[pay].get();
+    return out;
 }
 
 // ============================================================================
@@ -149,26 +189,38 @@ bool VM::run(BytecodeChunkPtr c) {
     had_error = false;
     error_message.clear();
     stack.clear();
-    frames.clear();
     open_upvalues.clear();
-    frames.reserve(64);
 
-    // Set up the initial call frame for the script.
+    // One arena for every frame's locals, sized once for the worst case
+    // (FRAMES_MAX frames of the largest body): a call never allocates and
+    // locals pointers stay valid for the whole run.
+    size_t chunk_max_locals = 4;
+    for (auto& fn : chunk->all_functions)
+        if (fn->max_locals > (int)chunk_max_locals) chunk_max_locals = (size_t)fn->max_locals;
+    arena.assign((size_t)FRAMES_MAX * chunk_max_locals + 16, Slot());
+    arena_top = 0;
+    frame_top = 0;
     ClosurePtr script_closure = make_value<Closure>(chunk->script);
-    frames.push_back(CallFrame{});
-    CallFrame& f = frames.back();
-    f.function = chunk->script;
+    CallFrame& f = frames[frame_top++];
+    f.ret_dest = NO_DEST;
+    f.function = chunk->script.get();
     f.code_start = chunk->script->code.data();
     f.ip = f.code_start;
-    f.locals.resize(chunk->script->max_locals > 0 ? chunk->script->max_locals : chunk->script->local_names.size());
-    for (auto& l : f.locals) l = NULL_SINGLETON;
+    f.upvalues = nullptr;
+    f.upvalue_count = 0;
+    f.locals_base = arena_top;
+    f.nlocals = (uint32_t)(chunk->script->max_locals > 0 ? chunk->script->max_locals : chunk->script->local_names.size());
+    f.locals = arena.data() + arena_top;
+    arena_top += f.nlocals;
+
+    const BigNumber* pb_r = nullptr;   // second operand of the _R ops
 
     // Main dispatch loop.
     // The outer loop allows resuming execution after a caught exception.
     while (true) {
     try {
     while (true) {
-        CallFrame& frame = frames.back();
+        CallFrame& frame = frames[frame_top - 1];
         uint8_t instruction = *frame.ip++;
         OpCode op = static_cast<OpCode>(instruction);
 
@@ -185,6 +237,16 @@ bool VM::run(BytecodeChunkPtr c) {
                 if (auto d = ptr_cast<DimValue>(value)) {
                     if (d->dict.count(table_key())) {
                         push(build_table(frame.function, value));
+                        break;
+                    }
+                }
+                // A small machine integer stays inline: the arithmetic
+                // that follows never has to box it, and boxing it again
+                // later is free because the intern table has it.
+                if (auto num = ptr_cast<NumberValue>(value)) {
+                    long long iv;
+                    if (num->value.is_int_fast(iv) && iv >= -4096 && iv <= 4095) {
+                        push_int(iv);
                         break;
                     }
                 }
@@ -206,32 +268,32 @@ bool VM::run(BytecodeChunkPtr c) {
                 pop();
                 break;
             case OpCode::OP_DUP:
-                push(peek());
+                push_slot(peek_slot());
                 break;
 
             // ---- Locals ----
             case OpCode::OP_GET_LOCAL: {
                 uint32_t idx = read_operand24(frame.ip);
                 frame.ip += 3;
-                push(frame.locals[idx]);
+                push_slot(frame.locals[idx]);
                 break;
             }
             case OpCode::OP_SET_LOCAL: {
                 uint32_t idx = read_operand24(frame.ip);
                 frame.ip += 3;
-                if (idx >= frame.locals.size()) {
+                if (idx >= frame.nlocals) {
                     runtime_error(0, "SET_LOCAL: slot " + std::to_string(idx) +
-                        " out of bounds (locals size=" + std::to_string(frame.locals.size()) +
+                        " out of bounds (locals size=" + std::to_string(frame.nlocals) +
                         ", func=" + frame.function->name + ")");
                     return false;
                 }
-                frame.locals[idx] = pop();
+                frame.locals[idx] = pop_slot();
                 break;
             }
             case OpCode::OP_SET_LOCAL_KEEP: {
                 uint32_t idx = read_operand24(frame.ip);
                 frame.ip += 3;
-                frame.locals[idx] = peek();
+                frame.locals[idx] = peek_slot();
                 break;
             }
 
@@ -303,13 +365,13 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_GET_UPVALUE: {
                 uint32_t idx = read_operand24(frame.ip);
                 frame.ip += 3;
-                push(*frame.upvalues[idx]->location);
+                push_slot(*frame.upvalues[idx]->location);
                 break;
             }
             case OpCode::OP_SET_UPVALUE: {
                 uint32_t idx = read_operand24(frame.ip);
                 frame.ip += 3;
-                *frame.upvalues[idx]->location = peek();
+                *frame.upvalues[idx]->location = peek_slot();
                 break;
             }
             case OpCode::OP_CLOSE_UPVALUE: {
@@ -419,8 +481,31 @@ bool VM::run(BytecodeChunkPtr c) {
                 std::string name = ptr_cast<StringValue>(
                     frame.function->constants[idx])->value;
                 ValuePtr obj = pop();
+                // `.length` is a plain read on a container: no member value
+                // needs to materialize for it.
+                if (name == "length") {
+                    VTag otag = obj->kind();
+                    if (otag == VTag::Ln) {
+                        push(make_value<NumberValue>(BigNumber(
+                            (long long)static_cast<LnValue*>(obj.get())->elements.size())));
+                        break;
+                    }
+                    if (otag == VTag::String) {
+                        push(make_value<NumberValue>(BigNumber(
+                            (long long)static_cast<StringValue*>(obj.get())->value.size())));
+                        break;
+                    }
+                }
                 if (auto inst = dynamic_cast<Instance*>(obj.get())) {
                     ValuePtr val = inst->get(name);
+                    // A method reference must carry its receiver, so a
+                    // later call through it still binds `this`.
+                    if (val->kind() == VTag::Closure) {
+                        auto* clo = static_cast<Closure*>(val.get());
+                        if (clo->function->is_method)
+                            val = make_value<BoundMethodValue>(ptr_static_cast<Instance>(obj),
+                                                               ptr_static_cast<Closure>(val));
+                    }
                     push(val);
                 } else if (auto dm = dynamic_cast<DimValue*>(obj.get())) {
                     // A key of the dictionary comes first: a dictionary
@@ -547,7 +632,50 @@ bool VM::run(BytecodeChunkPtr c) {
             }
 
             // ---- Arithmetic ----
-            case OpCode::OP_ADD: case OpCode::OP_SUB: case OpCode::OP_MUL:
+            case OpCode::OP_ADD: case OpCode::OP_SUB: case OpCode::OP_MUL: {
+                // Two machine integers never touch BigNumber: the result
+                // stays a raw integer on the stack.
+                Slot b = pop_slot();
+                Slot a = pop_slot();
+                if (a.is_int() && b.is_int()) {
+                    long long x = a.int_value(), y = b.int_value();
+                    __int128 r = op == OpCode::OP_ADD ? (__int128)x + y
+                              : op == OpCode::OP_SUB ? (__int128)x - y
+                              : (__int128)x * y;
+                    if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+                        push_int((long long)r);
+                        break;
+                    }
+                } else {
+                    // One side is a raw integer, the other a boxed number:
+                    // if the boxed one is a machine integer too, the whole
+                    // operation stays inline.
+                    long long x = 0, y = 0;
+                    bool have = false;
+                    if (a.is_int() && b.ref && b.ref->kind() == VTag::Number) {
+                        if (static_cast<NumberValue*>(b.ref.get())->value.is_int_fast(y)) {
+                            x = a.int_value(); have = true;
+                        }
+                    } else if (b.is_int() && a.ref && a.ref->kind() == VTag::Number) {
+                        if (static_cast<NumberValue*>(a.ref.get())->value.is_int_fast(x)) {
+                            y = b.int_value(); have = true;
+                        }
+                    }
+                    if (have) {
+                        __int128 r = op == OpCode::OP_ADD ? (__int128)x + y
+                                  : op == OpCode::OP_SUB ? (__int128)x - y
+                                  : (__int128)x * y;
+                        if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+                            push_int((long long)r);
+                            break;
+                        }
+                    }
+                }
+                // In-place capable: a uniquely owned left side is rewritten
+                // instead of replaced (see binary_op_ip).
+                push(binary_op_ip(op, a.take_value(), b.take_value(), 0));
+                break;
+            }
             case OpCode::OP_DIV: case OpCode::OP_MOD: case OpCode::OP_POW: {
                 ValuePtr b = pop();
                 ValuePtr a = pop();
@@ -559,15 +687,74 @@ bool VM::run(BytecodeChunkPtr c) {
                 uint32_t renc = read_operand24(frame.ip); frame.ip += 3;
                 uint32_t cmp  = read_operand24(frame.ip); frame.ip += 3;
                 uint32_t target = read_operand24(frame.ip); frame.ip += 3;
-                // Resolve both sides.
-                ValuePtr lv, rv;
-                resolve_side(frame, lenc, lv);
-                resolve_side(frame, renc, rv);
+                // Resolve both sides. The sides are borrows: every
+                // owner that keeps them alive outlives this instruction,
+                // so the comparison needs no reference traffic.
+                Side ls, rs;
+                {
+                    ls = resolve_side_raw(frame, lenc);
+                    rs = resolve_side_raw(frame, renc);
+                }
                 bool cond = false;
-                bool fast = lv && rv && lv->kind() == VTag::Number && rv->kind() == VTag::Number;
-                if (fast) {
-                    const BigNumber& x = static_cast<NumberValue*>(lv.get())->value;
-                    const BigNumber& y = static_cast<NumberValue*>(rv.get())->value;
+                bool both_int = ls.is_int && rs.is_int;
+                bool int_and_num = (ls.is_int && rs.val && rs.val->kind() == VTag::Number)
+                                || (rs.is_int && ls.val && ls.val->kind() == VTag::Number);
+                if (both_int) {
+                    // Two machine integers: a plain integer comparison,
+                    // no BigNumber and no boxing.
+                    long long x = ls.num, y = rs.num;
+                    switch (cmp) {
+                        case 0: cond = x <  y; break;
+                        case 1: cond = x <= y; break;
+                        case 2: cond = x >  y; break;
+                        case 3: cond = x >= y; break;
+                        case 4: cond = x == y; break;
+                        default: cond = x != y; break;
+                    }
+                } else if (int_and_num) {
+                    // One side is a raw integer, the other a boxed number.
+                    // When the boxed one is a machine integer as well, the
+                    // comparison stays in integer arithmetic: building a
+                    // BigNumber for it would cost more than the compare.
+                    const NumberValue* nb = ls.is_int
+                        ? static_cast<const NumberValue*>(rs.val)
+                        : static_cast<const NumberValue*>(ls.val);
+                    long long other;
+                    if (nb->value.is_int_fast(other)) {
+                        long long x = ls.is_int ? ls.num : other;
+                        long long y = ls.is_int ? other : rs.num;
+                        switch (cmp) {
+                            case 0: cond = x <  y; break;
+                            case 1: cond = x <= y; break;
+                            case 2: cond = x >  y; break;
+                            case 3: cond = x >= y; break;
+                            case 4: cond = x == y; break;
+                            default: cond = x != y; break;
+                        }
+                    } else {
+                        BigNumber tmp;
+                        const BigNumber* bx; const BigNumber* by;
+                        if (ls.is_int) {
+                            tmp = BigNumber(ls.num);
+                            bx = &tmp;
+                            by = &nb->value;
+                        } else {
+                            tmp = BigNumber(rs.num);
+                            by = &tmp;
+                            bx = &nb->value;
+                        }
+                        switch (cmp) {
+                            case 0: cond = *bx <  *by; break;
+                            case 1: cond = *bx <= *by; break;
+                            case 2: cond = *bx >  *by; break;
+                            case 3: cond = *bx >= *by; break;
+                            case 4: cond = *bx == *by; break;
+                            default: cond = *bx != *by; break;
+                        }
+                    }
+                } else if (ls.val && rs.val && ls.val->kind() == VTag::Number && rs.val->kind() == VTag::Number) {
+                    const BigNumber& x = static_cast<const NumberValue*>(ls.val)->value;
+                    const BigNumber& y = static_cast<const NumberValue*>(rs.val)->value;
                     switch (cmp) {
                         case 0: cond = x <  y; break;
                         case 1: cond = x <= y; break;
@@ -577,6 +764,12 @@ bool VM::run(BytecodeChunkPtr c) {
                         default: cond = x != y; break;
                     }
                 } else {
+                    // A raw integer on one side only: box it for the
+                    // generic comparison.
+                    ValuePtr lv = ls.is_int ? Slot::of_int(ls.num).to_value()
+                             : (ls.val ? ls.val->self() : nullptr);
+                    ValuePtr rv = rs.is_int ? Slot::of_int(rs.num).to_value()
+                             : (rs.val ? rs.val->self() : nullptr);
                     // Generic comparison with the exact stack shape of the
                     // unfused [expr] [JUMP_IF_FALSE] sequence.
                     if (!lv || !rv) { runtime_error(current_line(), "undefined variable"); return false; }
@@ -607,6 +800,376 @@ bool VM::run(BytecodeChunkPtr c) {
                 }
                 break;
             }
+            case OpCode::OP_ADD_R: case OpCode::OP_SUB_R: case OpCode::OP_MUL_R: {
+                // word1: gbit(23) | dst(22-13) | a_kind(12-11) | a_pay(10-0)
+                // word2: b_kind(23-22) | b_pay(21-11)
+                uint32_t w1 = read_operand24(frame.ip); frame.ip += 3;
+                uint32_t w2 = read_operand24(frame.ip); frame.ip += 3;
+                bool dglobal = w1 & 0x800000;
+                uint32_t dst = (w1 >> 13) & 0x3FF;
+                uint32_t akind = (w1 >> 10) & 0x3;
+                uint32_t apay = w1 & 0x3FF;
+                uint32_t bkind = (w2 >> 10) & 0x3;
+                uint32_t bpay = w2 & 0x3FF;
+
+                // Resolve both sides.  A side is a local slot, an inline
+                // integer or a global cell.  A local that holds a machine
+                // integer keeps it inline: the arithmetic below then never
+                // touches BigNumber at all.
+                Slot a_side, b_side;
+                if (akind == 0) {
+                    if (apay >= frame.nlocals) { runtime_error(current_line(), "r-op: bad slot"); return false; }
+                    a_side = frame.locals[apay];
+                } else if (akind == 1) {
+                    a_side = Slot::of_int((long long)apay);
+                } else {
+                    const ValuePtr* c = global_read_cell(frame, apay);
+                    if (!c || !*c) { runtime_error(current_line(), "undefined variable"); return false; }
+                    a_side = Slot(*c);
+                }
+                if (bkind == 0) {
+                    if (bpay >= frame.nlocals) { runtime_error(current_line(), "r-op: bad slot"); return false; }
+                    b_side = frame.locals[bpay];
+                } else if (bkind == 1) {
+                    b_side = Slot::of_int((long long)bpay);
+                } else {
+                    const ValuePtr* c = global_read_cell(frame, bpay);
+                    if (!c || !*c) { runtime_error(current_line(), "undefined variable"); return false; }
+                    b_side = Slot(*c);
+                }
+
+                // The destination is a local slot or a global cell.  A
+                // global cell is always boxed, so an integer result has to
+                // be interned on the way in.
+                Slot* dslot = nullptr;
+                ValuePtr* dcell = nullptr;
+                if (dglobal) dcell = global_write_cell(frame, dst);
+                else {
+                    if (dst >= frame.nlocals) { runtime_error(current_line(), "r-op: bad dst"); return false; }
+                    dslot = &frame.locals[dst];
+                }
+
+                // Stores a machine integer into the destination.  A local
+                // slot keeps it inline; a global cell is boxed, and the
+                // object it owns is rewritten in place when nothing else
+                // shares it - that is what keeps `x = x + 1` free of
+                // allocations.
+                auto store_int = [&](long long rv) {
+                    if (dslot) { *dslot = Slot::of_int(rv); return; }
+                    ValuePtr old = *dcell;
+                    *dcell = nullptr;
+                    if (old && old.use_count() == 1 && old->kind() == VTag::Number) {
+                        static_cast<NumberValue*>(old.get())->value.set_ll(rv);
+                        *dcell = old;
+                    } else {
+                        *dcell = intern_num(rv);
+                    }
+                };
+
+                // Fast path: two machine integers.  One __int128 step, and
+                // the result lands in the destination as a raw integer - no
+                // BigNumber, no result object, nothing on the heap.
+                if (a_side.is_int() && b_side.is_int()) {
+                    long long ra = a_side.int_value(), rb = b_side.int_value();
+                    __int128 rr = op == OpCode::OP_ADD_R ? (__int128)ra + rb
+                                : op == OpCode::OP_SUB_R ? (__int128)ra - rb
+                                : (__int128)ra * rb;
+                    if (rr <= (__int128)LLONG_MAX && rr >= (__int128)LLONG_MIN) {
+                        store_int((long long)rr);
+                        break;
+                    }
+                }
+
+                // Boxed operands: the BigNumber machinery takes over.
+                const BigNumber* pa = nullptr;
+                const BigNumber* pb = nullptr;
+                BigNumber tmp_a, tmp_b;
+                if (a_side.is_int()) { tmp_a = BigNumber(a_side.int_value()); pa = &tmp_a; }
+                else if (a_side.ref && a_side.ref->kind() == VTag::Number) pa = &static_cast<NumberValue*>(a_side.ref.get())->value;
+                else goto r_slow;
+                if (b_side.is_int()) { tmp_b = BigNumber(b_side.int_value()); pb = &tmp_b; }
+                else if (b_side.ref && b_side.ref->kind() == VTag::Number) pb = &static_cast<NumberValue*>(b_side.ref.get())->value;
+                else goto r_slow;
+                {
+                    // A machine-int result needs neither the limb machinery
+                    // nor an object.
+                    long long ra, rb2;
+                    if (pa->is_int_fast(ra) && pb->is_int_fast(rb2)) {
+                        __int128 rr = op == OpCode::OP_ADD_R ? (__int128)ra + rb2
+                                    : op == OpCode::OP_SUB_R ? (__int128)ra - rb2
+                                    : (__int128)ra * rb2;
+                        if (rr <= (__int128)LLONG_MAX && rr >= (__int128)LLONG_MIN) {
+                            store_int((long long)rr);
+                            break;
+                        }
+                    }
+                    BigNumber result = op == OpCode::OP_ADD_R ? *pa + *pb
+                                : op == OpCode::OP_SUB_R ? *pa - *pb
+                                : *pa * *pb;
+                    long long iv;
+                    if (dslot) {
+                        // The destination slot owns its old object: rewrite
+                        // it in place instead of allocating a new one.
+                        ValuePtr old = std::move(dslot->ref);
+                        dslot->kind = Slot::REF;
+                        dslot->num = 0;
+                        if (old && old.use_count() == 1 && old->kind() == VTag::Number) {
+                            static_cast<NumberValue*>(old.get())->value = std::move(result);
+                            *dslot = Slot(std::move(old));
+                            break;
+                        }
+                        ValuePtr fresh = result.is_int_fast(iv) ? intern_num(iv)
+                                                                : make_value<NumberValue>(std::move(result));
+                        *dslot = Slot(std::move(fresh));
+                    } else {
+                        ValuePtr fresh = result.is_int_fast(iv) ? intern_num(iv)
+                                                                : make_value<NumberValue>(std::move(result));
+                        *dcell = fresh;
+                    }
+                    break;
+                }
+                r_slow: ;
+                // Non-number sides: rebuild the plain sequence.
+                {
+                    ValuePtr av, bv;
+                    if (akind == 0) av = frame.locals[apay].to_value();
+                    else if (akind == 1) av = make_value<NumberValue>(BigNumber((long long)apay));
+                    else { const ValuePtr* c = global_read_cell(frame, apay); av = c ? *c : nullptr; }
+                    if (bkind == 0) bv = frame.locals[bpay].to_value();
+                    else if (bkind == 1) bv = make_value<NumberValue>(BigNumber((long long)bpay));
+                    else { const ValuePtr* c = global_read_cell(frame, bpay); bv = c ? *c : nullptr; }
+                    if (!av || !bv) { runtime_error(current_line(), "undefined variable"); return false; }
+                    OpCode plain = op == OpCode::OP_ADD_R ? OpCode::OP_ADD
+                                 : op == OpCode::OP_SUB_R ? OpCode::OP_SUB : OpCode::OP_MUL;
+                    ValuePtr res = binary_op(plain, av, bv, current_line());
+                    if (dglobal) *global_write_cell(frame, dst) = res;
+                    else frame.locals[dst] = Slot(std::move(res));
+                    break;
+                }
+            }
+            case OpCode::OP_RESERVED_5: {
+                // OP_DIVADD_R: slot[dst] = slot[dst] + a / b, no stack
+                // traffic. Same word shape as the _R family; w2 bit 12 is
+                // the no-push marker (the statement-value contract).
+                uint32_t w1 = read_operand24(frame.ip); frame.ip += 3;
+                uint32_t w2 = read_operand24(frame.ip); frame.ip += 3;
+                bool dglobal = w1 & 0x800000;
+                bool no_push = w2 & 0x1000;
+                uint32_t dst = (w1 >> 13) & 0x3FF;
+                uint32_t akind = (w1 >> 10) & 0x3;
+                uint32_t apay = w1 & 0x3FF;
+                uint32_t bkind = (w2 >> 10) & 0x3;
+                uint32_t bpay = w2 & 0x3FF;
+                BigNumber tmp_a, tmp_b, tmp_d;
+                const BigNumber* pa; const BigNumber* pb; const BigNumber* pd;
+                if (akind == 0) {
+                    if (apay >= frame.nlocals) { runtime_error(current_line(), "divadd: bad slot"); return false; }
+                    const Slot& r = frame.locals[apay];
+                    if (r.is_int()) { tmp_a = BigNumber(r.int_value()); pa = &tmp_a; }
+                    else if (!r.ref || r.ref->kind() != VTag::Number) goto divadd_slow;
+                    else pa = &static_cast<NumberValue*>(r.ref.get())->value;
+                } else if (akind == 1) { tmp_a = BigNumber((long long)apay); pa = &tmp_a; }
+                else {
+                    const ValuePtr* c = global_read_cell(frame, apay);
+                    ValuePtr v = c ? *c : nullptr;
+                    if (!v || v->kind() != VTag::Number) goto divadd_slow;
+                    pa = &static_cast<NumberValue*>(v.get())->value;
+                }
+                if (bkind == 0) {
+                    if (bpay >= frame.nlocals) { runtime_error(current_line(), "divadd: bad slot"); return false; }
+                    const Slot& r = frame.locals[bpay];
+                    if (r.is_int()) { tmp_b = BigNumber(r.int_value()); pb = &tmp_b; }
+                    else if (!r.ref || r.ref->kind() != VTag::Number) goto divadd_slow;
+                    else pb = &static_cast<NumberValue*>(r.ref.get())->value;
+                } else if (bkind == 1) { tmp_b = BigNumber((long long)bpay); pb = &tmp_b; }
+                else {
+                    const ValuePtr* c = global_read_cell(frame, bpay);
+                    ValuePtr v = c ? *c : nullptr;
+                    if (!v || v->kind() != VTag::Number) goto divadd_slow;
+                    pb = &static_cast<NumberValue*>(v.get())->value;
+                }
+                {
+                    Slot* dslot = nullptr; ValuePtr* dcell = nullptr;
+                    if (dglobal) dcell = global_write_cell(frame, dst);
+                    else {
+                        if (dst >= frame.nlocals) { runtime_error(current_line(), "divadd: bad dst"); return false; }
+                        dslot = &frame.locals[dst];
+                    }
+                    ValuePtr dv = dglobal ? *dcell : dslot->to_value();
+                    if (!dv || dv->kind() != VTag::Number) goto divadd_slow;
+                    pd = &static_cast<NumberValue*>(dv.get())->value;
+                    if (pb->isZero()) { runtime_error(current_line(), "Division by zero."); return false; }
+                    BigNumber quot = *pa / *pb;      // decimal-precision quotient
+                    BigNumber result = *pd + quot;
+                    if (dglobal) *dcell = nullptr; else *dslot = Slot();
+                    if (dv.use_count() == 1) {
+                        static_cast<NumberValue*>(dv.get())->value = std::move(result);
+                        if (dglobal) *dcell = dv; else *dslot = Slot(dv);
+                        if (!no_push) push(dv);
+                        break;
+                    }
+                    long long iv;
+                    ValuePtr fresh = result.is_int_fast(iv) ? intern_num(iv)
+                                                            : make_value<NumberValue>(std::move(result));
+                    if (dglobal) *dcell = fresh; else *dslot = Slot(fresh);
+                    if (!no_push) push(fresh);
+                    break;
+                }
+                divadd_slow: ;
+                // Fallback: [dst][a][b][DIV][ADD][store]
+                {
+                    ValuePtr av, bv, dv2;
+                    if (akind == 0) av = frame.locals[apay].to_value();
+                    else if (akind == 1) av = make_value<NumberValue>(BigNumber((long long)apay));
+                    else { const ValuePtr* c = global_read_cell(frame, apay); av = c ? *c : nullptr; }
+                    if (bkind == 0) bv = frame.locals[bpay].to_value();
+                    else if (bkind == 1) bv = make_value<NumberValue>(BigNumber((long long)bpay));
+                    else { const ValuePtr* c = global_read_cell(frame, bpay); bv = c ? *c : nullptr; }
+                    if (dglobal) { const ValuePtr* c = global_write_cell(frame, dst); dv2 = c ? *c : nullptr; }
+                    else { if (dst >= frame.nlocals) { runtime_error(current_line(), "divadd: bad dst"); return false; } dv2 = frame.locals[dst].to_value(); }
+                    if (!av || !bv || !dv2) { runtime_error(current_line(), "undefined variable"); return false; }
+                    ValuePtr q2 = binary_op(OpCode::OP_DIV, av, bv, current_line());
+                    ValuePtr res = binary_op(OpCode::OP_ADD, dv2, q2, current_line());
+                    if (dglobal) *global_write_cell(frame, dst) = res;
+                    else frame.locals[dst] = Slot(res);
+                    if (!no_push) push(res);
+                    break;
+                }
+            }
+            case OpCode::OP_RETURN_R: {
+                uint32_t enc = read_operand24(frame.ip); frame.ip += 3;
+                // operand: gbit(23) | kind(12-11) | pay(10-0); kind 0 local, 2 global
+                Slot result;
+                if (((enc >> 11) & 0x3) == 2) {
+                    const ValuePtr* c = global_read_cell(frame, enc & 0x7FF);
+                    result = (c && *c) ? Slot(*c) : Slot();
+                } else {
+                    uint32_t slot = enc & 0x7FF;
+                    if (slot >= frame.nlocals) { runtime_error(current_line(), "return: bad slot"); return false; }
+                    result = frame.locals[slot];
+                }
+                if (result.kind == Slot::REF && !result.ref) { runtime_error(current_line(), "undefined variable"); return false; }
+                close_upvalues(0);
+                while (!try_handlers.empty() && try_handlers.back().frame_depth >= (size_t)frame_top) {
+                    try_handlers.pop_back();
+                }
+                bool was_script = (frame_top == 1);
+                // Where the caller wants the result: a register of its
+                // own frame, or the operand stack.
+                uint32_t dest = frames[frame_top - 1].ret_dest;
+                if (!was_script) {
+                    CallFrame& rf = frames[frame_top - 1];
+                    // The slots are not cleared: the compiler emits an assignment
+                    // before any read, so stale references are never observed.
+                    arena_top = rf.locals_base;
+                }
+                frame_top--;
+                if (was_script) return true;
+                if (dest != NO_DEST) {
+                    if (dest >= frames[frame_top - 1].nlocals) {
+                        runtime_error(current_line(), "return: bad destination slot"); return false;
+                    }
+                    frames[frame_top - 1].locals[dest] = std::move(result);
+                } else {
+                    push_slot(std::move(result));
+                }
+                // The caller's next instruction is often the tail of the
+                // call expression (the ADD_R of f(a) + g(b)).  Running it
+                // here saves one dispatch.
+                if (fuse_next_r_op(frames[frame_top - 1])) continue;
+                break;
+            }
+            case OpCode::OP_CALLR: {
+                // word1: gbit(23) | kind(22-21) | pay(20-9) | nargs(8-0)
+                // words: two arg descriptors each: kind(13-12) + pay(11-0)
+                uint32_t w1 = read_operand24(frame.ip); frame.ip += 3;
+                uint32_t nargs = w1 & 0x1FF;
+                uint32_t ckind = (w1 >> 21) & 0x3;
+                uint32_t cpay = (w1 >> 9) & 0xFFF;
+                // Bit 23: the call result goes into a register of the
+                // calling frame instead of onto the operand stack.  The
+                // slot rides in the fourth argument descriptor.
+                bool has_dest = (w1 & (1u << 23)) != 0;
+                // The callee is BORROWED: the slot or the global cell owns
+                // it for the whole instruction, so the call path needs no
+                // reference traffic at all.
+                const Value* callee_raw = nullptr;
+                if (ckind == 1) {
+                    if (cpay >= frame.nlocals) { runtime_error(current_line(), "callr: bad slot"); return false; }
+                    const Slot& cs = frame.locals[cpay];
+                    callee_raw = (cs.kind == Slot::REF && cs.ref) ? cs.ref.get() : nullptr;
+                } else {
+                    const ValuePtr* c = global_read_cell(frame, cpay);
+                    callee_raw = (c && *c) ? c->get() : nullptr;
+                }
+                // A callee is always a boxed value; an integer there is not
+                // callable and the generic path reports it.
+                if (!callee_raw) { runtime_error(current_line(), "undefined variable"); return false; }
+                uint32_t desc[4] = {0x3000, 0x3000, 0x3000, 0x3000};   // kind 3 = absent
+                for (uint32_t w = 0; w < 4; w += 2) {   // fixed two descriptor words
+                    uint32_t word = read_operand24(frame.ip); frame.ip += 3;
+                    desc[w] = word >> 12;
+                    desc[w + 1] = word & 0xFFF;
+                }
+                // The destination slot of the calling frame.
+                uint32_t dest = NO_DEST;
+                if (has_dest) {
+                    if (((desc[3] >> 10) & 0x3) != 3) {
+                        runtime_error(current_line(), "callr: bad destination"); return false;
+                    }
+                    dest = desc[3] & 0x3FF;
+                }
+                // Resolve the arguments (kind 3 = absent filler).  A local
+                // argument keeps its integer form: the callee receives it
+                // without a heap object ever appearing.
+                Slot argv[4];
+                for (uint32_t i = 0; i < nargs; ++i) {
+                    uint32_t kind = (desc[i] >> 10) & 0x3;
+                    uint32_t pay = desc[i] & 0x3FF;
+                    if (kind == 0) {
+                        if (pay >= frame.nlocals) { runtime_error(current_line(), "callr: bad arg slot"); return false; }
+                        argv[i] = frame.locals[pay];
+                    } else if (kind == 1) {
+                        argv[i] = Slot::of_int((long long)pay);
+                    } else if (kind == 2) {
+                        const ValuePtr* c = global_read_cell(frame, pay);
+                        argv[i] = (c && *c) ? Slot(*c) : Slot();
+                    } else {
+                        runtime_error(current_line(), "callr: bad arg"); return false;
+                    }
+                    if (argv[i].kind == Slot::REF && !argv[i].ref) { runtime_error(current_line(), "undefined variable"); return false; }
+                }
+                if (callee_raw->kind() == VTag::BoundMethod) {
+                    auto* bm = const_cast<BoundMethodValue*>(static_cast<const BoundMethodValue*>(callee_raw));
+                    if (bm->bc_method) {
+                        // Bytecode method reference: the receiver rides in
+                        // the frame's slot 0.
+                        push_frame_from_slots(static_cast<Closure*>(bm->bc_method.get()), argv, nargs, current_line());
+                        frames[frame_top - 1].locals[0] = Slot(bm->instance);
+                        if (dest != NO_DEST && frame_top > 0) frames[frame_top - 1].ret_dest = dest;
+                        break;
+                    }
+                    // AST bound method: fall through to call_value.
+                }
+                if (callee_raw->kind() == VTag::Closure) {
+                    push_frame_from_slots(const_cast<Closure*>(static_cast<const Closure*>(callee_raw)), argv, nargs, current_line());
+                    if (dest != NO_DEST && frame_top > 0) frames[frame_top - 1].ret_dest = dest;
+                } else {
+                    // A native callee takes boxed values: this is the
+                    // boundary where an integer becomes an object again.
+                    std::vector<ValuePtr> native_args;
+                    native_args.reserve(nargs);
+                    for (uint32_t i = 0; i < nargs; ++i) native_args.push_back(argv[i].to_value());
+                    if (!call_value(ValuePtr(const_cast<Value*>(callee_raw)), native_args, current_line())) return false;
+                    // The native call left its result on the stack; a
+                    // register destination takes it from there.
+                    if (dest != NO_DEST && frame_top > 0) {
+                        Slot r = pop_slot();
+                        frames[frame_top - 1].locals[dest] = std::move(r);
+                    }
+                }
+                break;
+            }
             case OpCode::OP_INPLACE_AM: {
                 uint32_t packed_dst = read_operand24(frame.ip); frame.ip += 3;
                 uint32_t packed_src = read_operand24(frame.ip); frame.ip += 3;
@@ -620,25 +1183,61 @@ bool VM::run(BytecodeChunkPtr c) {
                 uint32_t srci = (packed_src >> 12) & 0x7FF;
                 long long k = (long long)(packed_src & 0xFFF);
                 ValuePtr* dcell = nullptr; const ValuePtr* scell = nullptr;
-                ValuePtr* dslot = nullptr; ValuePtr* sslot = nullptr;
+                Slot* dslot = nullptr; Slot* sslot = nullptr;
                 if (dst_global) { dcell = global_write_cell(frame, dsti); }
-                else { if (dsti >= frame.locals.size()) { runtime_error(current_line(), "inplace: bad slot"); return false; } dslot = &frame.locals[dsti]; }
+                else { if (dsti >= frame.nlocals) { runtime_error(current_line(), "inplace: bad slot"); return false; } dslot = &frame.locals[dsti]; }
                 if (src_global) { scell = global_read_cell(frame, srci); }
-                else { if (srci >= frame.locals.size()) { runtime_error(current_line(), "inplace: bad rhs slot"); return false; } sslot = &frame.locals[srci]; }
-                ValuePtr a = dst_global ? *dcell : *dslot;
-                ValuePtr sv = src_global ? (scell ? *scell : nullptr) : *sslot;
+                else { if (srci >= frame.nlocals) { runtime_error(current_line(), "inplace: bad rhs slot"); return false; } sslot = &frame.locals[srci]; }
+                ValuePtr a = dst_global ? *dcell : dslot->to_value();
+                ValuePtr sv = src_global ? (scell ? *scell : nullptr) : sslot->to_value();
+                // dst += src * k with both sides machine integers: the
+                // result stays an integer and no object is created.
+                if (!dst_global && dslot->is_int() && !src_global && sslot->is_int()) {
+                    __int128 r = (__int128)dslot->int_value() + (__int128)sslot->int_value() * k;
+                    if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+                        long long rv = (long long)r;
+                        *dslot = Slot::of_int(rv);
+                        if (!no_push) push_int(rv);
+                        break;
+                    }
+                }
                 if (a && sv && a->kind() == VTag::Number && sv->kind() == VTag::Number) {
                     NumberValue* an = static_cast<NumberValue*>(a.get());
+                    // Machine-int fast path: dst += src * k in one __int128
+                    // step, one result object (or an intern table hit).
+                    long long ia, isrc;
+                    if (an->value.is_int_fast(ia) &&
+                        static_cast<NumberValue*>(sv.get())->value.is_int_fast(isrc)) {
+                        __int128 r = (__int128)ia + (__int128)isrc * k;
+                        if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+                            long long rv = (long long)r;
+                            // When the slot owns the old object it is
+                            // rewritten in place: no allocation at all.
+                            if (dst_global) *dcell = nullptr; else *dslot = Slot();
+                            if (a.use_count() == 1) {
+                                an->value.set_ll(rv);
+                                if (dst_global) *dcell = a; else *dslot = Slot(a);
+                                if (!no_push) push(a);
+                                break;
+                            }
+                            ValuePtr fresh = intern_num(rv);
+                            if (dst_global) *dcell = fresh; else *dslot = Slot(fresh);
+                            if (!no_push) push(fresh);
+                            break;
+                        }
+                    }
                     BigNumber prod = static_cast<NumberValue*>(sv.get())->value * BigNumber(k);
                     BigNumber result = an->value + prod;
-                    if (dst_global) *dcell = nullptr; else *dslot = nullptr;
+                    if (dst_global) *dcell = nullptr; else *dslot = Slot();
                     if (a.use_count() == 1) {
                         an->value = std::move(result);
-                        if (dst_global) *dcell = a; else *dslot = a;
+                        if (dst_global) *dcell = a; else *dslot = Slot(a);
                         if (!no_push) push(a);
                     } else {
-                        auto fresh = make_value<NumberValue>(std::move(result));
-                        if (dst_global) *dcell = fresh; else *dslot = fresh;
+                        long long iv;
+                    ValuePtr fresh = result.is_int_fast(iv) ? intern_num(iv)
+                                                            : make_value<NumberValue>(std::move(result));
+                        if (dst_global) *dcell = fresh; else *dslot = Slot(fresh);
                         if (!no_push) push(fresh);
                     }
                     break;
@@ -653,7 +1252,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     push(binary_op(OpCode::OP_MUL, sb, kb, current_line()));
                     ValuePtr mb = pop(); ValuePtr ab = pop();
                     ValuePtr res = binary_op(OpCode::OP_ADD, ab, mb, current_line());
-                    if (dst_global) *dcell = res; else *dslot = res;
+                    if (dst_global) *dcell = res; else *dslot = Slot(res);
                     if (!no_push) push(res);
                 }
                 break;
@@ -687,19 +1286,24 @@ bool VM::run(BytecodeChunkPtr c) {
                         lhs = *cell;
                         push(lhs);
                     } else {
-                        lhs = frame.locals[dst];
+                        lhs = frame.locals[dst].to_value();
                         push(lhs);
                     }
-                    if (rkind == 1) push(frame.locals[rpay]);
+                    if (rkind == 1) push_slot(frame.locals[rpay]);
                     else if (rkind == 2) push(stack_rhs);
-                    else if (rkind == 3) push(make_value<NumberValue>(BigNumber((long long)rpay)));
+                    else if (rkind == 3) push(intern_small((long long)rpay));
+                    else if (rkind == 4) {
+                        const ValuePtr* c = global_read_cell(frame, rpay);
+                        push(c ? *c : nullptr);
+                    }
                     else push(frame.function->constants[rpay]);
                     ValuePtr rb2 = pop();
                     ValuePtr ra2 = pop();
                     OpCode plain = op == OpCode::OP_INPLACE_ADD ? OpCode::OP_ADD
                                  : op == OpCode::OP_INPLACE_SUB ? OpCode::OP_SUB : OpCode::OP_MUL;
                     ValuePtr res = binary_op(plain, ra2, rb2, 0);
-                    if (!np) {  // no-push variant: the value is not wanted
+                    // The slot store always happens; only the leftover
+                    // stack copy is skipped for the no-push variant.
                     if (dst_global) {
                         if (dst >= frame.function->wcache.size()) frame.function->wcache.resize(frame.function->constants.size(), nullptr);
                         ValuePtr* cell = frame.function->wcache[dst];
@@ -714,8 +1318,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     } else {
                         frame.locals[dst] = res;
                     }
-                    push(res);
-                    }
+                    if (!np) push(res);
                 }
                 break;
             }
@@ -760,25 +1363,25 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_JUMP_IF_FALSE: {
                 uint32_t target = read_operand24(frame.ip);
                 frame.ip += 3;
-                if (!is_truthy(peek())) frame.ip = frame.code_start + target;
+                if (!slot_truthy(peek_slot())) frame.ip = frame.code_start + target;
                 break;
             }
             case OpCode::OP_JUMP_IF_TRUE: {
                 uint32_t target = read_operand24(frame.ip);
                 frame.ip += 3;
-                if (is_truthy(peek())) frame.ip = frame.code_start + target;
+                if (slot_truthy(peek_slot())) frame.ip = frame.code_start + target;
                 break;
             }
             case OpCode::OP_JUMP_IF_FALSE_KEEP: {
                 uint32_t target = read_operand24(frame.ip);
                 frame.ip += 3;
-                if (!is_truthy(peek())) frame.ip = frame.code_start + target;
+                if (!slot_truthy(peek_slot())) frame.ip = frame.code_start + target;
                 break;
             }
             case OpCode::OP_JUMP_IF_TRUE_KEEP: {
                 uint32_t target = read_operand24(frame.ip);
                 frame.ip += 3;
-                if (is_truthy(peek())) frame.ip = frame.code_start + target;
+                if (slot_truthy(peek_slot())) frame.ip = frame.code_start + target;
                 break;
             }
             case OpCode::OP_LOOP: {
@@ -800,7 +1403,7 @@ bool VM::run(BytecodeChunkPtr c) {
                     if (desc.is_local) {
                         closure->upvalues[i] = capture_upvalue(desc.index);
                     } else {
-                        if (desc.index < static_cast<int>(frame.upvalues.size())) {
+                        if (desc.index < static_cast<int>(frame.upvalue_count)) {
                             closure->upvalues[i] = frame.upvalues[desc.index];
                         }
                     }
@@ -814,6 +1417,19 @@ bool VM::run(BytecodeChunkPtr c) {
                 // Args are on the stack: [callee, arg1, ..., argN]
                 ValuePtr callee = peek(arg_count);
                 (void)0;
+                if (callee->kind() == VTag::BoundMethod) {
+                    auto* bm = static_cast<BoundMethodValue*>(callee.get());
+                    if (bm->bc_method) {
+                        // Bytecode method reference (`dec m = obj.method`):
+                        // run the closure with the captured receiver in
+                        // slot 0.
+                        push_frame_from_stack(static_cast<Closure*>(bm->bc_method.get()), arg_count, 0);
+                        frames[frame_top - 1].locals[0] = Slot(bm->instance);
+                        for (uint32_t i = 0; i <= arg_count; ++i) pop();
+                        break;
+                    }
+                    // AST bound method: fall through to call_value.
+                }
                 if (callee->kind() == VTag::Closure) {
                     // The callee stays on the stack (keeping the closure
                     // alive) while the frame copies what it needs; only
@@ -824,7 +1440,9 @@ bool VM::run(BytecodeChunkPtr c) {
                     // Native/AST callee: collect the arguments from the
                     // stack before popping anything.
                     const size_t base = stack.size() - arg_count;
-                    std::vector<ValuePtr> native_args(stack.begin() + base, stack.end());
+                    std::vector<ValuePtr> native_args;
+                    native_args.reserve(arg_count);
+                    for (size_t i = base; i < stack.size(); ++i) native_args.push_back(stack[i].to_value());
                     for (uint32_t i = 0; i <= arg_count; ++i) pop();
                     if (!call_value(callee, native_args, 0)) return false;
                 }
@@ -833,9 +1451,54 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_CALL_MEMBER: {
                 uint32_t name_idx = read_operand24(frame.ip); frame.ip += 3;
                 uint32_t arg_count = read_operand24(frame.ip); frame.ip += 3;
+                // Statement-position calls run result-unused: the value
+                // the statement would pop is never materialized.
+                bool no_result = arg_count & 0x800000;
+                arg_count &= 0x7FFFFF;
                 std::string name = ptr_cast<StringValue>(
                     frame.function->constants[name_idx])->value;
                 ValuePtr obj = peek(arg_count);
+                // Hot container members resolve and run inline: the
+                // generic path below materializes a bound native value
+                // (one allocation) per call, which is what loops feel.
+                const size_t call_base = stack.size() - arg_count;
+                VTag otag = obj->kind();
+                if (otag == VTag::Ln) {
+                    auto* lv = static_cast<LnValue*>(obj.get());
+                    if (name == "length" && arg_count == 0) {
+                        stack.resize(call_base - 1);
+                        if (!no_result) push(make_value<NumberValue>(BigNumber((long long)lv->elements.size())));
+                        break;
+                    }
+                    if ((name == "push" || name == "append") && arg_count == 1) {
+                        lv->elements.push_back(stack.back().to_value());
+                        stack.resize(call_base - 1);
+                        if (!no_result) push(make_value<NumberValue>(BigNumber((long long)lv->elements.size())));
+                        break;
+                    }
+                    if (name == "pop" && arg_count == 0) {
+                        ValuePtr out;
+                        if (lv->elements.empty()) out = make_value<NullValue>();
+                        else { out = lv->elements.back(); lv->elements.pop_back(); }
+                        stack.resize(call_base - 1);
+                        if (!no_result) push(out);
+                        break;
+                    }
+                } else if (otag == VTag::Dim) {
+                    ValuePtr has_key = stack.back().to_value();
+                    if (name == "has" && arg_count == 1 && has_key->kind() == VTag::String) {
+                        bool hit = static_cast<DimValue*>(obj.get())->dict.count(
+                            static_cast<StringValue*>(has_key.get())->value) != 0;
+                        stack.resize(call_base - 1);
+                        push(hit ? BOOL_TRUE : BOOL_FALSE);
+                        break;
+                    }
+                } else if (otag == VTag::String && name == "length" && arg_count == 0) {
+                    stack.resize(call_base - 1);
+                    if (!no_result) push(make_value<NumberValue>(BigNumber(
+                        (long long)static_cast<StringValue*>(obj.get())->value.size())));
+                    break;
+                }
                 // Same member resolution as OP_GET_PROPERTY: instance
                 // methods and dict keys come first, then value members.
                 ValuePtr member;
@@ -858,18 +1521,21 @@ bool VM::run(BytecodeChunkPtr c) {
                 // straight off the stack, so nothing is touched before it.
                 const size_t base = stack.size() - arg_count;
                 if (member->kind() == VTag::NativeFn) {
-                    std::vector<ValuePtr> native_args(
-                        std::make_move_iterator(stack.begin() + base),
-                        std::make_move_iterator(stack.end()));
+                    std::vector<ValuePtr> native_args;
+                    native_args.reserve(arg_count);
+                    for (size_t i = base; i < stack.size(); ++i) native_args.push_back(stack[i].to_value());
                     stack.resize(base - 1);        // drop the args and obj
                     push(static_cast<NativeFnValue*>(member.get())->fn(native_args));
                 } else if (member->kind() == VTag::Closure) {
                     push_frame_from_stack(static_cast<Closure*>(member.get()), arg_count, current_line());
+                    // A method closure receives its receiver in slot 0.
+                    if (static_cast<Closure*>(member.get())->function->is_method)
+                        frames[frame_top - 1].locals[0] = Slot(obj);
                     for (uint32_t i = 0; i <= arg_count; ++i) pop();  // arg slots (moved out) + obj
                 } else {
-                    std::vector<ValuePtr> native_args(
-                        std::make_move_iterator(stack.begin() + base),
-                        std::make_move_iterator(stack.end()));
+                    std::vector<ValuePtr> native_args;
+                    native_args.reserve(arg_count);
+                    for (size_t i = base; i < stack.size(); ++i) native_args.push_back(stack[i].to_value());
                     stack.resize(base - 1);
                     if (!call_value(member, native_args, current_line())) return false;
                 }
@@ -877,26 +1543,50 @@ bool VM::run(BytecodeChunkPtr c) {
             }
 
             case OpCode::OP_RETURN: {
-                ValuePtr result = pop();
+                Slot result = pop_slot();
                 close_upvalues(0);  // close all upvalues pointing to this frame
-                while (!try_handlers.empty() && try_handlers.back().frame_depth >= frames.size()) {
+                while (!try_handlers.empty() && try_handlers.back().frame_depth >= (size_t)frame_top) {
                     try_handlers.pop_back();   // handler lived in the returning frame
                 }
-                bool was_script = (frames.size() == 1);
-                if (!was_script) recycle_locals(frames.back());
-                frames.pop_back();
+                bool was_script = (frame_top == 1);
+                // Where the caller wants the result: a register of its
+                // own frame, or the operand stack.
+                uint32_t dest = frames[frame_top - 1].ret_dest;
+                if (!was_script) {
+                    // Roll the arena back. Slots are not re-initialized on
+                    // entry (the compiler emits an assignment before any
+                    // read), so stale references here are never observed -
+                    // they only delay reclamation until the slot is reused.
+                    CallFrame& rf = frames[frame_top - 1];
+                    arena_top = rf.locals_base;
+                }
+                frame_top--;
                 if (was_script) return true;
-                push(std::move(result));
+                if (dest != NO_DEST) {
+                    if (dest >= frames[frame_top - 1].nlocals) {
+                        runtime_error(current_line(), "return: bad destination slot"); return false;
+                    }
+                    frames[frame_top - 1].locals[dest] = std::move(result);
+                } else {
+                    push_slot(std::move(result));
+                }
+                // The caller's next instruction is often the tail of the
+                // call expression (the ADD_R of f(a) + g(b)).  Running it
+                // here saves one dispatch.
+                if (fuse_next_r_op(frames[frame_top - 1])) continue;
                 break;
             }
             case OpCode::OP_RETURN_NULL: {
                 close_upvalues(0);
-                while (!try_handlers.empty() && try_handlers.back().frame_depth >= frames.size()) {
+                while (!try_handlers.empty() && try_handlers.back().frame_depth >= (size_t)frame_top) {
                     try_handlers.pop_back();
                 }
-                bool was_script = (frames.size() == 1);
-                if (!was_script) recycle_locals(frames.back());
-                frames.pop_back();
+                bool was_script = (frame_top == 1);
+                if (!was_script) {
+                    CallFrame& rf = frames[frame_top - 1];
+                    arena_top = rf.locals_base;
+                }
+                frame_top--;
                 if (was_script) return true;
                 push(NULL_SINGLETON);
                 break;
@@ -1059,7 +1749,7 @@ bool VM::run(BytecodeChunkPtr c) {
             case OpCode::OP_TRY_BEGIN: {
                 uint32_t target = read_operand24(frame.ip);
                 frame.ip += 3;
-                try_handlers.push_back({frames.size(), stack.size(), frame.code_start + target});
+                try_handlers.push_back({(size_t)frame_top, stack.size(), frame.code_start + target});
                 break;
             }
             case OpCode::OP_TRY_END: {
@@ -1115,6 +1805,14 @@ bool VM::run(BytecodeChunkPtr c) {
                 break;
             }
 
+            case OpCode::OP_DEF_CLASS: {
+                if (!exec_def_class()) return false;
+                break;
+            }
+            case OpCode::OP_CALL_CTOR: {
+                if (!exec_call_ctor()) return false;
+                break;
+            }
             case OpCode::OP_HALT:
                 return true;
 
@@ -1157,29 +1855,33 @@ bool VM::run(BytecodeChunkPtr c) {
 // ============================================================================
 std::shared_ptr<UpvalueObj> VM::capture_upvalue(int slot) {
     // The slot index refers to the current frame's locals vector.
-    CallFrame& f = frames.back();
-    ValuePtr* loc = &f.locals[slot];
+    CallFrame& f = frames[frame_top - 1];
+    Slot* loc = &f.locals[slot];
 
     // Reuse an existing open upvalue pointing to the same location.
     for (auto& uv : open_upvalues) {
         if (uv->location == loc) return uv;
     }
 
+    // A captured slot is read and written through the upvalue, so it has
+    // to be a boxed cell: an integer slot is materialized once, here.
+    if (loc->is_int()) *loc = Slot(loc->to_value());
+
     auto uv = std::make_shared<UpvalueObj>(loc);
     open_upvalues.push_back(uv);
     return uv;
 }
 
-void VM::close_upvalues(int slot) {
+__attribute__((always_inline)) inline void VM::close_upvalues(int slot) {
     // Close all open upvalues that point into the *current* frame's locals
     // at index >= slot. "Closing" means copying the live value into the
     // upvalue's `closed` field and redirecting `location` to point at it,
     // so the upvalue remains valid after the frame's locals vector is
     // destroyed.
-    if (frames.empty()) return;
-    CallFrame& f = frames.back();
-    ValuePtr* frame_begin = f.locals.data();
-    ValuePtr* frame_end = frame_begin + f.locals.size();
+    if (frame_top == 0) return;
+    CallFrame& f = frames[frame_top - 1];
+    Slot* frame_begin = f.locals;
+    Slot* frame_end = frame_begin + f.nlocals;
 
     auto it = open_upvalues.begin();
     while (it != open_upvalues.end()) {
@@ -1206,14 +1908,14 @@ ValuePtr VM::eval_ast(const AstNodePtr& node) {
         return make_value<NullValue>();
     }
 
-    CallFrame& f = frames.back();
+    CallFrame& f = frames[frame_top - 1];
 
     // Build a temporary environment from the current locals.
     auto env = std::make_shared<Environment>(globals);
     for (size_t i = 0; i < f.function->local_names.size(); ++i) {
         const std::string& name = f.function->local_names[i];
         if (!name.empty()) {
-            env->define(name, f.locals[i]);
+            env->define(name, f.locals[i].to_value());
         }
     }
 
@@ -1273,7 +1975,7 @@ ValuePtr VM::eval_ast(const AstNodePtr& node) {
         const std::string& name = f.function->local_names[i];
         if (!name.empty()) {
             ValuePtr val = env->get(name);
-            if (val) f.locals[i] = val;
+            if (val) f.locals[i] = Slot(val);
         }
     }
 
@@ -1356,6 +2058,13 @@ bool VM::call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line
         return true;
     }
     if (auto bound = dynamic_cast<BoundMethodValue*>(callee.get())) {
+        if (bound->bc_method) {
+            // A bytecode method reference can only be called from the VM's
+            // own call paths (OP_CALL / OP_CALL_MEMBER), which run its
+            // frame; a native caller cannot re-enter the dispatch loop.
+            runtime_error(line, "a bytecode method can only be called directly on its instance");
+            return false;
+        }
         if (!interpreter) {
             runtime_error(line, "No interpreter for bound method call");
             return false;
@@ -1407,43 +2116,94 @@ bool VM::call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line
 }
 
 // ============================================================================
+// The tail of a call expression is usually a register operation in the
+// caller's frame: x = f(a) + g(b) compiles to CALLR, CALLR, ADD_R, and
+// the ADD_R runs right after the second call returns.  Executing that
+// instruction here - in the return path, before the next dispatch -
+// saves one dispatch per call, the hottest pattern in call-heavy code.
+//
+// Only the common form is fused: a local destination, two local operands
+// and both of them machine integers.  Every other form falls through to
+// the normal dispatch, so the semantics never depend on the fusion.
+bool VM::fuse_next_r_op(CallFrame& caller) {
+    uint8_t next = *caller.ip;
+    if (next != static_cast<uint8_t>(OpCode::OP_ADD_R) &&
+        next != static_cast<uint8_t>(OpCode::OP_SUB_R)) return false;
+    uint32_t w1 = read_operand24(caller.ip + 1);
+    uint32_t w2 = read_operand24(caller.ip + 4);
+    if (w1 & 0x800000u) return false;              // a global destination
+    if (((w1 >> 10) & 0x3) != 0) return false;    // the a side must be a slot
+    if (((w2 >> 10) & 0x3) != 0) return false;    // the b side must be a slot
+    uint32_t dst = (w1 >> 13) & 0x3FF;
+    uint32_t apay = w1 & 0x3FF;
+    uint32_t bpay = w2 & 0x3FF;
+    if (dst >= caller.nlocals || apay >= caller.nlocals || bpay >= caller.nlocals) return false;
+    const Slot& a = caller.locals[apay];
+    const Slot& b = caller.locals[bpay];
+    if (a.kind != Slot::INT || b.kind != Slot::INT) return false;
+    long long x = a.int_value(), y = b.int_value();
+    __int128 r = (next == static_cast<uint8_t>(OpCode::OP_ADD_R))
+                   ? (__int128)x + (__int128)y
+                   : (__int128)x - (__int128)y;
+    if (r > (__int128)LLONG_MAX || r < (__int128)LLONG_MIN) return false;
+    caller.locals[dst] = Slot::of_int((long long)r);
+    caller.ip += 7;      // the opcode plus its two operand words
+    return true;
+}
+
+// ============================================================================
 // Push a new call frame for a VM closure
 // ============================================================================
-void VM::push_frame(Closure* closure, const ValuePtr* args, size_t nargs, int line) {
-    if (frames.size() >= static_cast<size_t>(Interpreter::MAX_CALL_DEPTH)) {
+void VM::push_frame(Closure* closure, Slot* args, size_t nargs, int line) {
+    if (frame_top >= FRAMES_MAX) {
         runtime_error(line, "Recursion depth exceeds the limit (" + std::to_string(Interpreter::MAX_CALL_DEPTH) + ").");
         return;
     }
-    CompiledFunctionPtr fn = closure->function;
-    if (nargs < static_cast<size_t>(fn->arity)) {
-        runtime_error(line, "Too few arguments to " + fn->name);
+    CompiledFunction* fn = closure->function.get();
+    if (nargs < static_cast<size_t>(fn->arity) || nargs > static_cast<size_t>(fn->num_params)) {
+        // Java/C# 风格：点名函数或方法，列出缺失（或全部）的参数名，
+        // 给出预期与实际数量。原生解释器报同样的文案。
+        std::string kn = kind_name_text(fn->is_method ? Msg::KIND_METHOD : Msg::KIND_FN, fn->name);
+        if (nargs < static_cast<size_t>(fn->arity)) {
+            std::vector<std::string> missing;
+            for (size_t i = nargs; i < fn->params.size(); ++i)
+                if (!fn->params[i].has_default) missing.push_back(fn->params[i].name);
+            runtime_error(line, args_missing_text(kn, missing, fn->arity, nargs));
+        } else {
+            std::vector<std::string> names;
+            for (const auto& p : fn->params) names.push_back(p.name);
+            runtime_error(line, args_too_many_text(kn, names, fn->num_params, nargs));
+        }
         return;
     }
-    frames.push_back(CallFrame{});
-    CallFrame& f = frames.back();
+    size_t nlocals = fn->max_locals > 0 ? (size_t)fn->max_locals : fn->local_names.size();
+    if (arena_top + nlocals > arena.size()) {
+        runtime_error(line, "frame arena exhausted");
+        return;
+    }
+    CallFrame& f = frames[frame_top++];
+    f.ret_dest = NO_DEST;
     f.function = fn;
     f.code_start = fn->code.data();
     f.ip = f.code_start;
-    f.upvalues = closure->upvalues;
-    // Reuse a locals buffer pooled per function when one is free; the
-    // slots are re-initialized either way, and every upvalue into a
-    // returned frame was closed, so nothing points into the buffer.
-    auto& pool = fn->locals_pool;
-    if (!pool.empty()) {
-        f.locals = std::move(pool.back());
-        pool.pop_back();
-        for (auto& l : f.locals) l = NULL_SINGLETON;
-    } else {
-        f.locals.resize(fn->max_locals > 0 ? fn->max_locals : fn->local_names.size());
-        for (auto& l : f.locals) l = NULL_SINGLETON;
-    }
-    // Bind parameters (locals[0] is reserved, params start at slot 1)
+    f.upvalues = closure->upvalues.empty() ? nullptr : closure->upvalues.data();
+    f.upvalue_count = (uint32_t)closure->upvalues.size();
+    f.locals_base = arena_top;
+    f.nlocals = (uint32_t)nlocals;
+    f.locals = arena.data() + arena_top;
+    arena_top += nlocals;
+    // Slots are not re-initialized: the compiler emits an assignment
+    // before any read of a slot, so stale values are never observed.
+    // The bound arguments are MOVED out of the caller's argv, so a boxed
+    // argument keeps its reference count: no increment, no decrement.
     for (size_t i = 0; i < fn->params.size(); ++i) {
         if (i < nargs) {
-            f.locals[i + 1] = args[i];
+            // MOVED, not copied: a boxed argument keeps its reference
+            // count instead of paying an increment and a decrement.
+            f.locals[i + 1] = std::move(args[i]);
         } else if (fn->params[i].has_default) {
             if (fn->params[i].default_value) {
-                f.locals[i + 1] = fn->params[i].default_value;
+                f.locals[i + 1] = Slot(fn->params[i].default_value);
             }
             // Expression defaults are handled at call time (rare in VM)
         }
@@ -1452,42 +2212,58 @@ void VM::push_frame(Closure* closure, const ValuePtr* args, size_t nargs, int li
 
 // Same as push_frame, but the arguments are read straight off the value
 // stack (callee at stack[top - nargs - 1]): one copy instead of two.
+void VM::push_frame_from_slots(Closure* closure, Slot* args, size_t nargs, int line) {
+    push_frame(closure, args, nargs, line);
+}
+
 void VM::push_frame_from_stack(Closure* closure, size_t nargs, int line) {
-    if (frames.size() >= static_cast<size_t>(Interpreter::MAX_CALL_DEPTH)) {
-        runtime_error(line, "Recursion depth exceeds the limit (" + std::to_string(Interpreter::MAX_CALL_DEPTH) + ").");
-        return;
-    }
-    CompiledFunctionPtr fn = closure->function;
-    if (nargs < static_cast<size_t>(fn->arity)) {
-        runtime_error(line, "Too few arguments to " + fn->name);
-        return;
-    }
-    frames.push_back(CallFrame{});
-    CallFrame& f = frames.back();
-    f.function = fn;
-    f.code_start = fn->code.data();
-    f.ip = f.code_start;
-    f.upvalues = closure->upvalues;
-    auto& pool = fn->locals_pool;
-    const size_t base = stack.size() - nargs;   // arg1 lives here
-    if (!pool.empty()) {
-        f.locals = std::move(pool.back());
-        pool.pop_back();
-        // No re-fill: the compiler emits an assignment before any read of
-        // a slot, so stale values from the previous call are never seen.
+    // Args are on the value stack above the callee: [.., callee, a1..aN].
+    // They are MOVED into the frame's slots (no counted round trip) and
+    // the caller pops the emptied slots afterwards.
+    const size_t base = stack.size() - nargs;
+    Slot argv[4];
+    std::vector<Slot> heap_args;
+    Slot* args;
+    if (nargs <= 4) {
+        for (size_t k = 0; k < nargs; ++k) argv[k] = std::move(stack[base + k]);
+        args = argv;
     } else {
-        f.locals.resize(fn->max_locals > 0 ? fn->max_locals : fn->local_names.size());
+        heap_args.reserve(nargs);
+        for (size_t k = 0; k < nargs; ++k) heap_args.push_back(std::move(stack[base + k]));
+        args = heap_args.data();
     }
-    for (size_t i = 0; i < fn->params.size(); ++i) {
-        if (i < nargs) f.locals[i + 1] = std::move(stack[base + i]);
-        else if (fn->params[i].has_default && fn->params[i].default_value)
-            f.locals[i + 1] = fn->params[i].default_value;
-    }
+    push_frame(closure, args, nargs, line);
 }
 
 // ============================================================================
 // Binary/unary operations
 // ============================================================================
+// Interned small integers in [-4096, 4095]: an 8K-entry table, filled
+// lazily. A loop counter or a small result finds its value here instead
+// of allocating; numbers are immutable so entries never go stale.
+ValuePtr VM::intern_small(long long v) {
+    ValuePtr hit = intern_small_int(v);
+    if (hit) return hit;
+    return make_value<NumberValue>(BigNumber(v));
+}
+
+// Wider intern band for monotone machine-int results: xs.push returns the
+// new length, and a loop that pushes 100k items would otherwise allocate
+// a result object per call just to have the statement pop it again.
+// Borrow-only view of the intern table: the table owns these objects for
+// the life of the process, so an instruction may read them without a
+// reference. Avoids two counted operations on every inline-small operand.
+Value* VM::intern_small_raw(long long v) {
+    Value* hit = intern_small_int_raw(v);
+    if (hit) return hit;
+    return intern_small_int_raw(0);   // out of band: the caller reads 0
+}
+
+ValuePtr VM::intern_num(long long v) {
+    if (v >= -4096 && v <= 4095) return intern_small(v);
+    return make_value<NumberValue>(BigNumber(v));
+}
+
 // ============================================================================
 // Cached global-cell access for the fused instructions
 // ============================================================================
@@ -1516,6 +2292,142 @@ const ValuePtr* VM::global_read_cell(CallFrame& frame, uint32_t idx) {
     return cell;
 }
 
+
+// ============================================================================
+// Cold opcode handlers, kept OUT of the dispatch loop on purpose.
+//
+// The dispatch loop is one giant switch, and the compiler's inlining
+// budget for it is finite: a few large handlers inlined into the loop
+// body pushed the hot arithmetic helpers (binary_op / exec_inplace) over
+// the inline threshold, and a tight arithmetic loop slowed down about
+// fourfold.  Keeping these out of line leaves the loop small and the hot
+// path inlined.
+// ============================================================================
+__attribute__((noinline)) bool VM::exec_def_class() {
+
+                // Stack on entry: [ctor closure, m1, ..., mN] (ctor pushed
+                // first). The descriptor carries the class name, the field
+                // definitions (same shape as OP_DEF_STRUCT) and the method
+                // names in stack order.
+                uint32_t idx = read_operand24(frames[frame_top - 1].ip);
+                frames[frame_top - 1].ip += 3;
+                ValuePtr desc = frames[frame_top - 1].function->constants[idx];
+                auto d = ptr_cast<DimValue>(desc);
+                if (!d) { runtime_error(current_line(), "bad class descriptor"); return false; }
+                std::string name = ptr_cast<StringValue>(d->dict["name"])->value;
+                auto fields_ln = ptr_cast<LnValue>(d->dict["fields"]);
+                std::vector<ParameterDefinition> fields;
+                if (fields_ln) {
+                    for (auto& fv : fields_ln->elements) {
+                        auto fd = ptr_cast<DimValue>(fv);
+                        if (!fd) continue;
+                        std::string fname = ptr_cast<StringValue>(fd->dict["name"])->value;
+                        long long code = ptr_cast<NumberValue>(fd->dict["type"])->value.toLongLong();
+                        long long has_def = ptr_cast<NumberValue>(fd->dict["has_default"])->value.toLongLong();
+                        TokenType tk = TokenType::ANY;
+                        switch (static_cast<CastType>(code)) {
+                            case CastType::CAST_DEC: tk = TokenType::DEC; break;
+                            case CastType::CAST_STR: tk = TokenType::STR; break;
+                            case CastType::CAST_BIN: tk = TokenType::BIN; break;
+                            case CastType::CAST_LN: tk = TokenType::LN; break;
+                            case CastType::CAST_DIM: tk = TokenType::DIM; break;
+                            default: tk = TokenType::ANY; break;
+                        }
+                        ValuePtr defv = fd->dict.count("default") ? fd->dict["default"] : nullptr;
+                        if (has_def && defv && !dynamic_cast<NullValue*>(defv.get()))
+                            fields.push_back(ParameterDefinition(tk, fname, defv));
+                        else
+                            fields.push_back(ParameterDefinition(tk, fname));
+                    }
+                }
+                auto methods_ln = ptr_cast<LnValue>(d->dict["methods"]);
+                size_t nmethods = methods_ln ? methods_ln->elements.size() : 0;
+                if (stack.size() < nmethods + 1) {
+                    runtime_error(current_line(), "corrupt class definition: missing method closures");
+                    return false;
+                }
+                // Pop from the top: [mN, ..., m1, ctor].
+                std::vector<ClosurePtr> popped;
+                for (size_t i = 0; i < nmethods + 1; ++i) {
+                    ClosurePtr clo = ptr_static_cast<Closure>(pop());
+                    if (!clo) { runtime_error(current_line(), "corrupt class definition: method is not a closure"); return false; }
+                    popped.push_back(std::move(clo));
+                }
+                auto klass = make_value<Class>(name, fields,
+                    std::vector<AstNodePtr>{},
+                    std::map<std::string, std::shared_ptr<Function>>{},
+                    globals);
+                klass->bc_ctor = popped[nmethods];
+                for (size_t i = 0; i < nmethods; ++i) {
+                    std::string mname = ptr_cast<StringValue>(methods_ln->elements[i])->value;
+                    // A later method with the same name replaces the
+                    // earlier one, matching the AST map's overwrite.
+                    bool replaced = false;
+                    for (auto& pm : klass->bc_methods) {
+                        if (pm.first == mname) { pm.second = popped[nmethods - 1 - i]; replaced = true; break; }
+                    }
+                    if (!replaced) klass->bc_methods.push_back({mname, popped[nmethods - 1 - i]});
+                }
+                push(klass);
+    return true;
+}
+
+__attribute__((noinline)) bool VM::exec_call_ctor() {
+
+                // Stack: [class, arg1..argN]. Builds the instance, then
+                // runs the bytecode constructor with `this` in slot 0; the
+                // constructor returns the instance. AST-defined classes
+                // fall back to the native `new`.
+                uint32_t arg_count = read_operand24(frames[frame_top - 1].ip);
+                frames[frame_top - 1].ip += 3;
+                ValuePtr cls_val = peek(arg_count);
+                auto cls = ptr_static_cast<Class>(cls_val);
+                if (!cls) { runtime_error(current_line(), msg(Msg::NEW_CLASS)); return false; }
+                if (!cls->bc_ctor) {
+                    // Native `new` receives the class value as args[0].
+                    const size_t base = stack.size() - arg_count - 1;
+                    std::vector<ValuePtr> native_args;
+                    native_args.reserve(arg_count + 1);
+                    for (size_t i = base; i < stack.size(); ++i) native_args.push_back(stack[i].to_value());
+                    for (uint32_t i = 0; i <= arg_count; ++i) pop();
+                    ValuePtr native_new = globals->get("new");
+                    if (!native_new) { runtime_error(current_line(), "no native `new` for AST classes"); return false; }
+                    if (!call_value(native_new, native_args, current_line())) return false;
+                    return true;
+                }
+                if (arg_count > cls->fields.size()) {
+                    // 与原生 `new` 同一句话：点名构造器，列出全部形参。
+                    std::vector<std::string> names;
+                    for (const auto& f : cls->fields) names.push_back(f.name);
+                    runtime_error(current_line(), args_too_many_text(
+                        kind_name_text(Msg::KIND_CTOR, cls->name), names,
+                        cls->fields.size(), arg_count));
+                    return false;
+                }
+                // 缺少必选字段在构造时报错（原生 `new` 同样），逐个点名。
+                {
+                    size_t required = 0;
+                    std::vector<std::string> missing;
+                    for (size_t i = 0; i < cls->fields.size(); ++i) {
+                        if (!cls->fields[i].has_default) required++;
+                        if (i >= arg_count && !cls->fields[i].has_default)
+                            missing.push_back(cls->fields[i].name);
+                    }
+                    if (!missing.empty()) {
+                        runtime_error(current_line(), args_missing_text(
+                            kind_name_text(Msg::KIND_CTOR, cls->name), missing,
+                            required, arg_count));
+                        return false;
+                    }
+                }
+                auto inst = make_value<Instance>(cls);
+                inst->instance_env->define("this", inst);
+                push_frame_from_stack(static_cast<Closure*>(cls->bc_ctor.get()), arg_count, current_line());
+                frames[frame_top - 1].locals[0] = Slot(inst);
+                for (uint32_t i = 0; i <= arg_count; ++i) pop();   // arg slots + class value
+    return true;
+}
+
 // ============================================================================
 // Fused in-place slot arithmetic (OP_INPLACE_ADD / SUB / MUL)
 // ============================================================================
@@ -1527,8 +2439,8 @@ bool VM::exec_inplace(OpCode op, uint32_t packed, CallFrame& frame, int line) {
     uint32_t rpay = packed & 0x1FF;
 
     // Destination: a local slot reference, or the cached cell of a global.
-    ValuePtr* slot = nullptr;         // local path
-    ValuePtr* gcell = nullptr;        // global path
+    Slot* slot = nullptr;              // local path
+    ValuePtr* gcell = nullptr;         // global path
     if (dst_global) {
         if (dst >= frame.function->wcache.size()) frame.function->wcache.resize(frame.function->constants.size(), nullptr);
         gcell = frame.function->wcache[dst];
@@ -1540,45 +2452,128 @@ bool VM::exec_inplace(OpCode op, uint32_t packed, CallFrame& frame, int line) {
             frame.function->wcache[dst] = gcell;
         }
     } else {
-        if (dst >= frame.locals.size()) { runtime_error(line, "inplace: bad slot"); return true; }
+        if (dst >= frame.nlocals) { runtime_error(line, "inplace: bad slot"); return true; }
         slot = &frame.locals[dst];
     }
-    ValuePtr a = dst_global ? *gcell : *slot;
-
-    // Resolve the right-hand side to a BigNumber (numbers) or a string.
+    // Resolve the right-hand side to a raw integer, a BigNumber (numbers)
+    // or a string.
     BigNumber rhs_bn;                 // holds materialized values
     const BigNumber* rb = nullptr;
     const std::string* rs = nullptr;  // string rhs
     std::string rhs_str;
     ValuePtr rhs_hold;                // keeps a popped stack value alive
+    Slot rhs_slot;                    // ditto, for a slot that holds an int
+    bool rhs_is_int = false;
+    long long rhs_int = 0;
 
     if (rkind == 3) {                 // inline small non-negative integer
-        rhs_bn = BigNumber((long long)rpay);
-        rb = &rhs_bn;
+        rhs_is_int = true;
+        rhs_int = (long long)rpay;
+        // Borrow the interned number: no BigNumber has to be built.
+        rb = &static_cast<NumberValue*>(intern_small_raw((long long)rpay))->value;
     } else if (rkind == 1) {          // local slot
         uint32_t ridx = rpay;
-        if (ridx >= frame.locals.size()) { runtime_error(line, "inplace: bad rhs slot"); return true; }
-        ValuePtr& r = frame.locals[ridx];
-        if (r->kind() == VTag::Number) rb = &static_cast<NumberValue*>(r.get())->value;
-        else if (r->kind() == VTag::String) { rhs_str = static_cast<StringValue*>(r.get())->value; rs = &rhs_str; }
+        if (ridx >= frame.nlocals) { runtime_error(line, "inplace: bad rhs slot"); return true; }
+        const Slot& r = frame.locals[ridx];
+        if (r.is_int()) { rhs_is_int = true; rhs_int = r.int_value(); }
+        else if (r.ref && r.ref->kind() == VTag::Number) rb = &static_cast<NumberValue*>(r.ref.get())->value;
+        else if (r.ref && r.ref->kind() == VTag::String) { rhs_str = static_cast<StringValue*>(r.ref.get())->value; rs = &rhs_str; }
         else return false;
     } else if (rkind == 2) {          // value already on the stack top
-        rhs_hold = pop();
+        rhs_slot = pop_slot();
+        if (rhs_slot.is_int()) { rhs_is_int = true; rhs_int = rhs_slot.int_value(); }
+        else if (rhs_slot.ref && rhs_slot.ref->kind() == VTag::Number) rb = &static_cast<NumberValue*>(rhs_slot.ref.get())->value;
+        else if (rhs_slot.ref && rhs_slot.ref->kind() == VTag::String) { rhs_str = static_cast<StringValue*>(rhs_slot.ref.get())->value; rs = &rhs_str; }
+        else return false;
+    } else if (rkind == 4) {          // global by name index
+        const ValuePtr* c = global_read_cell(frame, rpay);
+        rhs_hold = c ? *c : nullptr;
+        if (!rhs_hold) { runtime_error(line, "undefined variable"); return true; }
         if (rhs_hold->kind() == VTag::Number) rb = &static_cast<NumberValue*>(rhs_hold.get())->value;
         else if (rhs_hold->kind() == VTag::String) { rhs_str = static_cast<StringValue*>(rhs_hold.get())->value; rs = &rhs_str; }
         else return false;
     } else {                          // constants-pool entry
         const ValuePtr& c = frame.function->constants[rpay];
-        if (c->kind() == VTag::Number) rb = &static_cast<NumberValue*>(c.get())->value;
+        if (c->kind() == VTag::Number) {
+            rb = &static_cast<NumberValue*>(c.get())->value;
+            // A constant that is a machine integer is an integer side.
+            long long iv;
+            if (rb->is_int_fast(iv)) { rhs_is_int = true; rhs_int = iv; }
+        }
         else if (c->kind() == VTag::String) { rs = &static_cast<StringValue*>(c.get())->value; }
         else return false;
     }
+
+    // The destination and the right-hand side are both machine integers:
+    // the result goes back into the slot as a raw integer and no object is
+    // created at all.  This is the `i = i + 1` fast path.
+    if (!dst_global && slot->is_int() && rhs_is_int) {
+        long long ia = slot->int_value();
+        __int128 r = op == OpCode::OP_INPLACE_ADD ? (__int128)ia + rhs_int
+                   : op == OpCode::OP_INPLACE_SUB ? (__int128)ia - rhs_int
+                   : (__int128)ia * rhs_int;
+        if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+            long long rv = (long long)r;
+            *slot = Slot::of_int(rv);
+            if (!no_push) push_int(rv);
+            return true;
+        }
+    }
+
+    // A copy of the destination: the slot keeps its own reference until
+    // the commit drops it, so a count of 1 afterwards means nothing else
+    // shares the object and it may be rewritten in place.
+    ValuePtr a;
+    if (dst_global) a = *gcell;
+    else if (slot->is_int()) a = slot->to_value();   // an integer slot the fast path did not take
+    else a = slot->ref;
+    if (!a) { runtime_error(line, "undefined variable"); return true; }
+
+    // The right-hand side was an inline integer: give the BigNumber path a
+    // materialized one when the destination is not an integer slot.
+    if (!rb && rhs_is_int) { rhs_bn = BigNumber(rhs_int); rb = &rhs_bn; }
 
     // Number op number: pure BigNumber work, then commit. When the slot
     // held the only reference to the old object it is rewritten in place,
     // which is what makes `i = i + 1` allocation-free.
     if (a->kind() == VTag::Number && rb) {
         NumberValue* an = static_cast<NumberValue*>(a.get());
+        // Machine-int fast path: when both sides and the result fit a
+        // long long the limb machinery below is pure overhead. Small
+        // results come straight out of the intern table.
+        long long ia, ib;
+        if (an->value.is_int_fast(ia) && rb->is_int_fast(ib)) {
+            __int128 r = op == OpCode::OP_INPLACE_ADD ? (__int128)ia + ib
+                       : op == OpCode::OP_INPLACE_SUB ? (__int128)ia - ib
+                       : (__int128)ia * ib;
+            if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+                long long rv = (long long)r;
+                if (dst_global) *gcell = nullptr; else *slot = Slot();
+                if (a.use_count() == 1) {
+                    an->value.set_ll(rv);
+                    if (dst_global) *gcell = a; else *slot = Slot(a);
+                } else {
+                    ValuePtr fresh = intern_num(rv);
+                    if (dst_global) *gcell = fresh; else *slot = Slot(fresh);
+                }
+                if (!no_push) { if (dst_global) push(*gcell); else push_slot(*slot); }
+                return true;
+            }
+        }
+        // Fused accumulator `big = big * i`: a uniquely owned value grows
+        // by one carry pass in place instead of a full product buffer.
+        if (op == OpCode::OP_INPLACE_MUL) {
+            if (dst_global) *gcell = nullptr; else *slot = Slot();
+            long long small;
+            if (a.use_count() == 1 && rb->is_int_fast(small)
+                && small >= -99999 && small <= 99999
+                && an->value.mul_small_inplace(small)) {
+                if (dst_global) *gcell = a; else *slot = Slot(a);
+                if (!no_push) push(a);
+                return true;
+            }
+            if (dst_global) *gcell = a; else *slot = Slot(a);   // general path below
+        }
         BigNumber result;
         switch (op) {
             case OpCode::OP_INPLACE_ADD: result = an->value + *rb; break;
@@ -1588,29 +2583,31 @@ bool VM::exec_inplace(OpCode op, uint32_t packed, CallFrame& frame, int line) {
         // Drop the slot's own reference first: `a` is a copy, so a count
         // of 1 afterwards means nothing else in the program shares the
         // object and it may be rewritten in place.
-        if (dst_global) *gcell = nullptr; else *slot = nullptr;
+        if (dst_global) *gcell = nullptr; else *slot = Slot();
         if (a.use_count() == 1) {
             an->value = std::move(result);
-            if (dst_global) *gcell = a; else *slot = a;
-            push(a);
+            if (dst_global) *gcell = a; else *slot = Slot(a);
+            if (!no_push) push(a);
         } else {
-            auto fresh = make_value<NumberValue>(std::move(result));
-            if (dst_global) *gcell = fresh; else *slot = fresh;
-            push(fresh);
+            long long iv;
+            ValuePtr fresh = result.is_int_fast(iv) ? intern_num(iv)
+                                                    : make_value<NumberValue>(std::move(result));
+            if (dst_global) *gcell = fresh; else *slot = Slot(fresh);
+            if (!no_push) push(fresh);
         }
         return true;
     }
     // String op string: append in place under the same rule.
     if (a->kind() == VTag::String && rs) {
         StringValue* as = static_cast<StringValue*>(a.get());
-        if (dst_global) *gcell = nullptr; else *slot = nullptr;
+        if (dst_global) *gcell = nullptr; else *slot = Slot();
         if (a.use_count() == 1) {
             as->value += *rs;
-            if (dst_global) *gcell = a; else *slot = a;
+            if (dst_global) *gcell = a; else *slot = Slot(a);
             if (!no_push) push(a);
         } else {
             auto fresh = make_value<StringValue>(as->value + *rs);
-            if (dst_global) *gcell = fresh; else *slot = fresh;
+            if (dst_global) *gcell = fresh; else *slot = Slot(fresh);
             if (!no_push) push(fresh);
         }
         return true;
@@ -1631,7 +2628,18 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
     auto lb = tb2 == VTag::Ln ? static_cast<LnValue*>(b.get()) : nullptr;
 
     if (op == OpCode::OP_ADD) {
-        if (na && nb) return make_value<NumberValue>(na->value + nb->value);
+        if (na && nb) {
+            // Machine-int fast path with small-result interning: loop
+            // arithmetic never touches the limb machinery here.
+            long long ia, ib;
+            if (na->value.is_int_fast(ia) && nb->value.is_int_fast(ib)) {
+                __int128 r = (__int128)ia + ib;
+                if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+                    return intern_num((long long)r);
+                }
+            }
+            return make_value<NumberValue>(na->value + nb->value);
+        }
         // Binary + Number or Number + Binary → number
         if (ba && nb) return make_value<NumberValue>(ba->toBigNumber() + nb->value);
         if (na && bb) return make_value<NumberValue>(na->value + bb->toBigNumber());
@@ -1647,7 +2655,16 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
         }
     }
     if (op == OpCode::OP_MUL) {
-        if (na && nb) return make_value<NumberValue>(na->value * nb->value);
+        if (na && nb) {
+            long long ia, ib;
+            if (na->value.is_int_fast(ia) && nb->value.is_int_fast(ib)) {
+                __int128 r = (__int128)ia * ib;
+                if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+                    return intern_num((long long)r);
+                }
+            }
+            return make_value<NumberValue>(na->value * nb->value);
+        }
         // List * Number → repetition
         if (la && nb) {
             long long times = nb->value.toLongLong();
@@ -1670,6 +2687,13 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
         }
     }
     if (na && nb) {
+        long long ia, ib;
+        if ((op == OpCode::OP_SUB) && na->value.is_int_fast(ia) && nb->value.is_int_fast(ib)) {
+            __int128 r = (__int128)ia - ib;
+            if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN) {
+                return intern_num((long long)r);
+            }
+        }
         switch (op) {
             case OpCode::OP_SUB: return make_value<NumberValue>(na->value - nb->value);
             case OpCode::OP_DIV:
@@ -1730,6 +2754,51 @@ ValuePtr VM::binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line
     }
     runtime_error(line, err_msg);
     return make_value<NullValue>();
+}
+
+// ============================================================================
+// Stack arithmetic with in-place reuse.
+//
+// OP_ADD/SUB/MUL pop their operands; when the left side is the last
+// reference to its object (a callee's return value riding the stack, a
+// discarded temporary) the object is rewritten instead of replaced. That
+// keeps `return fib(n-1) + fib(n-2)` and friends allocation-free.
+// ============================================================================
+ValuePtr VM::binary_op_ip(OpCode op, ValuePtr&& a, ValuePtr&& b, int line) {
+    if (a && b && a->kind() == VTag::Number && b->kind() == VTag::Number) {
+        NumberValue* an = static_cast<NumberValue*>(a.get());
+        NumberValue* bn = static_cast<NumberValue*>(b.get());
+        long long ia, ib;
+        if (an->value.is_int_fast(ia) && bn->value.is_int_fast(ib)) {
+            __int128 r = op == OpCode::OP_ADD ? (__int128)ia + ib
+                       : op == OpCode::OP_SUB ? (__int128)ia - ib
+                       : (__int128)ia * ib;
+            if (r <= (__int128)LLONG_MAX && r >= (__int128)LLONG_MIN)
+                return intern_num((long long)r);
+            return binary_op(op, a, b, line);   // overflow: limb machinery
+        }
+        // Unique ownership: rewrite a. An interned value always has the
+        // table's reference on top of ours, so the count never lies.
+        if (a.use_count() == 1) {
+            BigNumber& av = an->value;
+            const BigNumber& bv = bn->value;
+            if (op == OpCode::OP_ADD) av = av + bv;
+            else if (op == OpCode::OP_SUB) av = av - bv;
+            else {
+                // single-limb right side multiplies in place, which is
+                // what keeps `big = big * small` a flat carry pass
+                long long small;
+                if (bv.is_int_fast(small) && small >= -99999 && small <= 99999
+                    && av.mul_small_inplace(small)) {
+                    return std::move(a);
+                }
+                av = av * bv;
+            }
+            return std::move(a);
+        }
+        return binary_op(op, a, b, line);
+    }
+    return binary_op(op, a, b, line);
 }
 
 ValuePtr VM::unary_op(OpCode op, const ValuePtr& a, int line) {

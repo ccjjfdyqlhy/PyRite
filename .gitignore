@@ -2,12 +2,18 @@
 *.o
 PyRite
 
+# PGO profile data and generated dependency files
+*.gcda
+*.gcno
+/*.d
+
 # Editor
 *.swp
 *.swo
 *~
 .vscode/
 .idea/
+.dsh-tool-vision/
 
 # OS
 .DS_Store

@@ -144,13 +144,17 @@
 62  OP_INPLACE_AM    operand2     # dst += src * k; two packed operands
 63  OP_DEF_STRUCT    operand      # [struct descriptor constant] build Class, push
 64  OP_CALL_MEMBER   operand2     # [obj][args...] call member; 2 operands: name idx, arg count
-65  OP_RESERVED_2    no-operand   # reserved
-66  OP_RESERVED_3    no-operand   # reserved
-67  OP_RESERVED_4    no-operand   # reserved
-68  OP_RESERVED_5    no-operand   # reserved
-69  OP_RESERVED_6    no-operand   # reserved
-70  OP_RESERVED_7    no-operand   # reserved
-71  OP_RESERVED_8    no-operand   # reserved
+65  OP_ADD_R         operand2     # slot[dst] = a + b; operands packed, no stack
+66  OP_SUB_R         operand2     # slot[dst] = a - b
+67  OP_MUL_R         operand2     # slot[dst] = a * b
+68  OP_CALLR         operand3     # call via descriptors: ctrl word + 2 arg words (max 4 args)
+69  OP_RETURN_R      operand      # push slot value and return
+70  OP_DEF_CLASS     operand      # [ctor][methods...] build Class, push; operand = descriptor constant
+71  OP_CALL_CTOR     operand      # [class][args...] construct instance, run ctor closure; operand = argc
+72  OP_RESERVED_5    no-operand   # reserved
+73  OP_RESERVED_6    no-operand   # reserved
+74  OP_RESERVED_7    no-operand   # reserved
+75  OP_RESERVED_8    no-operand   # reserved
 # ---- Cast type codes (operand of OP_CAST) ----
 # The operand of OP_CAST is one of these codes.
 #
@@ -189,10 +193,16 @@
 @js-unsupported OP_INPLACE_AM   fused accumulate-multiply
 
 @js-unsupported OP_CALL_MEMBER  fused member call
-@js-unsupported OP_RESERVED_2  reserved opcode
-@js-unsupported OP_RESERVED_3  reserved opcode
-@js-unsupported OP_RESERVED_4  reserved opcode
+@js-unsupported OP_ADD_R  register arithmetic
+@js-unsupported OP_SUB_R  register arithmetic
+@js-unsupported OP_MUL_R  register arithmetic
+@js-unsupported OP_CALLR  register call
+@js-unsupported OP_RETURN_R  register return
 @js-unsupported OP_RESERVED_5  reserved opcode
 @js-unsupported OP_RESERVED_6  reserved opcode
 @js-unsupported OP_RESERVED_7  reserved opcode
 @js-unsupported OP_RESERVED_8  reserved opcode
+
+# ---- JavaScript VM support annotations ----
+@js-unsupported OP_DEF_CLASS  class definitions compile to EVAL_AST for JS export
+@js-unsupported OP_CALL_CTOR  constructor calls compile to EVAL_AST for JS export

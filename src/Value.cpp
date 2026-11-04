@@ -327,7 +327,7 @@ std::string DimValue::toString() const {
     std::stringstream ss;
     ss << "{";
     bool first = true;
-    for (const auto& pair : dict) {
+    for (const auto& pair : sorted_entries()) {
         if (!first) ss << ", ";
         first = false;
         // The browser runtime prints the key of a dictionary in quotes,
@@ -486,8 +486,13 @@ ValuePtr StringValue::getMember(const std::string& name) const {
 
 BoundMethodValue::BoundMethodValue(InstancePtr inst, std::shared_ptr<Function> m)
     : Value(VTag::BoundMethod), instance(inst), method(m) {}
+BoundMethodValue::BoundMethodValue(InstancePtr inst, Ptr<struct Closure> m)
+    : Value(VTag::BoundMethod), instance(inst), bc_method(std::move(m)) {}
 BoundMethodValue::~BoundMethodValue() = default;
-ValuePtr BoundMethodValue::clone() const { return make_value<BoundMethodValue>(instance, method); }
+ValuePtr BoundMethodValue::clone() const {
+    if (bc_method) return make_value<BoundMethodValue>(instance, bc_method);
+    return make_value<BoundMethodValue>(instance, method);
+}
 
 // ---- A list ----
 ValuePtr LnValue::getMember(const std::string& name) const {
@@ -552,13 +557,13 @@ ValuePtr DimValue::getMember(const std::string& name) const {
     if (name == "keys")
         return make_value<NativeFnValue>("keys", [this](const std::vector<ValuePtr>&) {
             std::vector<ValuePtr> out;
-            for (const auto& pair : dict) out.push_back(make_value<StringValue>(pair.first));
+            for (const auto& pair : sorted_entries()) out.push_back(make_value<StringValue>(pair.first));
             return make_value<LnValue>(out);
         });
     if (name == "values")
         return make_value<NativeFnValue>("values", [this](const std::vector<ValuePtr>&) {
             std::vector<ValuePtr> out;
-            for (const auto& pair : dict) out.push_back(pair.second);
+            for (const auto& pair : sorted_entries()) out.push_back(pair.second);
             return make_value<LnValue>(out);
         });
     if (name == "has")
@@ -572,11 +577,11 @@ ValuePtr DimValue::getMember(const std::string& name) const {
 }
 
 ValuePtr DimValue::clone() const {
-    std::map<std::string, ValuePtr> cloned;
+    FlatDict cloned;
     for (const auto& pair : dict) {
         cloned[pair.first] = pair.second->clone();
     }
-    return make_value<DimValue>(cloned);
+    return make_value<DimValue>(std::move(cloned));
 }
 ValuePtr DimValue::getSubscript(const Value& index) const {
     if (const StringValue* s = dynamic_cast<const StringValue*>(&index)) {
@@ -602,4 +607,38 @@ bool DimValue::isEqualTo(const Value& other) const {
         if (!pair.second->isEqualTo(*it->second)) return false;
     }
     return true;
+}
+
+// Cold destruction path for the rare tags: a virtual delete dispatches
+// through the vtable and lands in the derived destructor exactly as the
+// generic Ptr machinery would.
+void value_destroy(Value* p) {
+    delete p;
+}
+
+// ============================================================================
+// Interned small integers: see Value.hpp.  The table owns the objects for
+// the life of the process, so a borrow stays valid forever.
+// ============================================================================
+namespace {
+    constexpr int INTERN_LOW = -4096;
+    constexpr int INTERN_HIGH = 4095;
+    constexpr size_t INTERN_SIZE = INTERN_HIGH - INTERN_LOW + 1;
+    ValuePtr g_intern_table[INTERN_SIZE];
+}
+
+ValuePtr intern_small_int(long long v) {
+    if (v < INTERN_LOW || v > INTERN_HIGH) return nullptr;
+    size_t idx = (size_t)(v - INTERN_LOW);
+    ValuePtr& slot = g_intern_table[idx];
+    if (!slot) slot = make_value<NumberValue>(BigNumber(v));
+    return slot;
+}
+
+Value* intern_small_int_raw(long long v) {
+    if (v < INTERN_LOW || v > INTERN_HIGH) return nullptr;
+    size_t idx = (size_t)(v - INTERN_LOW);
+    ValuePtr& slot = g_intern_table[idx];
+    if (!slot) slot = make_value<NumberValue>(BigNumber(v));
+    return slot.get();
 }

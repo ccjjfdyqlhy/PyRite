@@ -24,8 +24,28 @@ DEPS    := $(SRCS:.cpp=.d)
 
 all: release
 
-release: CXXFLAGS += -O2 -DNDEBUG
+# The interpreter's hot loop is one giant function: aligning it to a
+# cache line boundary is worth ~3% on call-heavy code (the loop crosses
+# cache lines otherwise).
+release: CXXFLAGS += -O3 -DNDEBUG -falign-functions=64 -falign-loops=32
 release: $(TARGET)
+
+# Profile-guided build: run the workload once, rebuild with the profile.
+# Training covers both execution modes and the BigNumber core: loops in
+# AST mode, then the VM dispatch loop (calls, dicts) plus the big-number
+# workloads big_fact / big_pow - without them GCC marks the BigNumber
+# paths cold and the optimized build runs them several times slower.
+pgo: CXXFLAGS += -O3 -DNDEBUG -flto -falign-functions=64 -falign-loops=32
+pgo:
+	$(CXX) $(CXXFLAGS) -fprofile-generate -flto -o $(TARGET) $(SRCS)
+	./$(TARGET) bench/pyrite/int_loop.pr > /dev/null
+	./$(TARGET) --vm bench/pyrite/int_loop.pr > /dev/null
+	./$(TARGET) --vm bench/pyrite/div_loop.pr > /dev/null
+	./$(TARGET) --vm bench/pyrite/fib.pr > /dev/null
+	./$(TARGET) --vm bench/pyrite/dict_ops.pr > /dev/null
+	./$(TARGET) --vm bench/pyrite/big_fact.pr > /dev/null
+	./$(TARGET) --vm bench/pyrite/big_pow.pr > /dev/null
+	$(CXX) $(CXXFLAGS) -fprofile-use -fprofile-correction -o $(TARGET) $(SRCS)
 
 debug: CXXFLAGS += -O0 -g -DDEBUG
 debug: $(TARGET)

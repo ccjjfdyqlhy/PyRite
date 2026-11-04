@@ -1,5 +1,6 @@
 #pragma once
 #include "msgs.hpp"
+#include <vector>
 
 inline const char* msg(Msg id) {
     switch (id) {
@@ -42,6 +43,12 @@ inline const char* msg(Msg id) {
         case Msg::ARGS_EXACT: return "需要 ";
         case Msg::ARGS_AT_MOST: return "最多接受 ";
         case Msg::ARGS_GOT: return " 个参数, 但收到了 ";
+        // Java/C# 风格：{} 依次为「种类 '名字'」、参数名列表、预期数量、实际数量。
+        case Msg::ARGS_MISSING_NAMED: return "{}缺少必选参数 {}：预期至少 {} 个参数，收到了 {} 个。";
+        case Msg::ARGS_AT_MOST_NAMED: return "{}最多接受 {} 个参数（{}），收到了 {} 个。";
+        case Msg::KIND_FN: return "函数 ";
+        case Msg::KIND_METHOD: return "方法 ";
+        case Msg::KIND_CTOR: return "构造器 ";
         case Msg::ARG_TYPE: return "参数 {} 类型不匹配 (在函数 '{}', 参数 '{}', 期望 '{}', 得到 '{}')。";
         case Msg::SWAP_TWO_VARS: return "swap() 需要 2 个变量作为参数。";
         case Msg::SWAP_VARS: return "swap() 的参数必须是变量或 ln 元素。";
@@ -214,4 +221,43 @@ inline std::string fmt3(Msg id, const std::string& a1, const std::string& a2, co
         return std::string("参数 ") + a1 + " 类型不匹配 (在函数 '" + a2 + "', 参数 '" + a3 + "')。";
     }
     return a1 + a2 + a3;
+}
+
+inline std::string fmt4(Msg id, const std::string& a1, const std::string& a2,
+                        const std::string& a3, const std::string& a4) {
+    if (id == Msg::ARGS_MISSING_NAMED) {
+        return a1 + "缺少必选参数 " + a2 + "：预期至少 " + a3 + " 个参数，收到了 " + a4 + " 个。";
+    }
+    if (id == Msg::ARGS_AT_MOST_NAMED) {
+        return a1 + "最多接受 " + a2 + " 个参数（" + a3 + "），收到了 " + a4 + " 个。";
+    }
+    return a1 + a2 + a3 + a4;
+}
+
+// ---- Java/C# 风格参数错误：两种执行模式（原生解释器与字节码 VM）共用，
+// 保证同一种错误在两边说同一句话、点同样的名。----
+inline std::string kind_name_text(Msg kind, const std::string& name) {
+    return std::string(msg(kind)) + "'" + name + "'";
+}
+inline std::string quote_list(const std::vector<std::string>& names) {
+    std::string out;
+    for (size_t i = 0; i < names.size(); ++i) {
+        if (i) out += ", ";
+        out += "'" + names[i] + "'";
+    }
+    return out;
+}
+// 缺少必选参数：列出每一个缺失参数的名字。
+inline std::string args_missing_text(const std::string& kind_and_name,
+                                     const std::vector<std::string>& missing,
+                                     size_t expected_min, size_t received) {
+    return fmt4(Msg::ARGS_MISSING_NAMED, kind_and_name, quote_list(missing),
+                std::to_string(expected_min), std::to_string(received));
+}
+// 实参过多：列出形参全名，给出上限与实收。
+inline std::string args_too_many_text(const std::string& kind_and_name,
+                                      const std::vector<std::string>& param_names,
+                                      size_t max_params, size_t received) {
+    return fmt4(Msg::ARGS_AT_MOST_NAMED, kind_and_name, std::to_string(max_params),
+                quote_list(param_names), std::to_string(received));
 }
