@@ -80,6 +80,13 @@ private:
     // Open upvalues, sorted by stack slot (descending).
     std::vector<std::shared_ptr<UpvalueObj>> open_upvalues;
 
+    // Runs the caller's next instruction when it is a register
+    // arithmetic op - the tail of a call expression.  Returns true when
+    // the instruction was executed (and the caller's ip advanced), so the
+    // caller can skip one dispatch.
+    bool fuse_next_r_op(CallFrame& caller);
+
+
     // Interned small integers: loop counters and small results come back
     // here instead of a fresh allocation. Numbers are immutable, so the
     // cached objects can never go stale.
@@ -147,10 +154,10 @@ private:
     bool call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line);
 
     // Set up a new call frame for a VM closure.
-    void push_frame(Closure* closure, const Slot* args, size_t nargs, int line);
+    void push_frame(Closure* closure, Slot* args, size_t nargs, int line);
     void push_frame_from_stack(Closure* closure, size_t nargs, int line);
     // Same, but the arguments come from an explicit array (register calls).
-    void push_frame_from_slots(Closure* closure, const Slot* args, size_t nargs, int line);
+    void push_frame_from_slots(Closure* closure, Slot* args, size_t nargs, int line);
 
     // ---- Error ----
     void runtime_error(int line, const std::string& msg);  // throws RuntimeError

@@ -1073,6 +1073,10 @@ bool VM::run(BytecodeChunkPtr c) {
                 } else {
                     push_slot(std::move(result));
                 }
+                // The caller's next instruction is often the tail of the
+                // call expression (the ADD_R of f(a) + g(b)).  Running it
+                // here saves one dispatch.
+                if (fuse_next_r_op(frames[frame_top - 1])) continue;
                 break;
             }
             case OpCode::OP_CALLR: {
@@ -1566,6 +1570,10 @@ bool VM::run(BytecodeChunkPtr c) {
                 } else {
                     push_slot(std::move(result));
                 }
+                // The caller's next instruction is often the tail of the
+                // call expression (the ADD_R of f(a) + g(b)).  Running it
+                // here saves one dispatch.
+                if (fuse_next_r_op(frames[frame_top - 1])) continue;
                 break;
             }
             case OpCode::OP_RETURN_NULL: {
@@ -2108,9 +2116,45 @@ bool VM::call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line
 }
 
 // ============================================================================
+// The tail of a call expression is usually a register operation in the
+// caller's frame: x = f(a) + g(b) compiles to CALLR, CALLR, ADD_R, and
+// the ADD_R runs right after the second call returns.  Executing that
+// instruction here - in the return path, before the next dispatch -
+// saves one dispatch per call, the hottest pattern in call-heavy code.
+//
+// Only the common form is fused: a local destination, two local operands
+// and both of them machine integers.  Every other form falls through to
+// the normal dispatch, so the semantics never depend on the fusion.
+bool VM::fuse_next_r_op(CallFrame& caller) {
+    uint8_t next = *caller.ip;
+    if (next != static_cast<uint8_t>(OpCode::OP_ADD_R) &&
+        next != static_cast<uint8_t>(OpCode::OP_SUB_R)) return false;
+    uint32_t w1 = read_operand24(caller.ip + 1);
+    uint32_t w2 = read_operand24(caller.ip + 4);
+    if (w1 & 0x800000u) return false;              // a global destination
+    if (((w1 >> 10) & 0x3) != 0) return false;    // the a side must be a slot
+    if (((w2 >> 10) & 0x3) != 0) return false;    // the b side must be a slot
+    uint32_t dst = (w1 >> 13) & 0x3FF;
+    uint32_t apay = w1 & 0x3FF;
+    uint32_t bpay = w2 & 0x3FF;
+    if (dst >= caller.nlocals || apay >= caller.nlocals || bpay >= caller.nlocals) return false;
+    const Slot& a = caller.locals[apay];
+    const Slot& b = caller.locals[bpay];
+    if (a.kind != Slot::INT || b.kind != Slot::INT) return false;
+    long long x = a.int_value(), y = b.int_value();
+    __int128 r = (next == static_cast<uint8_t>(OpCode::OP_ADD_R))
+                   ? (__int128)x + (__int128)y
+                   : (__int128)x - (__int128)y;
+    if (r > (__int128)LLONG_MAX || r < (__int128)LLONG_MIN) return false;
+    caller.locals[dst] = Slot::of_int((long long)r);
+    caller.ip += 7;      // the opcode plus its two operand words
+    return true;
+}
+
+// ============================================================================
 // Push a new call frame for a VM closure
 // ============================================================================
-void VM::push_frame(Closure* closure, const Slot* args, size_t nargs, int line) {
+void VM::push_frame(Closure* closure, Slot* args, size_t nargs, int line) {
     if (frame_top >= FRAMES_MAX) {
         runtime_error(line, "Recursion depth exceeds the limit (" + std::to_string(Interpreter::MAX_CALL_DEPTH) + ").");
         return;
@@ -2150,11 +2194,13 @@ void VM::push_frame(Closure* closure, const Slot* args, size_t nargs, int line) 
     arena_top += nlocals;
     // Slots are not re-initialized: the compiler emits an assignment
     // before any read of a slot, so stale values are never observed.
-    // The bound arguments carry their references from the caller's
-    // argv copies, so only one counted store happens per argument.
+    // The bound arguments are MOVED out of the caller's argv, so a boxed
+    // argument keeps its reference count: no increment, no decrement.
     for (size_t i = 0; i < fn->params.size(); ++i) {
         if (i < nargs) {
-            f.locals[i + 1] = args[i];
+            // MOVED, not copied: a boxed argument keeps its reference
+            // count instead of paying an increment and a decrement.
+            f.locals[i + 1] = std::move(args[i]);
         } else if (fn->params[i].has_default) {
             if (fn->params[i].default_value) {
                 f.locals[i + 1] = Slot(fn->params[i].default_value);
@@ -2166,7 +2212,7 @@ void VM::push_frame(Closure* closure, const Slot* args, size_t nargs, int line) 
 
 // Same as push_frame, but the arguments are read straight off the value
 // stack (callee at stack[top - nargs - 1]): one copy instead of two.
-void VM::push_frame_from_slots(Closure* closure, const Slot* args, size_t nargs, int line) {
+void VM::push_frame_from_slots(Closure* closure, Slot* args, size_t nargs, int line) {
     push_frame(closure, args, nargs, line);
 }
 
@@ -2177,7 +2223,7 @@ void VM::push_frame_from_stack(Closure* closure, size_t nargs, int line) {
     const size_t base = stack.size() - nargs;
     Slot argv[4];
     std::vector<Slot> heap_args;
-    const Slot* args;
+    Slot* args;
     if (nargs <= 4) {
         for (size_t k = 0; k < nargs; ++k) argv[k] = std::move(stack[base + k]);
         args = argv;
