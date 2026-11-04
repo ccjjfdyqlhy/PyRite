@@ -80,11 +80,11 @@ using CompiledFunctionPtr = std::shared_ptr<CompiledFunction>;
 // holds the value itself (closed).
 // ============================================================================
 struct UpvalueObj {
-    ValuePtr* location;   // points into a CallFrame's locals vector
-    ValuePtr closed;      // value stored here once the owning frame returns
+    Slot* location;       // points into a CallFrame's locals vector
+    Slot closed;          // value stored here once the owning frame returns
     std::shared_ptr<UpvalueObj> next;  // linked list of open upvalues
 
-    UpvalueObj(ValuePtr* loc) : location(loc) {}
+    UpvalueObj(Slot* loc) : location(loc) {}
 };
 using UpvalueObjPtr = std::shared_ptr<UpvalueObj>;
 

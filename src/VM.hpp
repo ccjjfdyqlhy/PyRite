@@ -53,20 +53,26 @@ private:
         CompiledFunction* function;
         const uint8_t* ip;
         const uint8_t* code_start;
-        ValuePtr* locals;            // into the arena; stable (pre-sized)
+        Slot* locals;                // into the arena; stable (pre-sized)
         uint32_t nlocals;
         size_t locals_base;          // arena index, for unwinding
         std::shared_ptr<UpvalueObj>* upvalues;   // into the closure; null = none
         uint32_t upvalue_count;
+        // Where this frame's result goes in the CALLER's frame: a local
+        // slot, or NO_DEST to leave it on the operand stack.
+        uint32_t ret_dest;
     };
 
     static constexpr int FRAMES_MAX = 1000;   // == Interpreter::MAX_CALL_DEPTH
+    // The marker for "no register destination": the call result goes on
+    // the operand stack as usual.
+    static constexpr uint32_t NO_DEST = 0xFFFFFFFFu;
     CallFrame frames[FRAMES_MAX];
     int frame_top = 0;
-    std::vector<ValuePtr> arena;             // all frames' locals
+    std::vector<Slot> arena;                 // all frames' locals
     size_t arena_top = 0;
 
-    std::vector<ValuePtr> stack;
+    std::vector<Slot> stack;
     BytecodeChunkPtr chunk;
     std::shared_ptr<Environment> globals;
     Interpreter* interpreter;
@@ -89,9 +95,30 @@ private:
     ValuePtr binary_op_ip(OpCode op, ValuePtr&& a, ValuePtr&& b, int line);
 
     // ---- Stack helpers ----
-    void push(ValuePtr v) { stack.push_back(v); }
-    ValuePtr pop() { ValuePtr v = std::move(stack.back()); stack.pop_back(); return v; }
-    ValuePtr peek(int distance = 0) { return stack[stack.size() - 1 - distance]; }
+    // The stack holds slots: a boxed value or a raw machine integer.  The
+    // integer form is what keeps arithmetic off the heap; the boxed form is
+    // what every non-numeric operation sees.
+    void push(const ValuePtr& v) { stack.push_back(Slot(v)); }
+    void push_int(int64_t v) { stack.push_back(Slot::of_int(v)); }
+    void push_slot(Slot s) { stack.push_back(std::move(s)); }
+    // Pops the raw slot: an integer stays an integer.
+    Slot pop_slot() { Slot s = std::move(stack.back()); stack.pop_back(); return s; }
+    // Pops the boxed form: an integer becomes a NumberValue here.  A boxed
+    // value is MOVED out, not copied - the reference count stays where it
+    // was, exactly as the plain ValuePtr stack did.
+    ValuePtr pop() {
+        Slot s = pop_slot();
+        if (s.kind == Slot::REF) return std::move(s.ref);
+        return s.to_value();
+    }
+    // A peek past the bottom of the stack yields an empty slot instead of
+    // reading out of bounds: a malformed sequence must not take the
+    // process down.
+    Slot peek_slot(int distance = 0) {
+        if (distance < 0 || (size_t)distance >= stack.size()) return Slot();
+        return stack[stack.size() - 1 - distance];
+    }
+    ValuePtr peek(int distance = 0) { return peek_slot(distance).to_value(); }
 
     // ---- Frame helpers ----
     CallFrame& frame() { return frames[frame_top - 1]; }
@@ -104,6 +131,15 @@ private:
     // ---- OP_EVAL_AST bridging ----
     ValuePtr eval_ast(const AstNodePtr& node);
 
+    // A borrowed view of an operand side: either a raw machine integer or
+    // a boxed value.  Both outlive the instruction that borrows them, so
+    // the comparison paths need no reference traffic at all.
+    struct Side {
+        const Value* val = nullptr;
+        int64_t num = 0;
+        bool is_int = false;
+    };
+
     // ---- Call dispatch ----
     // Calls `callee` with `args`. If the callee is a VM closure, pushes a new
     // frame and returns true (caller should return to the dispatch loop). If
@@ -111,10 +147,10 @@ private:
     bool call_value(ValuePtr callee, const std::vector<ValuePtr>& args, int line);
 
     // Set up a new call frame for a VM closure.
-    void push_frame(Closure* closure, const ValuePtr* args, size_t nargs, int line);
+    void push_frame(Closure* closure, const Slot* args, size_t nargs, int line);
     void push_frame_from_stack(Closure* closure, size_t nargs, int line);
     // Same, but the arguments come from an explicit array (register calls).
-    void push_frame_from_slots(Closure* closure, const ValuePtr* args, size_t nargs, int line);
+    void push_frame_from_slots(Closure* closure, const Slot* args, size_t nargs, int line);
 
     // ---- Error ----
     void runtime_error(int line, const std::string& msg);  // throws RuntimeError
@@ -132,6 +168,12 @@ private:
 
     // ---- Truthiness ----
     static bool is_truthy(const ValuePtr& v);
+    // Truthiness of a slot: a raw integer is true when it is not zero, and
+    // needs no boxing to find out.
+    static bool slot_truthy(const Slot& s) {
+        if (s.is_int()) return s.int_value() != 0;
+        return is_truthy(s.to_value());
+    }
 
     // ---- Arithmetic helpers ----
     ValuePtr binary_op(OpCode op, const ValuePtr& a, const ValuePtr& b, int line);
@@ -143,7 +185,8 @@ private:
     bool exec_call_ctor();
     void resolve_side(struct CallFrame& frame, uint32_t enc, ValuePtr& out);
     // Borrow-only read (no refcount traffic) for read-only instructions.
-    void resolve_side_raw(struct CallFrame& frame, uint32_t enc, Value*& out);
+    // The side is returned by value: the compiler keeps it in registers.
+    Side resolve_side_raw(struct CallFrame& frame, uint32_t enc);
     // Cached global-cell access for fused instructions (idx = name
     // constant index). The cell pointer is remembered per call site.
     ValuePtr* global_write_cell(struct CallFrame& frame, uint32_t idx);

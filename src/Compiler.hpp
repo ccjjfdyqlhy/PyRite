@@ -209,7 +209,15 @@ private:
     // s = s + i * k as one instruction.
     bool try_compile_inplace_am(const std::string& name, AstNode* value);
     void compile_lambda(LambdaNode* n);
-    void compile_call(CallNode* n);
+    // `dest_slot` >= 0 asks for the call result to land in that register
+    // of the calling frame instead of on the operand stack.
+    void compile_call(CallNode* n, int dest_slot = -1);
+    // True when the last compile_call() actually used the register
+    // destination it was asked for.
+    bool call_to_reg_ = false;
+    // True when the call can take a register destination at all: the
+    // fused call instruction has to cover it.
+    bool call_can_use_reg(CallNode* n);
     void compile_subscript(SubscriptNode* n);
     void compile_get(GetNode* n);
 

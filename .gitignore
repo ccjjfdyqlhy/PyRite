@@ -8,6 +8,7 @@ PyRite
 *~
 .vscode/
 .idea/
+.dsh-tool-vision/
 
 # OS
 .DS_Store

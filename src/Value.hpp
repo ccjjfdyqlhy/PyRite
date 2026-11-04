@@ -446,6 +446,79 @@ inline void Ptr<Value>::dec_ref(Value* p) {
     }
 }
 
+// ============================================================================
+// Interned small integers.
+//
+// A machine integer that has to be boxed again - because it reaches a
+// global, a native call or the AST interpreter - comes back out of this
+// table instead of the heap: the table covers [-4096, 4095], which is
+// where loop counters and small results live.  Numbers are immutable, so
+// a cached object never goes stale.
+// ============================================================================
+ValuePtr intern_small_int(long long v);
+// The same table, borrowed: no reference counting, for the paths that
+// only read the number.
+Value* intern_small_int_raw(long long v);
+
+// ============================================================================
+// Slot: one cell of the register file or of the operand stack.  It holds
+// either a boxed value or a raw machine integer.
+//
+// Machine integers are the common case in numeric code, and a boxed one is
+// expensive: NumberValue is 160 bytes because BigNumber carries a 144-byte
+// inline limb buffer.  Keeping the integer inline removes that object
+// completely - the arithmetic paths then never touch BigNumber at all.  Only
+// the boundaries (native calls, the AST bridge, globals, closures) box an
+// integer again.
+// ============================================================================
+struct Slot {
+    static constexpr uint8_t REF = 0;
+    static constexpr uint8_t INT = 1;
+
+    ValuePtr ref;      // the boxed value; null when the slot holds an int
+    int64_t num;       // the machine integer; valid when kind == INT
+    uint8_t kind;      // REF or INT
+
+    Slot() : ref(), num(0), kind(REF) {}
+    Slot(ValuePtr v) : ref(std::move(v)), num(0), kind(REF) {}
+    Slot(const Slot& o) : ref(o.ref), num(o.num), kind(o.kind) {}
+    Slot(Slot&& o) noexcept : ref(std::move(o.ref)), num(o.num), kind(o.kind) {}
+    Slot& operator=(const Slot& o) { ref = o.ref; num = o.num; kind = o.kind; return *this; }
+    Slot& operator=(Slot&& o) noexcept {
+        ref = std::move(o.ref); num = o.num; kind = o.kind; return *this;
+    }
+
+    static Slot of_int(int64_t v) { Slot s; s.kind = INT; s.num = v; return s; }
+
+    bool is_int() const { return kind == INT; }
+    int64_t int_value() const { return num; }
+
+    // The boxed form of this slot.  An integer becomes a NumberValue; the
+    // caller owns the result.  A small integer comes out of the intern
+    // table, so boxing it does not allocate.
+    ValuePtr to_value() const {
+        if (kind == REF) return ref;
+        if (num >= -4096 && num <= 4095) return intern_small_int(num);
+        return make_value<NumberValue>(BigNumber(num));
+    }
+
+    // Moves the boxed value out of the slot, leaving it empty.  Moving
+    // instead of copying keeps the reference count where it was, so the
+    // in-place arithmetic can still rewrite a uniquely owned object.
+    ValuePtr take_value() {
+        if (kind == REF) {
+            ValuePtr v = std::move(ref);
+            kind = REF;
+            num = 0;
+            return v;
+        }
+        ValuePtr v = to_value();      // a small integer comes from the intern table
+        kind = REF;
+        num = 0;
+        return v;
+    }
+};
+
 // Type checking helpers
 bool is_type_compatible(TokenType expected_type, const ValuePtr& value);
 std::string token_type_to_string(TokenType type);

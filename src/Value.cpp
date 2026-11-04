@@ -615,3 +615,30 @@ bool DimValue::isEqualTo(const Value& other) const {
 void value_destroy(Value* p) {
     delete p;
 }
+
+// ============================================================================
+// Interned small integers: see Value.hpp.  The table owns the objects for
+// the life of the process, so a borrow stays valid forever.
+// ============================================================================
+namespace {
+    constexpr int INTERN_LOW = -4096;
+    constexpr int INTERN_HIGH = 4095;
+    constexpr size_t INTERN_SIZE = INTERN_HIGH - INTERN_LOW + 1;
+    ValuePtr g_intern_table[INTERN_SIZE];
+}
+
+ValuePtr intern_small_int(long long v) {
+    if (v < INTERN_LOW || v > INTERN_HIGH) return nullptr;
+    size_t idx = (size_t)(v - INTERN_LOW);
+    ValuePtr& slot = g_intern_table[idx];
+    if (!slot) slot = make_value<NumberValue>(BigNumber(v));
+    return slot;
+}
+
+Value* intern_small_int_raw(long long v) {
+    if (v < INTERN_LOW || v > INTERN_HIGH) return nullptr;
+    size_t idx = (size_t)(v - INTERN_LOW);
+    ValuePtr& slot = g_intern_table[idx];
+    if (!slot) slot = make_value<NumberValue>(BigNumber(v));
+    return slot.get();
+}
